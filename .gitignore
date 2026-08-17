@@ -1,0 +1,26 @@
+# 构建产物
+*.tgz
+*.spk
+*.fpk
+spk-build*/
+fpk-build*/
+
+# Node.js
+node_modules/
+package-lock.json
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# 临时文件
+*.tmp
+*.temp
+# 构建产物目录
+/spk/
+/spk-final/
+/syno-spk/
