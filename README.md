@@ -200,3 +200,37 @@ DeepSeekHarness-NAS/
 ## 📄 许可证
 
 MIT License - Copyright (c) 2026 DeepSeek AI
+
+---
+
+## 🔄 当前状态（2026-08-17）
+
+### ✅ 已完成
+- [x] DSH 后悔药插件集成（dsh-undo-savepoint v0.3.4）
+- [x] Agnes AI 自定义 API 配置（6 个模型）
+- [x] 飞牛 fnOS .fpk 包分析
+- [x] 群晖 DSM .spk 包结构构建
+- [x] 完整开发文档（README、CHANGELOG、DEVELOPMENT 等）
+- [x] Git 仓库初始化并提交
+
+### ⏳ 进行中
+- [ ] **spk 启动失败问题**
+  - 安装成功但启动失败（`ret=[1]`）
+  - 已添加 `--expose-internals` 参数
+  - 需要查看 `/var/packages/DeepSeekHarness/var/logs/dsh.log` 定位具体错误
+  - 下一步：手动测试 `$PKG/bin/node --expose-internals $DSH_BIN web` 看输出
+
+### 📋 待办事项
+1. 修复 spk 启动问题（需要日志）
+2. 在真实群晖环境完整测试
+3. 上传大文件到 GitHub（使用 LFS 或网页上传）
+4. 准备图标资源（banner/logo/background）
+5. 完善 CHANGELOG
+
+### 🐛 已知问题
+- Git HTTPS 不可用（容器限制），需手动推送
+- fpk/spk 大文件需通过 LFS 或网页上传
+
+---
+
+*最后更新: 2026-08-17 23:30*
