@@ -234,3 +234,32 @@ MIT License - Copyright (c) 2026 DeepSeek AI
 ---
 
 *最后更新: 2026-08-17 23:30*
+
+---
+
+## 🔧 CPU 配额配置
+
+为避免"CPU 过载"误告警，建议为 DSH 配置 CPU 配额限制。
+
+### 快速配置（飞牛 fnOS）
+
+```bash
+# SSH 连接到 NAS 后执行
+mkdir -p /etc/systemd/system/trim_app_center.service.d && \
+printf '[Service]\nCPUQuota=300%%\n' > /etc/systemd/system/trim_app_center.service.d/cpu-limit.conf && \
+systemctl daemon-reload && \
+systemctl restart trim_app_center.service
+
+# 验证
+systemctl show trim_app_center.service --property=CPUQuota
+cat /sys/fs/cgroup/system.slice/trim_app_center.service/cpu.max
+```
+
+### 详细文档
+见 [docs/DSH-CPU-QUOTA-SKILL.md](docs/DSH-CPU-QUOTA-SKILL.md)
+
+### 脚本工具
+- `scripts/set-dsh-cpu-quota.sh` - 配置 CPU 配额
+- `scripts/verify-dsh-cpu-quota.sh` - 验证配置状态
+
+---

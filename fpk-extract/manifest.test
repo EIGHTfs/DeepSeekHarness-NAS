@@ -1,0 +1,17 @@
+appname         = deepseek-harness-test
+version         = 0.1.0-rc.6.20260817-beta
+display_name    = DeepSeek Harness (Test)
+platform        = x86
+maintainer      = DeepSeek AI
+maintainer_url  = https://github.com/deepseek-ai/deepseek-harness
+distributor     = EIGHTfs
+distributor_url = https://github.com/deepseek-ai/deepseek-harness
+desktop_uidir   = ui
+desktop_applaunchname = deepseek-harness-test.Application
+service_port    = 3081
+checkport       = false
+ctl_stop        = true
+desc            = DeepSeek AI 官方开源 Agent Harness（智能体框架）测试版。支持多模型、多通道及 Web UI 管理。端口 3081，与正式版（3080）共存。
+source          = thirdparty
+wizard_dir      = wizard
+checksum        = PLACEHOLDER
