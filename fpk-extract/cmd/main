@@ -1,6 +1,6 @@
 #!/bin/bash
 
-APPNAME="deepseek-harness"
+APPNAME="deepseek-harness-rc7"
 
 # 自动推导应用与数据目录
 if [ -z "${TRIM_APPDEST:-}" ]; then

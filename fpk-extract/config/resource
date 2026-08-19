@@ -2,18 +2,6 @@
     "port-config": {
         "protocol-file": "DeepSeekHarness.sc"
     },
-    "data-share": {
-        "shares": [
-            {
-                "name": "DeepSeekHarness",
-                "permission": {
-                    "rw": [
-                        "deepseek-harness"
-                    ]
-                }
-            }
-        ]
-    },
     "systemd-unit": {
     }
 }
