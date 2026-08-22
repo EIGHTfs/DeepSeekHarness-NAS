@@ -43,7 +43,7 @@ http://<NAS-IP>:3080
 # 无需额外安装 Node.js（已内置）
 
 # 1. 下载 .spk 文件
-#    从 releases 页面下载 deepseek-harness-nas_0.1.1-1_x86.spk（内嵌 dsh 0.1.1-rc.2）
+#    从 releases 页面下载 deepseek-harness-nas_0.1.1-2_x86.spk（内嵌 dsh 0.1.1-rc.2）
 
 # 2. Package Center 手动安装
 #    设置 → 包来源 → 任意发行商 → 手动安装 → 选择 .spk
