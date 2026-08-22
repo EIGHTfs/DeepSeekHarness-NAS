@@ -189,15 +189,6 @@ DeepSeekHarness-NAS/
 
 ---
 
-## 🔗 相关链接
-
-- **原始项目**: https://github.com/deepseek-ai/deepseek-harness
-- **DSH 后悔药**: https://github.com/lire1131/dsh-undo-plugin
-- **DSH 文档**: https://github.com/deepseek-ai/deepseek-harness/tree/main/docs
-- **Agnes AI**: https://agnes-ai.cn
-
----
-
 ## 📄 许可证
 
 MIT License - Copyright (c) 2026 DeepSeek AI
