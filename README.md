@@ -17,6 +17,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 - ⚙️ **Web UI** — 可视化模型管理和配置
 - 🔧 **后悔药插件** — 支持一键撤销配置/插件变更
 - 🛡️ **安全模式** — DSH 启动失败时可一键禁用所有用户插件
+- 🚀 **v0.1.1-rc.2** — 升级 dsh 至 `0.1.1-rc.2`，内置完整局域网解锁补丁（模型目录 / 工作区目录在局域网 HTTP 下正常，不报 403/`crypto.randomUUID`）
 
 ---
 
@@ -42,7 +43,7 @@ http://<NAS-IP>:3080
 # 无需额外安装 Node.js（已内置）
 
 # 1. 下载 .spk 文件
-#    从 releases 页面下载 DeepSeekHarness-x438-*.spk
+#    从 releases 页面下载 deepseek-harness-nas_0.1.1-1_x86.spk（内嵌 dsh 0.1.1-rc.2）
 
 # 2. Package Center 手动安装
 #    设置 → 包来源 → 任意发行商 → 手动安装 → 选择 .spk
