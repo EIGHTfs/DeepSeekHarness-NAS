@@ -33,3 +33,10 @@ bun.lock
 npm-debug.log*
 .npm/
 .pnpm-store/
+
+# 旧安装包
+fpk-work/
+_merge-stage/
+_rc7-home-backup/
+*.fpk
+*.spk
