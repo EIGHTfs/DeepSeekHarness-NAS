@@ -380,13 +380,18 @@ async function main() {
   // ========== 启动反代 ==========
   const polyfill = buildPolyfillScript();
   const proxyServer = http.createServer((clientReq, clientRes) => {
+    // 不设置 x-forwarded-for / x-real-ip / forwarded：
+    // dsh-market 等插件的重启接口要求"loopback 直连且无代理转发痕迹"
+    // （trustedRestartRequest），带这些头会被判定为代理转发而拒绝。
     const headers = {
       ...clientReq.headers,
-      'x-forwarded-for': clientReq.socket.remoteAddress,
       'x-forwarded-proto': 'http',
       'x-forwarded-host': clientReq.headers.host || `0.0.0.0:${proxyPort}`,
       host: `127.0.0.1:${dshPort}`,
     };
+    delete headers['x-forwarded-for'];
+    delete headers['x-real-ip'];
+    delete headers.forwarded;
     if (clientReq.headers.origin) headers.origin = `http://127.0.0.1:${dshPort}`;
     if (clientReq.headers.referer) headers.referer = `http://127.0.0.1:${dshPort}/`;
     if (headers['sec-fetch-site'] === 'cross-site') headers['sec-fetch-site'] = 'same-origin';
