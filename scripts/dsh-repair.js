@@ -110,6 +110,19 @@ function findNode() {
 
 // ========== 3. 探测 DSH_HOME 和数据区 ==========
 function resolveDshHome(dshDir) {
+  // 最高优先级：--dsh-home <路径> 显式指定（home 自动取其上级）
+  const dhIdx = process.argv.indexOf('--dsh-home');
+  if (dhIdx !== -1 && process.argv[dhIdx + 1]) {
+    const dshHome = path.resolve(process.argv[dhIdx + 1]);
+    const hmIdx = process.argv.indexOf('--home');
+    const home = hmIdx !== -1 && process.argv[hmIdx + 1]
+      ? path.resolve(process.argv[hmIdx + 1])
+      : path.dirname(dshHome);
+    fs.mkdirSync(dshHome, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+    console.log(`[√] 显式指定 DSH_HOME=${dshHome}`);
+    return { dshHome, home };
+  }
   // 优先：从进程 environ 读取（cwd 必须匹配 dshDir，防止扫到其他实例）
   try {
     const procDir = '/proc';
@@ -380,18 +393,13 @@ async function main() {
   // ========== 启动反代 ==========
   const polyfill = buildPolyfillScript();
   const proxyServer = http.createServer((clientReq, clientRes) => {
-    // 不设置 x-forwarded-for / x-real-ip / forwarded：
-    // dsh-market 等插件的重启接口要求"loopback 直连且无代理转发痕迹"
-    // （trustedRestartRequest），带这些头会被判定为代理转发而拒绝。
     const headers = {
       ...clientReq.headers,
+      'x-forwarded-for': clientReq.socket.remoteAddress,
       'x-forwarded-proto': 'http',
       'x-forwarded-host': clientReq.headers.host || `0.0.0.0:${proxyPort}`,
       host: `127.0.0.1:${dshPort}`,
     };
-    delete headers['x-forwarded-for'];
-    delete headers['x-real-ip'];
-    delete headers.forwarded;
     if (clientReq.headers.origin) headers.origin = `http://127.0.0.1:${dshPort}`;
     if (clientReq.headers.referer) headers.referer = `http://127.0.0.1:${dshPort}/`;
     if (headers['sec-fetch-site'] === 'cross-site') headers['sec-fetch-site'] = 'same-origin';
