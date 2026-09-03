@@ -17,6 +17,22 @@ LOG_FILE="/tmp/dsh-repair.log"
 
 PORT_LIST="30800 30801 30802"
 
+# sticky /tmp + fs.protected_regular=1：即使 root 也不能用 `>` 截断他人创建的普通文件
+# （root 手动 ./start.sh restart 会在第 44 行报 /tmp/dsh-repair.log 权限不够）。
+# 先尝试截断；失败则 unlink 再新建（sticky 目录里文件所有者/root 可删）。
+ensure_tmpfile_writable() {
+  local f="$1"
+  if : > "$f" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$f" 2>/dev/null || true
+  if : > "$f" 2>/dev/null; then
+    return 0
+  fi
+  echo "[!] 无法写入 $f（请检查 /tmp 权限）" >&2
+  return 1
+}
+
 # ---------- 工具 ----------
 is_running() {
   [ -f "$PID_FILE" ] || return 1
@@ -41,6 +57,7 @@ cmd_start() {
   # PATH 前置用户级 pnpm wrapper：pnpm 11 不再读 package.json 的 pnpm 字段，
   # wrapper 自动桥接 JSON->pnpm-workspace.yaml 后再执行官方 pnpm（见 pnpm-bridge.py）
   export PATH="$HOME/.local/bin:$PATH"
+  ensure_tmpfile_writable "$LOG_FILE" || return 1
   nohup "$NODE_BIN" "$REPAIR_JS" --dsh "$DSH_DIR" --dsh-home "$DSH_HOME_DIR" --home "$DSH_HOME_PARENT" > "$LOG_FILE" 2>&1 &
   echo "后台启动中，日志: $LOG_FILE"
   # 等端口就绪（最多 15 秒）

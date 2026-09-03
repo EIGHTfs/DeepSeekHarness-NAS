@@ -250,7 +250,5 @@ cat /sys/fs/cgroup/system.slice/trim_app_center.service/cpu.max
 ### 脚本工具
 - `scripts/set-dsh-cpu-quota.sh` - 配置 CPU 配额
 - `scripts/verify-dsh-cpu-quota.sh` - 验证配置状态
-- `scripts/fix-dsh-settings-namespace.sh` - alpha settingsNamespace / installSettingsSection 兼容导出
-- `scripts/fix-dsh-bundle-patch-insert.py` - 第三方插件 `cordis.patch.yml` 无 insert 改成顶层 insert（市场「目标不存在」）
 
 ---

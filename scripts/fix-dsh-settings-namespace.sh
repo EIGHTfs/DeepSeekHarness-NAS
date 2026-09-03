@@ -10,8 +10,11 @@
 #    仅保留 SettingsNamespace 类型导出）。插件 dsh-better-sidebar@0.17.1
 #    按 peer ^0.1.0-rc.8 写死 import { settingsNamespace } → ESM SyntaxError。
 #
-#  本脚本把私有 parseSettingsNamespace 恢复导出为 settingsNamespace，
-#  同时改 src 和 lib（运行时实际加载 lib），幂等、含备份。
+#  本脚本：
+#    1) 把私有 parseSettingsNamespace 恢复导出为 settingsNamespace
+#    2) 补 rc.2 兼容函数 installSettingsSection（dsh-cloud-workspaces@0.2.1
+#       仍 import 该符号；alpha 已改为 SettingsProvider.installSection）
+#  同时改 src 和 lib（运行时实际加载 lib），幂等。
 #
 #  用法: ./fix-dsh-settings-namespace.sh [DSH_DIR]
 #        缺省 DSH_DIR = /vol1/1000/DeepSeek Harness/dsh-v0.1.2-alpha.4
@@ -75,6 +78,71 @@ else
   changed=1
 fi
 
+# ---------- installSettingsSection（cloud-workspaces / rc.2 插件）----------
+if grep -q "export function installSettingsSection" "$SRC"; then
+  echo "✅ src: installSettingsSection 已存在（幂等跳过）"
+else
+  echo "→ src: 追加 installSettingsSection 兼容导出"
+  if [ $DRY_RUN -eq 0 ]; then
+    cat >> "$SRC" << 'SRCEOF'
+
+/**
+ * rc.2 兼容：旧插件（dsh-cloud-workspaces 等）从 `@deepseek-ai/dsh-settings`
+ * 直接 import `installSettingsSection`。alpha 已改为实例方法
+ * `SettingsProvider.installSection`。无 settings 服务时 hooks 不触发（与 rc.2 一致）。
+ */
+export function installSettingsSection(ctx, ns, schema, entry, hooks) {
+  ctx.inject(['settings'], (scope) => {
+    scope.settings.installSection(ctx, ns, schema, entry, hooks)
+  })
+}
+SRCEOF
+  fi
+  changed=1
+fi
+
+if grep -q "function installSettingsSection" "$LIB" && grep -q "installSettingsSection" "$LIB"; then
+  echo "✅ lib: installSettingsSection 已存在（幂等跳过）"
+else
+  echo "→ lib: 追加 installSettingsSection 并加入 export"
+  if [ $DRY_RUN -eq 0 ]; then
+    # 插在最后一个 export { ... } 之前
+    python3 - "$LIB" << 'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+text = p.read_text()
+fn = """
+function installSettingsSection(ctx, ns, schema, entry, hooks) {
+	ctx.inject(["settings"], (scope) => {
+		scope.settings.installSection(ctx, ns, schema, entry, hooks);
+	});
+}
+"""
+if "function installSettingsSection" not in text:
+    text = text.replace(
+        "export { SettingsConflictError",
+        fn + "export { SettingsConflictError",
+        1,
+    )
+if "installSettingsSection" not in text.split("export {", 1)[-1]:
+    text = text.replace(
+        "parseSettingsNamespace as settingsNamespace };",
+        "parseSettingsNamespace as settingsNamespace, installSettingsSection };",
+        1,
+    )
+    if "installSettingsSection" not in text.split("export {", 1)[-1]:
+        text = text.replace(
+            "redactSecrets };",
+            "redactSecrets, installSettingsSection };",
+            1,
+        )
+p.write_text(text)
+PY
+  fi
+  changed=1
+fi
+
 # ---------- 校验 ----------
 echo ""
 echo "== 校验 =="
@@ -86,6 +154,7 @@ if [ $DRY_RUN -eq 0 ]; then
       const m = require('$LIB');
       console.log('  运行时导出检查:');
       console.log('   settingsNamespace =', typeof m.settingsNamespace);
+      console.log('   installSettingsSection =', typeof m.installSettingsSection);
       console.log('   SettingsConflictError =', typeof m.SettingsConflictError);
     " 2>&1 | head -5
   fi

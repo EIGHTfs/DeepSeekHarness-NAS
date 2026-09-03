@@ -24,6 +24,20 @@ const PID_FILE = '/tmp/dsh-repair.pid';
 const RUNNER_LOG = '/tmp/dsh-repair-runner.log';
 const CONTAINER_LOG = '/tmp/dsh-repair-container.log';
 
+// sticky /tmp + fs.protected_regular=1：root 也不能 truncate 他人创建的普通文件。
+// 失败则 unlink 再写（sticky 目录里所有者/root 可删）。
+function writeTmpFile(file, content) {
+  try {
+    fs.writeFileSync(file, content, 'utf-8');
+    return;
+  } catch (err) {
+    const code = err && err.code;
+    if (code !== 'EACCES' && code !== 'EPERM') throw err;
+  }
+  try { fs.unlinkSync(file); } catch {}
+  fs.writeFileSync(file, content, 'utf-8');
+}
+
 // ========== 1. 定位 DSH 目录 ==========
 function findDshDir() {
   // ① 参数
@@ -327,7 +341,7 @@ async function main() {
   // 先停止旧实例（必须在自己写 PID 文件之前，否则会 kill 自己）
   await killOldProcesses(dshDir);
   // 再写入本实例 PID
-  fs.writeFileSync(PID_FILE, String(process.pid), 'utf-8');
+  writeTmpFile(PID_FILE, String(process.pid));
 
   // 检测入口
   const entryInfo = detectEntry(dshDir);
