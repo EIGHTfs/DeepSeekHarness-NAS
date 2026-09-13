@@ -7,10 +7,14 @@
 #   build-spk.sh     消费 target → 群晖 .spk 安装包
 #   build-fpk.sh     【本脚本】消费 target → 飞牛 .fpk 安装包
 #
+# 【双链路】（2026-09-13 新增；默认行为不变）:
+#   ./build-fpk.sh          默认：消费 build-common.sh 的 target（源码 monorepo 编译产物）
+#   ./build-fpk.sh --npm    新增：消费 build-npm-app.sh 的 app_root（npm 装官方包，~100MiB）
+#                           前置：先运行 ./build-npm-app.sh [VERSION]
+#                           仅此参数走 npm 链路；SPK 与源码链路完全不受影响
+#
 # 用法:
-#   ./build-fpk.sh
-#   （无参数。所有配置读 build-config.yaml + build-meta.env；
-#     前置：先运行 ./build-common.sh 生成 target）
+#   ./build-fpk.sh [--npm]
 #
 # 产物:
 #   build/staging/<APP_NAME>_x86-<FPK_VERSION>.fpk
@@ -33,6 +37,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/build-config.yaml"
+
+# ── 参数：--npm 走 npm 装包链路（默认源码 target 链路不变） ──
+NPM_MODE=0
+case "${1:-}" in
+  --npm) NPM_MODE=1 ;;
+  "") ;;
+  *) echo "用法: $0 [--npm]" >&2; exit 1 ;;
+esac
 
 # ── 工作区分类目录（环境变量可覆盖，与 build-common.sh 一致） ──
 D_ASSETS="${D_ASSETS:-$WS/build}"
@@ -57,19 +69,32 @@ FPK_DSH_PORT="${FPKCFG_DSH_PORT:-3081}"
 FPK_CONTAINER_PORT="${FPKCFG_CONTAINER_PORT:-3082}"
 
 # ----------------------------------------------------------------------------
-# target 与元数据（build-common.sh 产物）
+# 元数据（双链路：--npm 读 npm-meta.env，默认读 build-meta.env）
 # ----------------------------------------------------------------------------
-_META="$(ls -1t "$D_BUILD"/spk-build/build-*/build-meta.env 2>/dev/null | head -1)"
-if [ -z "$_META" ] || [ ! -f "$_META" ]; then
-  echo "✗ 未找到 build-meta.env（请先运行 ./build-common.sh 生成 target）" >&2
-  exit 1
+if [ "$NPM_MODE" = "1" ]; then
+  _NPM_META="$(ls -1t "$D_BUILD"/spk-build/npm-app-*/npm-meta.env 2>/dev/null | head -1)"
+  if [ -z "$_NPM_META" ] || [ ! -f "$_NPM_META" ]; then
+    echo "✗ 未找到 npm-meta.env（请先运行 ./build-npm-app.sh [VERSION] 生成 npm 应用体）" >&2
+    exit 1
+  fi
+  . "$_NPM_META"   # APP_NAME/APP_ID/APP_NAME_LOWER/PKG_VER/FPK_VERSION/SPK_VERSION/APP_ROOT
+  [ -d "$APP_ROOT" ] || { echo "✗ npm app_root 缺失: $APP_ROOT" >&2; exit 1; }
+  TARGET="$APP_ROOT"   # 后续应用体复制统一用 TARGET 变量
+  WORK="$(dirname "$_NPM_META")"
+  echo "使用 npm 应用体: $APP_ROOT（dsh $PKG_VER | FPK $FPK_VERSION | APP_NAME $APP_NAME）"
+else
+  _META="$(ls -1t "$D_BUILD"/spk-build/build-*/build-meta.env 2>/dev/null | head -1)"
+  if [ -z "$_META" ] || [ ! -f "$_META" ]; then
+    echo "✗ 未找到 build-meta.env（请先运行 ./build-common.sh 生成 target）" >&2
+    exit 1
+  fi
+  . "$_META"   # 提供 APP_NAME/APP_ID/APP_NAME_LOWER/PKG_VER/SPK_VERSION/FPK_VERSION/DESC/TARGET/WORK
+  if [ ! -d "$TARGET" ] || [ ! -f "$TARGET/package.json" ]; then
+    echo "✗ target 缺失或不完整: $TARGET（请先运行 ./build-common.sh）" >&2
+    exit 1
+  fi
+  echo "使用 target : $TARGET（dsh $PKG_VER | FPK $FPK_VERSION | APP_NAME $APP_NAME）"
 fi
-. "$_META"   # 提供 APP_NAME/APP_ID/APP_NAME_LOWER/PKG_VER/SPK_VERSION/FPK_VERSION/DESC/TARGET/WORK
-if [ ! -d "$TARGET" ] || [ ! -f "$TARGET/package.json" ]; then
-  echo "✗ target 缺失或不完整: $TARGET（请先运行 ./build-common.sh）" >&2
-  exit 1
-fi
-echo "使用 target : $TARGET（dsh $PKG_VER | FPK $FPK_VERSION | APP_NAME $APP_NAME）"
 
 # 排除规则（build-excludes.json dist 模式；条目带 ./ 前缀是 SPK 用，FPK 派生去前缀）
 EXCLUDES_FILE="$SCRIPT_DIR/build-excludes.json"
@@ -120,7 +145,9 @@ cp -a "$TARGET/." "$FPK_APP/"
 echo "▶ 生成 fpk start.sh（端口 $FPK_PROXY_PORT/$FPK_DSH_PORT/$FPK_CONTAINER_PORT）"
 gen_start_sh "$FPK_APP/bin/start.sh" "$FPK_PROXY_PORT" "$FPK_DSH_PORT" "$FPK_CONTAINER_PORT"
 
-# var/ports 重写为 FPK 端口段（target 里可能是 SPK 段残留的 30800，必须覆盖）
+# var/ports 重写为 FPK 端口段（target 里可能是 SPK 段残留的 30800，必须覆盖；
+# npm 布局 app_root 可能无 var/，先建目录保证可写）
+mkdir -p "$FPK_APP/var"
 echo "▶ 重写 fpk var/ports（$FPK_PROXY_PORT/$FPK_DSH_PORT/$FPK_CONTAINER_PORT）"
 cat > "$FPK_APP/var/ports" <<PORTS_EOF
 # FPK 端口配置（build-config.yaml fpk: 段驱动）
@@ -166,6 +193,8 @@ rm -rf "$FPK_APP"
 # 二、manifest + cmd + config + wizard + ICON
 #===============================================================================
 # manifest（version=官方完整版本；checksum=app.tgz MD5 实测）
+# ⚠ 禁止添加 changelog 字段！实测（2026-09-13）fnOS GetCloudDetail 解析未知字段
+#   changelog → nil pointer → 10111。mod13 对照实验：仅删 changelog 一行即安装成功。
 FPK_CHECKSUM="$(md5sum "$FPK_SRC/app.tgz" | awk '{print $1}')"
 cat > "$FPK_SRC/manifest" <<EOF
 appname               = ${APP_NAME}
@@ -183,7 +212,6 @@ service_port          = ${FPK_PROXY_PORT}
 checkport             = false
 ctl_stop              = true
 desc                  = DeepSeek AI 官方开源的 Agent Harness（智能体框架），飞牛 fnOS 原生应用。版本号与官方 dsh 同步（${FPK_VERSION}），门户打开自动携带 token 免密登录。
-changelog             = v${SPK_VERSION}（内嵌 dsh ${FPK_VERSION}）：品牌 DeepSeekHarness-NAS；版本号直接使用官方版本（不省略）；飞牛门户打开自动带 token（反代 302 + SameSite=Lax）；代理日志保留（/tmp/dsh-proxy.log）。
 source                = thirdparty
 wizard_dir            = wizard
 checksum              = ${FPK_CHECKSUM}

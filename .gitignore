@@ -17,7 +17,7 @@
 /build/tmpcheck/
 /build/spk-check*/
 /build/tmp/
-/build/.trash/
+/build/.trash*/
 /build/fix-nas2/
 *.bak*
 

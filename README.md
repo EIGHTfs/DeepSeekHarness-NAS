@@ -31,8 +31,9 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | 脚本 | 职责 | 参数 |
 |------|------|------|
 | `build/build-common.sh` | **公共**：pnpm install + pnpm build + 黑白名单裁剪 → `target` 整树 + `build-meta.env` | `[SRC] [SKIP_BUILD]` |
+| `build/build-npm-app.sh` | **FPK npm 链路（可选）**：npm 装官方包（`--omit=dev`，~100MiB）→ `build/spk-build/npm-app-<版本>/app_root` | `[VERSION]` |
 | `build/build-spk.sh` | 消费 target → 群晖 `.spk`（端口 30800/30801/30802） | 无 |
-| `build/build-fpk.sh` | 消费 target → 飞牛 `.fpk`（端口 3080/3081/3082） | 无 |
+| `build/build-fpk.sh` | 消费 target → 飞牛 `.fpk`（端口 3080/3081/3082）；**`--npm` 消费 npm 链路 app_root**（默认源码 target 链路，双链路并存互不影响） | `[--npm]` |
 
 ```bash
 # ① 公共预编译（只跑一次，产出 target；全量约 15-20 分钟）
@@ -42,6 +43,10 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 # ② 打包（消费 ① 的 target；无参数，配置读 build-config.yaml）
 ./build/build-spk.sh                           # → build/staging/<APP_NAME>_x86_64-<SPK版本>.spk
 ./build/build-fpk.sh                           # → build/staging/<APP_NAME>_x86-<FPK版本>.fpk
+
+# ②' FPK npm 链路（可选）：npm 装官方包，无需源码编译，~100MiB
+./build/build-npm-app.sh 0.1.5-rc.2            # 下载 node 24.4.0 + npm install 官方包（幂等，重跑秒级）
+./build/build-fpk.sh --npm                     # 消费 npm app_root → 同路径 fpk（默认源码链路不受影响）
 ```
 
 **参数与配置来源**（已精简，去掉「套件类型 / 套件说明 / 品牌名」三个参数）：
@@ -128,9 +133,9 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
   3. **start.sh cmd_start 运行时自愈** — 启动时幂等重建软链，fallback 链 `/usr/bin` → `/usr/local/bin` → `$HOME/.local/bin`（先 `mkdir -p` 父目录；DSM 服务以套件用户运行，系统目录不可写时落到套件 HOME）
 - 数据目录：`/var/packages/DeepSeekHarness-NAS/target/var/data` 与 `.dsh-home/.dsh`
 
-### 飞牛 fnOS（.fpk）
+### 飞牛 fnOS（.fpk)
 
-> 打包使用官方工具 fnpack（`tools/fnpack`，飞牛系统 `/usr/local/bin/fnpack`），见 `docs/DEVELOPMENT-fpk打包-20260822.md`。fpk 应用体与 spk 同源（官方 dsh 版本），门户打开自动带 token，机制与 spk 相同。
+> 打包与错误码速查固化在 skill：`fnos-fpk-package-guide`（见技能仓库 `ai-work-archive/skills/execution-执行/`）——官方 fnpack、手动 tar+gzip 兜底、manifest 字段（**禁止 changelog 字段**，实测触发 10111）、CPU 配额/共存部署/污染防再犯均在；`fnos-fpk-error-table` 为安装错误码速查表。fpk 应用体与 spk 同源（官方 dsh 版本），门户打开自动带 token，机制与 spk 相同。
 
 ---
 
