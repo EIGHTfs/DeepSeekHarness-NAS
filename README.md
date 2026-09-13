@@ -104,10 +104,24 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 ```
 
 - Web 入口：DSM 桌面套件图标（网页端打开＝携带 token 的第一步），或访问 `http://<NAS-IP>:30800`
-- **门户免密原理**（以下为平台设计要点）：
-  1. **群晖 Web 打开才带 token** — DSM 网页（桌面套件图标 / 应用中心）打开套件入口时，浏览器请求才携带 token（同 aria2 等套件的「打开」方式）；
-  2. **带过 token，局域网访问就不用带 token** — 首次经网页端带 token 打开后，浏览器已有访问凭证（会话），此后直接访问 `http://<NAS-IP>:30800` 即免密；
+- **门户免密原理（权威设计·禁止改动，参考 SA6400 Iventoy 套件「打开」机制）**：
+  1. **群晖 Web 打开才带 token** — DSM 网页（桌面套件图标 / 应用中心）打开套件入口时，浏览器请求才携带 token（同 aria2 / Iventoy 等套件的「打开」方式）；**直接地址栏访问 `http://<NAS-IP>:30800` 不携带 token**；
+  2. **带过 token，局域网访问就不用带 token** — 首次经网页端带 token 打开后，浏览器已有访问凭证（会话 cookie），此后直接访问 `http://<NAS-IP>:30800` 即免密；
   3. **反之，Web 没打开过（没带过 token）的直接访问，因为没有带过 token 而无法访问** — 未从网页端建立过凭证的请求不会放行。
+  - **实现落点**（`scripts/start.sh.example` 反代段 + 打包脚本 gen_start_sh / gen-portal）：入口收敛 `isDirectAccess()` 判定 + 门户打开时自动 `302 ?token=` 完成认证（认证后 303 收敛干净 URL）；`SameSite=Strict → Lax` 改写解决跨 scheme cookie 丢弃；401 兜底自动重认证。
+  - **禁止**：反代不得对「无访问凭证的任意请求」无条件附加 token（会破坏第 3 条，等于开放无鉴权访问）；不得删除 `isDirectAccess()` 入口收敛（否则直连也免密）。
+  - **入口收敛判定**（`scripts/start.sh.example`，实测 2026-09-13 VirtualDSM 0.1.5）：只对文档级导航（`Sec-Fetch-Dest: document/iframe/frame`）设卡，页面内 XHR/WS 一律放行；`Sec-Fetch-Site: none` = 地址栏直连 → 403；无 `Sec-Fetch-*` 头（旧 WebView）退化为 Referer 同主机判定；`cross-site` 且异主机 Referer = 外站跳入 → 403；DSM 门户 https:5001 → http:30800（同主机跨 scheme）与 fnOS 门户 iframe 均放行 → 302 带 token；已持 `dsh-auth` cookie → 无条件放行。
+  - **验收标准（7 场景实测清单，2026-09-13 193 VirtualDSM 卸载重装全过）**：
+
+| # | 场景 | 请求特征 | 预期 | 实测 |
+|---|---|---|---|---|
+| 1 | 地址栏直连 | `Sec-Fetch-Site: none` | 403「请从套件图标打开」 | ✅ 403 |
+| 2 | DSM 门户打开 | `cross-site` + 同主机 Referer | 302 → `?token=` | ✅ 302 |
+| 3 | DSM 门户 Referer 被剥 | `cross-site` 无 Referer | 302 → `?token=` | ✅ 302 |
+| 4 | 外站链接跳入 | `cross-site` + 异主机 Referer | 403 | ✅ 403 |
+| 5 | 带 token 认证 | `?token=` 访问 | 303 收敛 + 种 `dsh-auth` cookie | ✅ 303+cookie |
+| 6 | 认证后直连 | 带 cookie + `none` | 200 免密 | ✅ 200 |
+| 7 | HTML polyfill 注入 | 认证后页面 | 含 `randomUUID`/`ownsHost` polyfill | ✅ 10 处 |
 - **支持命令行 dsh** — 套件安装/修复后自动建立 `/usr/bin/dsh` 软链，SSH 登录 NAS 后直接敲 `dsh` 即可使用 DSH CLI（无需进入套件目录）。**软链三通道**（实测 DSM 7.4.1 安装时不执行 installer hooks，单靠 postinst 会失效）：
   1. **installer 三 hook** — postinst / prereplace / postreplace / postupgrade 统一走 `setup_pkg_env`（建版本目录 + chown + 建软链），DSM 走脚本管理路径时生效；
   2. **远程安装 root 补建** — `install-remote-spk.sh`（网页安装/修复同源）装完以 root `ln -sf` 补建 `/usr/bin/dsh`（本次实测生效，最可靠通道）；
@@ -380,7 +394,7 @@ sudo synopkg stop deepseek-harness-nas
 
 | 版本 | 内嵌 dsh | 说明 |
 |------|----------|------|
-| 0.1.5 (2026-09-13) | 0.1.5-rc.2 | **打包脚本三脚本拆分**：原 `build.sh`（spk+fpk 混合 1216 行）拆为 `build-common.sh`（公共预编译：pnpm install+build+黑白名单裁剪 → target + `build-meta.env` 元数据）、`build-spk.sh`、`build-fpk.sh`（各自消费 target，端口/名字/描述读 `build-config.yaml` + meta，无参数）；**参数精简**（去掉套件类型 / 套件说明 / 品牌名，源码目录缺省通配 `src/deepseek-ai/*`）；**首启构建逻辑抽离留档**（`ensure_built` + 构建进度占位页 204 行移入 `scripts/first-build-logic.sh`，完整预构建包免构建）；`gen-portal` 新增 `--key-id`（FPK 门户键名带连字符与 manifest 对齐，SPK 不传即原行为）；实测 SPK 174MB / FPK 173MB 打包通过，与 release 包逐文件 diff 仅 `start.sh`+`var/ports` 两处差异（即上述改动），其余 71224 个文件字节级一致 |
+| 0.1.5 (2026-09-13) | 0.1.5-rc.2 | **入口收敛（门户 token 免密权威实现，实测通过）**：start.sh 反代区分「套件门户打开」与「局域网直连」——套件图标打开（DSM 桌面 https:5001→http:30800 / fnOS 应用 iframe）302 无条件带 token 免密；地址栏直连（`Sec-Fetch-Site: none` / 无 Referer）403 提示「请从套件图标打开」；外站链接跳入（异主机 Referer）403；已持 dsh-auth cookie 直连放行（带过 token 即免密）。SameSite=Strict→Lax 改写保跨 scheme cookie。**产物命名改 `<APP_NAME>_<平台>-<版本>.<spk|fpk>`（去 -dist）**；**GitHub Actions 自动构建**（复用 fetch-dsh-latest.sh 拉官方源，SPK 构建，FPK 分支注释）；**脚本执行位修正**（git 索引 100755）。实测：193 VirtualDSM 卸载重装 0.1.5，7 场景全过（直连 403 / 门户 302 带 token / 认证后直连免密 200） |
 | 0.1.5 (2026-09-12) | 0.1.5-rc.2 | **dsh 软链三通道**（installer 三 hook + 远程 root 补建 + start.sh 运行时自愈；实测 DSM 7.4.1 安装不执行 installer hooks，root 补建为可靠通道）；start.sh.spk 母版动态生成（build.sh gen_start_sh 替换端口占位符，含端口等配置）；群晖无 `ss` 改用 `netstat`；installer 补 prereplace/postreplace（替换安装也建软链+版本目录）；网页 repair 远程真清理（传 host/user）；**pnpm 随附 + `/usr/bin/pnpm` 软链**（bin/pnpm 包装器，三通道同 dsh）；**废弃精简/源码包模式，唯一预构建产物包**（删 SLIM 参数；裁剪=平台变体+devDeps 动态清单+claude/codex+src/docs，副本实测 dsh+web 正常，压缩 ~274MB） |
 | 0.1.5 (2026-09-11) | 0.1.5-rc.2 | 升级到官方 dsh-v0.1.5-rc.2；门户修复（dsmappname 键名一致 + ui/config 用官方 url 字段）；平台裁剪（自动删除非 linux-x64 原生二进制 ~1.4GB）；pnpm store 只读分区修复（HOME 绕过）；build-excludes.json 外置排除规则；大小门禁 500MB |
 | 0.1.5 (2026-09-10) | 0.1.5-alpha.1 | 工作区五类归置（src/assets/scripts/build/docs/release）；分类目录路径参数化（环境变量+config+默认三级）；精简包随附 pnpm + pnpm-bridge；精简包 native 预置跳过编译；首启构建免 git（DSH_CLIENT_COMMIT_HASH 兜底）；四种打包方式矩阵（后废弃精简/源码包模式） |

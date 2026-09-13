@@ -421,9 +421,72 @@ async function main() {
 
   const polyfill = buildPolyfillScript();
 
-  // ===== 局域网访问自动认证:无 dsh 会话时 302 自动带 token =====
+  // ===== 入口收敛：区分「套件门户打开」与「局域网直连」 =====
+  // 原理三条（用户确立，禁止改动）：
+  //   1) 套件打开才带 token —— DSM 桌面图标 / fnOS 应用图标打开（门户来源）才 302 无条件带 token；
+  //   2) 带过 token 直访免密 —— 浏览器已持 dsh-auth cookie，此后直连 http://<NAS-IP>:30800 放行；
+  //   3) 从未带过 token 的直连进不来 —— 无 cookie 且非门户来源（地址栏直连 sec-fetch-site=none）→ 403。
+  const hostnameFromHostHeader = (hostHeader) => {
+    if (!hostHeader) return '';
+    try { return new URL(`http://${hostHeader}`).hostname; } catch (e) { return ''; }
+  };
+  const hostnameFromReferer = (referer) => {
+    if (!referer) return '';
+    try { return new URL(referer).hostname; } catch (e) { return ''; }
+  };
+  // 只对文档级导航设卡（地址栏直连 / 顶层跳转 / iframe 首次加载）：
+  // 页面内的脚本、样式、接口调用与 WebSocket 握手一律放行（否则打死应用）。
+  const isDirectAccess = (req) => {
+    const dest = req.headers['sec-fetch-dest'];
+    let isNav;
+    if (dest !== undefined) {
+      isNav = dest === 'document' || dest === 'iframe' || dest === 'frame';
+    } else {
+      // 老旧 WebView 不发 Sec-Fetch-*，退化为「请求 HTML 的 GET/HEAD」判定
+      isNav = (req.method === 'GET' || req.method === 'HEAD') && (req.headers.accept || '').includes('text/html');
+    }
+    if (!isNav) return false;                                   // 应用内请求放行
+    if (req.url && req.url.includes('token=')) return false;    // 已带 token 放行
+    const site = req.headers['sec-fetch-site'];
+    if (site === 'none') return true;                           // 地址栏直连铁证
+    if (!site) {                                                // 旧浏览器无该头：Referer 同主机才算门户打开
+      const refHost = hostnameFromReferer(req.headers.referer);
+      if (!refHost) return true;                                // 无 Referer = 直连
+      return refHost !== hostnameFromHostHeader(req.headers.host);
+    }
+    // cross-site 且 Referer 明确是外站（非本机）→ 拦；DSM 门户 https→http 可能剥 Referer，按门户放行
+    if (site === 'cross-site' && req.headers.referer) {
+      const refHost = hostnameFromReferer(req.headers.referer);
+      if (refHost && refHost !== hostnameFromHostHeader(req.headers.host)) return true;
+    }
+    return false;                                               // same-origin/same-site/同机 cross-site → 门户，放行
+  };
+  const FORBIDDEN_PAGE = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>请从套件图标打开 - DeepSeek Harness</title>
+<style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f6f8;color:#1f2329;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+.card{max-width:30rem;padding:2.5rem;background:#fff;border-radius:12px;box-shadow:0 2px 16px rgba(0,0,0,.08);text-align:center}
+h1{margin:0 0 1rem;font-size:1.25rem}
+p{margin:.5rem 0;line-height:1.7;color:#4e5969}
+code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>无法直接访问</h1>
+<p>DeepSeek Harness 仅支持从<strong>套件图标</strong>打开。</p>
+<p>请返回 <strong>群晖桌面 / 飞牛桌面</strong>，点击 <code>DeepSeek Harness</code> 应用图标进入。</p>
+</div>
+</body>
+</html>`;
+
+  // ===== 套件门户打开自动认证:门户来源且无 dsh 会话时 302 无条件带 token =====
   // DSM 门户（桌面套件图标）承担登录墙：只有登录 DSM 的用户才进得了门户、点得到套件。
-  // __PROXY_PORT__ 这里只做一件事——请求若无 dsh 会话，302 到 ?token=...，
+  // 门户打开＝携带 token 的唯一入口：请求无 dsh 会话时 302 到 ?token=...，
   // dsh 收到 token 会自行 303 到干净 URL 并种下 dsh-auth cookie，地址栏 token 随即自动隐藏。
   const autoAuthRedirect = (clientReq, clientRes) => {
     const sep = clientReq.url.includes('?') ? '&' : '?';
@@ -435,14 +498,21 @@ async function main() {
   };
 
   const proxyServer = http.createServer((clientReq, clientRes) => {
-    // ===== 自动带 token:GET 且未持 dsh-auth cookie 且不在认证中 → 302 带 token =====
     const cookieHeader = clientReq.headers.cookie || '';
     try {
-      require('fs').appendFileSync('/tmp/dsh-proxy.log', `[${new Date().toISOString()}] REQ ${clientReq.method} ${clientReq.url} cookie="${cookieHeader.slice(0,120)}"\n`);
+      require('fs').appendFileSync('/tmp/dsh-proxy.log', `[${new Date().toISOString()}] REQ ${clientReq.method} ${clientReq.url} cookie="${cookieHeader.slice(0,120)}" sf="${clientReq.headers['sec-fetch-site']||''}" ref="${(clientReq.headers.referer||'').slice(0,80)}"\n`);
     } catch {}
+    // ② 已持 dsh-auth cookie → 直连也放行（带过 token 即免密）
+    const hasAuth = cookieHeader.includes('dsh-auth');
+    if (!hasAuth && isDirectAccess(clientReq)) {
+      clientRes.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      clientRes.end(FORBIDDEN_PAGE);
+      return;
+    }
+    // ① 门户打开（无 cookie 且非直连）→ 302 无条件带 token
     if (dshToken && clientReq.method === 'GET' &&
         !clientReq.url.includes('token=') &&
-        !cookieHeader.includes('dsh-auth') &&
+        !hasAuth &&
         !clientReq.headers.upgrade) {
       autoAuthRedirect(clientReq, clientRes);
       return;
