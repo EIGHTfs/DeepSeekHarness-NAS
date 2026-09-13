@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DSH 安装工具 - DeepSeekHarness-NAS</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding: 24px;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 720px;
+            width: 100%;
+            padding: 36px;
+            margin: 10px 0;
+        }
+        h1 { color: #333; margin-bottom: 8px; font-size: 24px; }
+        .subtitle { color: #666; margin-bottom: 24px; font-size: 14px; }
+        .form-group { margin-bottom: 16px; }
+        label { display: block; color: #555; font-size: 14px; margin-bottom: 6px; font-weight: 500; }
+        input, select {
+            width: 100%; padding: 11px 14px;
+            border: 2px solid #e0e0e0; border-radius: 8px;
+            font-size: 14px; transition: border-color 0.3s;
+        }
+        input:focus, select:focus { outline: none; border-color: #667eea; }
+        .row { display: flex; gap: 12px; }
+        .row .form-group { flex: 1; }
+        .btn {
+            width: 100%; padding: 13px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; border: none; border-radius: 8px;
+            font-size: 15px; font-weight: 600; cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4); }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .btn-group { display: flex; gap: 10px; margin-top: 14px; }
+        .btn-group .btn { flex: 1; }
+        .btn-secondary { background: #6c757d; }
+        .btn-green { background: linear-gradient(135deg, #43a047 0%, #2e7d32 100%); }
+        .btn-red { background: linear-gradient(135deg, #e53935 0%, #b71c1c 100%); }
+        .btn-sm { padding: 10px; font-size: 14px; }
+        .status {
+            margin-top: 18px; padding: 14px; border-radius: 8px;
+            font-size: 14px; display: none; line-height: 1.6;
+        }
+        .status.show { display: block; }
+        .status.info { background: #e3f2fd; color: #1976d2; }
+        .status.success { background: #e8f5e9; color: #2e7d32; }
+        .status.error { background: #ffebee; color: #c62828; }
+        .status.warn { background: #fff8e1; color: #f57f17; }
+        .log {
+            margin-top: 14px; padding: 14px; background: #1e1e1e; color: #d4d4d4;
+            border-radius: 8px; font-family: 'Courier New', monospace;
+            font-size: 12px; max-height: 320px; overflow-y: auto; display: none;
+            white-space: pre-wrap; word-break: break-all;
+        }
+        .log.show { display: block; }
+        .hint { font-size: 12px; color: #999; margin-top: 5px; }
+        .detect-result {
+            margin-top: 12px; padding: 12px 14px; border-radius: 8px;
+            font-size: 14px; display: none; line-height: 1.7;
+        }
+        .detect-result.show { display: block; }
+        .detect-result.dsm { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+        .detect-result.fnos { background: #e3f2fd; color: #1565c0; border: 1px solid #90caf9; }
+        .detect-result.unknown, .detect-result.error { background: #ffebee; color: #c62828; border: 1px solid #ef9a9a; }
+        .saved-indicator { color: #4caf50; font-size: 12px; margin-top: 5px; display: none; }
+        .saved-indicator.show { display: block; }
+        .server-info {
+            margin-top: 20px; padding: 12px; background: #f0f4ff;
+            border-radius: 8px; font-size: 12px; color: #555;
+            border: 1px dashed #a0b4ff; line-height: 1.8;
+        }
+        .server-info code { background: #e0e8ff; padding: 1px 6px; border-radius: 4px; }
+        .running-badge { display: inline-block; background: #fff3cd; color: #856404;
+            padding: 2px 10px; border-radius: 10px; font-size: 12px; margin-left: 8px; }
+        .divider { border: none; border-top: 1px solid #eee; margin: 22px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 DSH 安装工具</h1>
+        <p class="subtitle">远程探测系统 → 自动判定 SPK/FPK → 网页直接执行安装/卸载/检查</p>
+
+        <!-- ① 连接配置 -->
+        <div class="row">
+            <div class="form-group">
+                <label for="host">设备 IP 地址</label>
+                <input type="text" id="host" placeholder="例如：192.168.1.100" required>
+            </div>
+            <div class="form-group" style="max-width:110px;">
+                <label for="port">SSH 端口</label>
+                <input type="number" id="port" value="22" placeholder="22">
+            </div>
+        </div>
+        <div class="row">
+            <div class="form-group">
+                <label for="username">用户名</label>
+                <input type="text" id="username" placeholder="root 或管理员账号" required>
+            </div>
+            <div class="form-group">
+                <label for="password">密码</label>
+                <input type="password" id="password" placeholder="登录密码" required>
+            </div>
+        </div>
+
+        <button type="button" class="btn" id="saveBtn">💾 保存配置</button>
+        <div id="savedIndicator" class="saved-indicator">✓ 配置已保存到服务端</div>
+
+        <hr class="divider">
+
+        <!-- ② 探测系统 -->
+        <div class="form-group">
+            <label>🔍 远程系统探测</label>
+            <button type="button" class="btn" id="detectBtn">🔍 探测系统并自动判定 SPK / FPK</button>
+            <div id="detectResult" class="detect-result"></div>
+        </div>
+
+        <!-- ③ 包选择（探测后自动切换） -->
+        <div class="form-group">
+            <label for="pkg">安装包（探测后自动匹配）</label>
+            <select id="pkg" disabled>
+                <option value="">— 先保存配置并探测系统 —</option>
+            </select>
+            <p class="hint" id="pkgHint">探测到 群晖 DSM → 自动选 SPK；飞牛 fnOS → 自动选 FPK</p>
+        </div>
+
+        <!-- ④ 执行操作 -->
+        <div class="btn-group">
+            <button type="button" class="btn btn-green btn-sm" id="installBtn" disabled>📦 安装</button>
+            <button type="button" class="btn btn-sm" id="repairBtn" disabled style="background:linear-gradient(135deg,#ff9800,#e65100);">🔧 修复</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="checkBtn" disabled>🔎 检查</button>
+            <button type="button" class="btn btn-red btn-sm" id="uninstallBtn" disabled>🗑 卸载</button>
+        </div>
+
+        <div id="status" class="status"></div>
+        <div id="log" class="log"></div>
+
+        <div class="server-info">
+            <b>🔗 服务端</b><br>
+            配置文件：<code>install-config.json</code>（工作区根，网页保存 = 脚本读取，同一份）<br>
+            脚本调用：<code>scripts/install-remote-spk.sh</code>（install / uninstall / check / repair）<br>
+            日志文件：<code>install-server.log</code>
+            <button type="button" class="btn btn-sm" id="logBtn" style="width:auto;padding:4px 12px;margin-left:8px;display:inline;font-size:12px;background:#667eea;">📜 查看日志</button>
+            <br>
+            <span id="serverFlag">检测服务端…</span>
+        </div>
+        <div id="serverLog" class="log" style="margin-top:8px;max-height:240px;"></div>
+    </div>
+
+    <script>
+        const $ = id => document.getElementById(id);
+        const host = $('host'), port = $('port'), username = $('username'), password = $('password');
+        const saveBtn = $('saveBtn'), savedIndicator = $('savedIndicator');
+        const detectBtn = $('detectBtn'), detectResult = $('detectResult');
+        const pkg = $('pkg'), pkgHint = $('pkgHint');
+        const installBtn = $('installBtn'), repairBtn = $('repairBtn'), checkBtn = $('checkBtn'), uninstallBtn = $('uninstallBtn');
+        const status = $('status'), log = $('log'), serverFlag = $('serverFlag');
+
+        let currentSystem = '';     // dsm | fnos
+        let currentRunId = '';
+        let pollTimer = null;
+
+        function showStatus(msg, type) {
+            status.textContent = msg;
+            status.className = 'status show ' + type;
+        }
+        function hideStatus() { status.className = 'status'; status.textContent = ''; }
+        function appendLog(msg) {
+            log.innerHTML += (new Date().toLocaleTimeString() + ' ' + msg + '\n');
+            log.scrollTop = log.scrollHeight;
+        }
+        function setButtons(enable) {
+            [installBtn, repairBtn, checkBtn, uninstallBtn].forEach(b => { b.disabled = !enable || !currentSystem; });
+        }
+        function getFormData() {
+            return {
+                host: host.value.trim(),
+                port: port.value.trim(),
+                username: username.value.trim(),
+                password: password.value.trim(),
+                saved_at: new Date().toISOString()
+            };
+        }
+
+        // ── 配置保存 ──
+        saveBtn.addEventListener('click', async () => {
+            if (!host.value.trim() || !username.value.trim()) {
+                showStatus('请填写 IP 与用户名', 'error'); return;
+            }
+            saveBtn.disabled = true;
+            try {
+                const resp = await fetch('/api/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(getFormData())
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    savedIndicator.classList.add('show');
+                    showStatus('✅ 配置已保存（密码已脱敏，落盘保留供脚本使用）', 'success');
+                    await loadPackages();
+                } else {
+                    showStatus('❌ 保存失败: ' + data.error, 'error');
+                }
+            } catch (err) {
+                showStatus('❌ 服务端不可用: ' + err.message, 'error');
+            } finally { saveBtn.disabled = false; }
+        });
+
+        // ── 系统探测 ──
+        detectBtn.addEventListener('click', async () => {
+            if (!host.value.trim() || !username.value.trim() || !password.value.trim()) {
+                showStatus('请先填写 IP / 用户名 / 密码', 'error'); return;
+            }
+            detectBtn.disabled = true;
+            detectResult.className = 'detect-result show';
+            detectResult.textContent = '⏳ 正在探测 ' + host.value.trim() + ' ...';
+            hideStatus();
+            try {
+                const resp = await fetch('/api/detect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(getFormData())
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    currentSystem = data.system;
+                    detectResult.className = 'detect-result show ' + data.system;
+                    detectResult.innerHTML = '<b>' + data.hint + '</b><br>' +
+                        '命中特征: ' + (data.features && data.features.length
+                            ? data.features.map(f => '<code>' + f + '</code>').join(' ')
+                            : '（无）');
+                    await loadPackages();           // 探测后自动刷新包列表
+                    setButtons(true);
+                } else {
+                    currentSystem = '';
+                    detectResult.className = 'detect-result show error';
+                    detectResult.textContent = '❌ ' + (data.hint || '探测失败');
+                    setButtons(false);
+                }
+            } catch (err) {
+                currentSystem = '';
+                detectResult.className = 'detect-result show error';
+                detectResult.textContent = '❌ 服务端不可用: ' + err.message;
+                setButtons(false);
+            } finally { detectBtn.disabled = false; }
+        });
+
+        // ── 包列表（探测后自动切 spk/fpk）──
+        async function loadPackages() {
+            try {
+                const resp = await fetch('/api/packages');
+                const data = await resp.json();
+                if (!data.success) { pkgHint.textContent = '⚠️ 无法获取包列表'; return; }
+                const kind = currentSystem === 'dsm' ? 'spk' : (currentSystem === 'fnos' ? 'fpk' : null);
+                pkg.innerHTML = '';
+                if (!kind) {
+                    const opt = document.createElement('option');
+                    opt.value = ''; opt.textContent = '— 先探测系统 —';
+                    pkg.appendChild(opt); pkg.disabled = true;
+                    pkgHint.textContent = '探测到 群晖 DSM → 自动选 SPK；飞牛 fnOS → 自动选 FPK';
+                    return;
+                }
+                const list = (data[kind] || []);
+                if (!list.length) {
+                    const opt = document.createElement('option');
+                    opt.value = ''; opt.textContent = '（当前系统类型无可用包）';
+                    pkg.appendChild(opt); pkg.disabled = true;
+                    return;
+                }
+                list.forEach(item => {
+                    const opt = document.createElement('option');
+                    opt.value = item.path;
+                    opt.textContent = (item.full ? '【全量】' : '【精简】') + ' ' + item.name + ' (' + item.size + ')';
+                    pkg.appendChild(opt);
+                });
+                pkg.disabled = false;
+                pkgHint.textContent = '已按系统类型自动匹配：' + (kind === 'spk' ? 'SPK（群晖 DSM）' : 'FPK（飞牛 fnOS）') + '，共 ' + list.length + ' 个候选';
+            } catch (err) {
+                pkgHint.textContent = '⚠️ 包列表加载失败: ' + err.message;
+            }
+        }
+
+        // ── 执行脚本（install / check / uninstall）──
+        async function runCmd(cmd) {
+            if (!currentSystem) { showStatus('请先探测系统', 'error'); return; }
+            if ((cmd === 'install' || cmd === 'repair') && !pkg.value) { showStatus('请先选择安装包', 'error'); return; }
+            hideStatus();
+            log.classList.add('show');
+            appendLog('▶ 执行 ' + cmd + ' ...');
+            setButtons(false);
+            try {
+                const resp = await fetch('/api/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cmd, spk: pkg.value, system: currentSystem })
+                });
+                const data = await resp.json();
+                if (!data.success) { showStatus('❌ ' + data.error, 'error'); appendLog('❌ ' + data.error); setButtons(true); return; }
+                currentRunId = data.run_id;
+                showStatus('⏳ ' + cmd + ' 正在后台执行（长任务可刷新页面，任务继续跑）', 'info');
+                startPolling();
+            } catch (err) {
+                showStatus('❌ 服务端不可用: ' + err.message, 'error');
+                setButtons(true);
+            }
+        }
+
+        // ── 轮询任务状态 ──
+        function startPolling() {
+            stopPolling();
+            pollTimer = setInterval(async () => {
+                if (!currentRunId) return;
+                try {
+                    const resp = await fetch('/api/run-status?run_id=' + encodeURIComponent(currentRunId));
+                    const data = await resp.json();
+                    if (data.success) {
+                        const out = data.output || '';
+                        if (out) {
+                            log.innerHTML = '';
+                            const lines = out.split('\n');
+                            lines.forEach(l => appendLog(l));
+                        }
+                        if (data.status === 'done') {
+                            stopPolling();
+                            showStatus('✅ ' + data.cmd + ' 完成（退出码 0）', 'success');
+                            appendLog('══ 完成（退出码 0）══');
+                            setButtons(true);
+                        } else if (data.status === 'error') {
+                            stopPolling();
+                            showStatus('❌ ' + data.cmd + ' 失败（退出码 ' + data.exit_code + '）', 'error');
+                            appendLog('══ 失败（退出码 ' + data.exit_code + '）══');
+                            setButtons(true);
+                        }
+                    }
+                } catch (err) { /* 服务端瞬时不可用，下轮再试 */ }
+            }, 1500);
+        }
+        function stopPolling() {
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        }
+
+        installBtn.addEventListener('click', () => runCmd('install'));
+        repairBtn.addEventListener('click', () => {
+            if (!confirm('修复 = 清除全部残留 + 重装。确定？')) return;
+            runCmd('repair');
+        });
+        checkBtn.addEventListener('click', () => runCmd('check'));
+        uninstallBtn.addEventListener('click', () => {
+            if (!confirm('确定要远程卸载 ' + host.value.trim() + ' 上的套件吗？将停止并清除全部残留。')) return;
+            runCmd('uninstall');
+        });
+
+        // ── 页面加载：恢复配置 + 探测服务端 ──
+        async function loadServerConfig() {
+            try {
+                const resp = await fetch('/api/config');
+                const data = await resp.json();
+                if (data.success && data.config) {
+                    const c = data.config;
+                    if (c.host) host.value = c.host;
+                    if (c.port) port.value = c.port;
+                    if (c.username) username.value = c.username;
+                    if (c.password) { password.value = ''; password.placeholder = '（已保存，留空沿用）'; }
+                    serverFlag.textContent = '✅ 服务端在线，已恢复上次配置（' + c.host + '）';
+                } else {
+                    serverFlag.textContent = '✅ 服务端在线，暂无配置';
+                }
+            } catch (err) {
+                serverFlag.textContent = '⚠️ 服务端不可用（需启动 install-server.py）';
+            }
+        }
+        loadServerConfig();
+
+        // ── 日志查看 ──
+        const logBtn = $('logBtn'), serverLog = $('serverLog');
+        logBtn.addEventListener('click', async () => {
+            if (serverLog.classList.contains('show')) {
+                serverLog.classList.remove('show');
+                return;
+            }
+            try {
+                const resp = await fetch('/api/log?lines=200');
+                const data = await resp.json();
+                if (data.success) {
+                    serverLog.textContent = data.log || '（暂无日志）';
+                    serverLog.classList.add('show');
+                    serverLog.scrollTop = serverLog.scrollHeight;
+                }
+            } catch (err) {
+                serverLog.textContent = '获取日志失败: ' + err.message;
+                serverLog.classList.add('show');
+            }
+        });
+    </script>
+</body>
+</html>

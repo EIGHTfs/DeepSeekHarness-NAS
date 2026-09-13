@@ -1,0 +1,776 @@
+#!/bin/bash
+# ============================================================
+#  DSH 实例启动脚本 (dsh-v0.1.2-alpha.4) —— 自包含版
+#  数据区: <DSH_DIR>/.dsh-home/.dsh (自动定位)
+#  用法:   ./start.sh [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status]
+#
+#  ⚠ 本文件是【逻辑母版】，不是最终运行脚本：
+#     最终 start.sh 由 build-spk.sh / build-fpk.sh 依 build-config.yaml 生成，
+#     端口/appname 以 __PROXY_PORT__ / __DSH_PORT__ / __CONTAINER_PORT__ / __APP_NAME__
+#     占位符形式存在，生成时按配置注入（禁止在此写死端口与包名）。
+#  说明:   全部逻辑内嵌于本文件，无需外部 dsh-repair：
+#          自动定位 DSH 目录 / node / 启动入口
+#          → 清理旧实例 → 权限与目录修复 → 启动 DSH
+#          → 内置反代 (带 ownsHost polyfill + 自动重定向 ?token) + 容器页面
+#          → 支持 CLI 自定义 3 端口 (--proxy-port / --dsh-port / --container-port)
+#  tmp 文件按 UID 隔离，避免 sticky /tmp 下多用户冲突
+# ============================================================
+
+# ---------- 自动定位 ----------
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# 智能定位 DSH 实例目录：
+#   1) 脚本所在目录本身就是实例（默认部署）
+#   2) 逐级向上找（脚本副本放在实例内的工作区/子目录时）
+#   3) 同级子目录扫描（脚本副本放在实例的父目录时）
+find_dsh_dir() {
+  local is_instance d cur
+  is_instance() { [ -f "$1/apps/cli/lib/bin.js" ] || [ -f "$1/apps/cli/src/bin.ts" ] || [ -f "$1/node_modules/@deepseek-ai/dsh/lib/bin.js" ] || [ -f "$1/lib/bin.js" ]; }
+  if is_instance "$SCRIPT_DIR"; then
+    echo "$SCRIPT_DIR"; return 0
+  fi
+  cur="$SCRIPT_DIR"
+  for _ in 1 2 3 4 5 6 7 8; do
+    cur="$(dirname "$cur")"
+    [ "$cur" = "/" ] && break
+    if is_instance "$cur"; then
+      echo "$cur"; return 0
+    fi
+  done
+  for cand in "$SCRIPT_DIR"/*/; do
+    [ -d "$cand" ] || continue
+    if is_instance "${cand%/}"; then
+      echo "${cand%/}"; return 0
+    fi
+  done
+  echo "[!] 未找到 DSH 实例目录（apps/cli/src/bin.ts / lib/bin.js）" >&2
+  exit 1
+}
+# ---------- gen-portal：生成门户配置（ui/config）----------
+#   纯配置输出：端口取自 --proxy-port / 环境变量 / 母版占位符默认值；
+#   appname 取 __APP_NAME__ 占位符。**不依赖 DSH 实例**，故放在 detect_entry 之前。
+#   用法: ./start.sh gen-portal [--type url|iframe] [--key-prefix PREFIX] [--key-id NAME]
+#                               [--all-users true|false] [--with-url true|false]
+#                               [--proxy-port N]
+#   --key-id NAME   UI 键名主体（默认 __APP_ID__，去连字符；SPK 用默认即与 INFO dsmappname 一致，
+#                   FPK 需带连字符传 --key-id __APP_NAME__ 与 manifest desktop_applaunchname 对齐）
+if [ "${1:-}" = "gen-portal" ]; then
+  shift
+  _gp_type="url"; _gp_prefix="SYNO.SDS."; _gp_all="false"; _gp_url="false"
+  _gp_keyid="__APP_ID__"
+  _gp_proxy="${DSH_PROXY_PORT:-__PROXY_PORT__}"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --type=*)       _gp_type="${1#*=}" ; shift ;;
+      --type)         _gp_type="$2" ; shift 2 ;;
+      --key-prefix=*) _gp_prefix="${1#*=}" ; shift ;;
+      --key-prefix)   _gp_prefix="$2" ; shift 2 ;;
+      --key-id=*)     _gp_keyid="${1#*=}" ; shift ;;
+      --key-id)       _gp_keyid="$2" ; shift 2 ;;
+      --all-users=*)  _gp_all="${1#*=}" ; shift ;;
+      --all-users)    _gp_all="$2" ; shift 2 ;;
+      --with-url=*)   _gp_url="${1#*=}" ; shift ;;
+      --with-url)     _gp_url="$2" ; shift 2 ;;
+      --proxy-port=*) _gp_proxy="${1#*=}" ; shift ;;
+      --proxy-port)   _gp_proxy="$2" ; shift 2 ;;
+      *)              echo "[!] gen-portal 未知参数: $1" >&2 ; exit 1 ;;
+    esac
+  done
+  _gp_url_line=""
+  [ "$_gp_url" = "true" ] && _gp_url_line='
+            "url": "/",'
+  cat <<PORTAL_EOF
+{
+    ".url": {
+        "${_gp_prefix}${_gp_keyid}.Application": {
+            "type": "${_gp_type}",
+            "icon": "images/icon_{0}.png",
+            "title": "DeepSeek Harness",
+            "desc": "DeepSeek Harness Web UI",
+            "protocol": "http",
+            "port": "${_gp_proxy}",
+            "allUsers": ${_gp_all}
+        }
+    }
+}
+PORTAL_EOF
+  exit 0
+fi
+
+DSH_DIR="$(find_dsh_dir)"
+# 版本号（数据目录按版本隔离：TRIM_PKGVAR/<version>/，覆盖安装不覆盖旧数据）
+PKG_VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$DSH_DIR/package.json" 2>/dev/null | head -1)"
+[ -z "$PKG_VERSION" ] && PKG_VERSION="0.1.5-alpha.1"
+# 外部数据区优先：TRIM_PKGVAR（fnOS 生命周期注入）或 SYNOPKG_PKGVAR / PKG_VAR（群晖注入），按版本分子目录
+if [ -n "${TRIM_PKGVAR:-}" ]; then
+  DSH_HOME_PARENT="$TRIM_PKGVAR/$PKG_VERSION"
+  DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
+elif [ -n "${SYNOPKG_PKGVAR:-}" ]; then
+  DSH_HOME_PARENT="$SYNOPKG_PKGVAR/$PKG_VERSION"
+  DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
+elif [ -n "${PKG_VAR:-}" ]; then
+  DSH_HOME_PARENT="$PKG_VAR/$PKG_VERSION"
+  DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
+else
+  DSH_HOME_DIR="$DSH_DIR/.dsh-home/.dsh"
+  DSH_HOME_PARENT="$DSH_DIR/.dsh-home"
+fi
+
+find_node() {
+  # 1) 本实例自带 node（bin/node，与 start.sh 同目录 —— 相对路径，与包名无关，最稳）
+  # 2) 系统标准路径（/usr/local/bin /usr/bin）
+  # 3) PATH 兜底
+  for c in "$SCRIPT_DIR/bin/node" "$DSH_DIR/bin/node" \
+           "/usr/local/bin/node" "/usr/bin/node"; do
+    [ -x "$c" ] && { echo "$c"; return 0; }
+  done
+  command -v node 2>/dev/null
+}
+NODE_BIN="$(find_node)" || { echo "[!] 未找到 node 可执行文件" >&2; exit 1; }
+
+# ---------- 首启构建（已抽离留档 2026-09-13） ----------
+# 完整预构建包（-dist）已含 node_modules 与构建产物，装完即用、免首启构建。
+# 如需精简包首启构建逻辑（ensure_built + 构建进度占位页），
+# 见同级 scripts/first-build-logic.sh（抽离留档，实际打包不使用）。
+
+detect_entry() {
+  if [ -f "$DSH_DIR/apps/cli/lib/bin.js" ]; then
+    ENTRY="$DSH_DIR/apps/cli/lib/bin.js"; TSX=0
+  elif [ -f "$DSH_DIR/apps/cli/src/bin.ts" ]; then
+    ENTRY="$DSH_DIR/apps/cli/src/bin.ts"; TSX=1
+  elif [ -f "$DSH_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js" ]; then
+    ENTRY="$DSH_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js"; TSX=0
+  elif [ -f "$DSH_DIR/lib/bin.js" ]; then
+    ENTRY="$DSH_DIR/lib/bin.js"; TSX=0
+  elif [ -f "$DSH_DIR/apps/cli/lib/bin.js" ]; then
+    ENTRY="$DSH_DIR/apps/cli/lib/bin.js"; TSX=0
+  else
+    echo "[!] 未找到 DSH 启动入口（apps/cli/src/bin.ts / lib/bin.js）" >&2
+    exit 1
+  fi
+}
+
+detect_entry
+
+# ---------- CLI 参数解析 ----------
+DSH_CMD="${1:-start}"
+PROXY_PORT_ARG=""
+DSH_PORT_ARG=""
+CONTAINER_PORT_ARG=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --proxy-port=*)     PROXY_PORT_ARG="${1#*=}" ; shift ;;
+    --dsh-port=*)       DSH_PORT_ARG="${1#*=}" ; shift ;;
+    --container-port=*) CONTAINER_PORT_ARG="${1#*=}" ; shift ;;
+    --proxy-port)       PROXY_PORT_ARG="$2" ; shift 2 ;;
+    --dsh-port)         DSH_PORT_ARG="$2" ; shift 2 ;;
+    --container-port)   CONTAINER_PORT_ARG="$2" ; shift 2 ;;
+    start|stop|restart|status) DSH_CMD="$1" ; shift ;;
+    -h|--help)
+      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status]"
+      echo "  --proxy-port N       反代端口（默认 __PROXY_PORT__，环境变量 DSH_PROXY_PORT）"
+      echo "  --dsh-port N         DSH 内部端口（默认 __DSH_PORT__，环境变量 DSH_DSH_PORT）"
+      echo "  --container-port N   容器页面端口（默认 __CONTAINER_PORT__，环境变量 DSH_CONTAINER_PORT）"
+      exit 0
+      ;;
+    *)
+      echo "[!] 未知参数: $1" >&2
+      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status]" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# ---------- 端口 / tmp / IP ----------
+# 端口优先级：CLI 参数 > 环境变量 > 默认值
+PROXY_PORT="${PROXY_PORT_ARG:-${DSH_PROXY_PORT:-__PROXY_PORT__}}"
+DSH_PORT="${DSH_PORT_ARG:-${DSH_DSH_PORT:-__DSH_PORT__}}"
+CONTAINER_PORT="${CONTAINER_PORT_ARG:-${DSH_CONTAINER_PORT:-__CONTAINER_PORT__}}"
+PORT_LIST="$PROXY_PORT $DSH_PORT $CONTAINER_PORT"
+
+# 应用名（门户配置键名用；由打包脚本依 build-config.yaml 注入）
+APP_NAME="__APP_NAME__"
+
+TMP_SUFFIX="${UID:-$(id -u)}"
+PID_FILE="/tmp/dsh-repair-${TMP_SUFFIX}.pid"
+LOG_FILE="/tmp/dsh-repair-${TMP_SUFFIX}.log"
+
+LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+[ -n "$LAN_IP" ] || LAN_IP="<NAS-IP>"
+
+# sticky /tmp + fs.protected_regular=1：非属主无法截断他人文件。
+# 先截断；失败则 unlink 再新建（sticky 目录里文件所有者/root 可删）。
+ensure_tmpfile_writable() {
+  local f="$1"
+  if : > "$f" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$f" 2>/dev/null || true
+  if : > "$f" 2>/dev/null; then
+    return 0
+  fi
+  echo "[!] 无法写入 $f（请检查 /tmp 权限）" >&2
+  return 1
+}
+
+# ============================================================
+#  内嵌修复/守护代码（CommonJS）。启动 DSH + 反代 + 容器页，
+#  权限/目录修复，token 捕获，信号处理。所有输入走 DSH_REPAIR_* 环境变量。
+# ============================================================
+REPAIR_CODE=$(cat <<'DSH_REPAIR_EOF'
+'use strict';
+const { spawn, execSync } = require('child_process');
+const fs = require('fs');
+const http = require('http');
+const net = require('net');
+
+const dshDir = process.env.DSH_REPAIR_DIR;
+const dshHome = process.env.DSH_REPAIR_HOME;
+const home = process.env.DSH_REPAIR_HOME_PARENT;
+const nodeBin = process.env.DSH_REPAIR_NODE;
+const entry = process.env.DSH_REPAIR_ENTRY;
+const tsx = process.env.DSH_REPAIR_TSX === '1';
+const dshPort = parseInt(process.env.DSH_REPAIR_DSH_PORT || '__DSH_PORT__', 10);
+const proxyPort = parseInt(process.env.DSH_REPAIR_PROXY_PORT || '__PROXY_PORT__', 10);
+const containerPort = parseInt(process.env.DSH_REPAIR_CONTAINER_PORT || '__CONTAINER_PORT__', 10);
+const PID_FILE = process.env.DSH_REPAIR_PID_FILE;
+
+function writeTmpFile(file, content) {
+  try {
+    fs.writeFileSync(file, content, 'utf-8');
+    return;
+  } catch (err) {
+    const code = err && err.code;
+    if (code !== 'EACCES' && code !== 'EPERM') throw err;
+  }
+  try { fs.unlinkSync(file); } catch {}
+  fs.writeFileSync(file, content, 'utf-8');
+}
+
+// 权限修复（尽力而为；非属主时 EPERM 仅警告）
+function secureDshTree(dir) {
+  console.log(`[√] 收紧权限: ${dir}`);
+  try {
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dir, 0o700);
+    const walk = (d) => {
+      let entries;
+      try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+      for (const ent of entries) {
+        if (ent.name === '.' || ent.name === '..') continue;
+        const p = require('path').join(d, ent.name);
+        try {
+          if (ent.isSymbolicLink()) continue;
+          if (ent.isDirectory()) { fs.chmodSync(p, 0o700); walk(p); }
+          else { fs.chmodSync(p, 0o600); }
+        } catch {}
+      }
+    };
+    walk(dir);
+  } catch (error) {
+    console.error(`[!] 权限修复警告: ${error.message}`);
+  }
+}
+
+async function isPortInUse(port) {
+  return new Promise(resolve => {
+    const s = net.connect(port, '127.0.0.1');
+    s.once('connect', () => { s.destroy(); resolve(true); });
+    s.once('error', () => resolve(false));
+  });
+}
+
+function killOldProcesses() {
+  try {
+    const oldPid = fs.readFileSync(PID_FILE, 'utf-8').trim();
+    if (oldPid && String(oldPid) !== String(process.pid)) {
+      console.log(`[√] 停止旧实例 (PID ${oldPid})`);
+      try { process.kill(parseInt(oldPid, 10), 'SIGTERM'); } catch {}
+      try { process.kill(parseInt(oldPid, 10), 'SIGKILL'); } catch {}
+    }
+  } catch {}
+  try {
+    const out = execSync(
+      "ps -eo pid,args | grep -E 'bin\\.ts web|bin\\.js web' | grep -v grep | awk '{print $1}'",
+      { encoding: 'utf8' }
+    );
+    for (const pid of out.trim().split('\n').filter(Boolean)) {
+      try {
+        const cwd = fs.readlinkSync(require('path').join('/proc', pid, 'cwd'));
+        if (cwd === dshDir) {
+          console.log(`[√] 停止 DSH 子进程 (PID ${pid})`);
+          process.kill(parseInt(pid, 10), 'SIGKILL');
+        }
+      } catch {}
+    }
+  } catch {}
+  return new Promise(resolve => setTimeout(resolve, 2000));
+}
+
+function buildPolyfillScript() {
+  return `<script>
+(function() {
+  // ownsHost 声明：使 isLoopback=true → persistence='host' → settings 可用
+  try {
+    var g = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : this;
+    if (!g.__DSH_TRANSPORT__) { try { g.__DSH_TRANSPORT__ = {}; } catch(e){} }
+    if (g.__DSH_TRANSPORT__) {
+      try { Object.defineProperty(g.__DSH_TRANSPORT__, 'ownsHost', { value: true, writable: false, configurable: false }); }
+      catch(e) { g.__DSH_TRANSPORT__.ownsHost = true; }
+    }
+  } catch(e) { console.warn('[DSH] ownsHost:', e); }
+  // crypto.randomUUID polyfill（非安全上下文局域网修复）
+  function createUUID() {
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+      return '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, function(c) {
+        return (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16);
+      });
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+  try {
+    var g = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : this;
+    if (!g.crypto) { try { g.crypto = {}; } catch(e){} }
+    if (g.crypto) {
+      try { if (!g.crypto.randomUUID) { Object.defineProperty(g.crypto, 'randomUUID', { value: createUUID, writable: true, configurable: true, enumerable: true }); } }
+      catch(e) { g.crypto.randomUUID = createUUID; }
+    }
+  } catch(e) { console.warn('[DSH] randomUUID:', e); }
+})();
+</script>`;
+}
+
+function buildContainerHtml() {
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DSH 容器</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#000}
+iframe{width:100%;height:100%;border:none}
+</style>
+</head>
+<body>
+<script>
+// 统一走反代（带 polyfill + ownsHost）
+var host = window.location.hostname;
+document.write('<iframe src="http://' + host + ':' + ${proxyPort} + '/" id="dshFrame"></iframe>');
+</script>
+</body>
+</html>`;
+}
+
+async function main() {
+  console.log('═══════════════════════════════════════');
+  console.log('  DSH 修复/守护（内嵌于 start.sh）');
+  console.log('═══════════════════════════════════════');
+  console.log(`[√] DSH 目录: ${dshDir}`);
+  console.log(`[√] 启动入口: ${entry} (tsx=${tsx})`);
+  console.log(`[√] Node: ${nodeBin}`);
+  console.log(`[√] DSH_HOME: ${dshHome}`);
+
+  await killOldProcesses();
+  writeTmpFile(PID_FILE, String(process.pid));
+
+  try { fs.mkdirSync(dshHome, { recursive: true, mode: 0o700 }); } catch (e) { console.error(`[!] mkdir DSH_HOME: ${e.message}`); }
+  try { fs.mkdirSync(home, { recursive: true, mode: 0o700 }); } catch (e) {}
+  secureDshTree(dshHome);
+
+  let waitCount = 0;
+  while (waitCount < 10) {
+    const d = await isPortInUse(dshPort);
+    const p = await isPortInUse(proxyPort);
+    const c = await isPortInUse(containerPort);
+    if (!d && !p && !c) break;
+    await new Promise(r => setTimeout(r, 500));
+    waitCount++;
+  }
+  console.log(`[√] 端口: DSH=${dshPort}, 反代=${proxyPort}, 容器=${containerPort}`);
+
+  console.log(`[>] 启动 DSH (127.0.0.1:${dshPort})`);
+  const dshArgs = tsx
+    ? ['--import', 'tsx/esm', entry, 'web', '--host', '127.0.0.1', '--port', String(dshPort), '--no-open']
+    : ['--expose-internals', entry, 'web', '--host', '127.0.0.1', '--port', String(dshPort), '--no-open'];
+
+  const dshProcess = spawn(nodeBin, dshArgs, {
+    cwd: dshDir,
+    env: { ...process.env, DSH_HOME: dshHome, HOME: home },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+
+  let dshToken = '';
+  dshProcess.stdout.on('data', (chunk) => {
+    const s = chunk.toString();
+    process.stdout.write(s);
+    const m = s.match(/token=([A-Za-z0-9_-]+)/);
+    if (m) dshToken = m[1];
+  });
+
+  dshProcess.on('exit', (code, sig) => {
+    console.log(`[!] DSH 退出 code=${code} signal=${sig}`);
+    setTimeout(() => process.exit(code || 0), 1000);
+  });
+
+  await new Promise(r => setTimeout(r, 3000));
+
+  const polyfill = buildPolyfillScript();
+
+  // ===== 局域网访问自动认证:无 dsh 会话时 302 自动带 token =====
+  // DSM 门户（桌面套件图标）承担登录墙：只有登录 DSM 的用户才进得了门户、点得到套件。
+  // __PROXY_PORT__ 这里只做一件事——请求若无 dsh 会话，302 到 ?token=...，
+  // dsh 收到 token 会自行 303 到干净 URL 并种下 dsh-auth cookie，地址栏 token 随即自动隐藏。
+  const autoAuthRedirect = (clientReq, clientRes) => {
+    const sep = clientReq.url.includes('?') ? '&' : '?';
+    clientRes.writeHead(302, {
+      'Location': clientReq.url + sep + 'token=' + dshToken,
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+    });
+    clientRes.end();
+  };
+
+  const proxyServer = http.createServer((clientReq, clientRes) => {
+    // ===== 自动带 token:GET 且未持 dsh-auth cookie 且不在认证中 → 302 带 token =====
+    const cookieHeader = clientReq.headers.cookie || '';
+    try {
+      require('fs').appendFileSync('/tmp/dsh-proxy.log', `[${new Date().toISOString()}] REQ ${clientReq.method} ${clientReq.url} cookie="${cookieHeader.slice(0,120)}"\n`);
+    } catch {}
+    if (dshToken && clientReq.method === 'GET' &&
+        !clientReq.url.includes('token=') &&
+        !cookieHeader.includes('dsh-auth') &&
+        !clientReq.headers.upgrade) {
+      autoAuthRedirect(clientReq, clientRes);
+      return;
+    }
+    // ===== 以下为原有反代逻辑 =====
+    // 不设置 x-forwarded-for / x-real-ip / forwarded：
+    // 插件的重启接口要求 "loopback 直连且无代理转发痕迹"（trustedRestartRequest）
+    const headers = {
+      ...clientReq.headers,
+      'x-forwarded-proto': 'http',
+      'x-forwarded-host': clientReq.headers.host || `0.0.0.0:${proxyPort}`,
+      host: `127.0.0.1:${dshPort}`,
+    };
+    delete headers['x-forwarded-for'];
+    delete headers['x-real-ip'];
+    delete headers.forwarded;
+    if (clientReq.headers.origin) headers.origin = `http://127.0.0.1:${dshPort}`;
+    if (clientReq.headers.referer) headers.referer = `http://127.0.0.1:${dshPort}/`;
+    if (headers['sec-fetch-site'] === 'cross-site') headers['sec-fetch-site'] = 'same-origin';
+    const isHtml = clientReq.url === '/' || clientReq.url.endsWith('.html') || !clientReq.url.includes('.');
+    if (isHtml) delete headers['accept-encoding'];
+
+    const options = { hostname: '127.0.0.1', port: dshPort, path: clientReq.url, method: clientReq.method, headers };
+    const proxyReq = http.request(options, (proxyRes) => {
+      try {
+        require('fs').appendFileSync('/tmp/dsh-proxy.log', `[${new Date().toISOString()}] RESP ${clientReq.method} ${clientReq.url} → dsh ${proxyRes.statusCode} set-cookie=${(proxyRes.headers['set-cookie']||[]).length} loc=${(proxyRes.headers.location||'').slice(0,60)}\n`);
+      } catch {}
+      // ===== Set-Cookie 改写：SameSite=Strict → Lax =====
+      // DSM 门户走 https://…:5001，而套件是 http://…:__PROXY_PORT__，跨 scheme 在浏览器里算跨站；
+      // Strict cookie 在跨站导航链中不被接受/携带 → 若不改写，浏览器永远收不到 dsh-auth
+      // cookie，每次都被重新 302 带 token，产生 ERR_TOO_MANY_REDIRECTS。Lax 允许顶层导航携带。
+      const fixSetCookie = (resHeaders) => {
+        const fix = (c) => (typeof c === 'string' ? c.replace(/;\s*SameSite=Strict/gi, '; SameSite=Lax') : c);
+        if (resHeaders['set-cookie']) {
+          if (Array.isArray(resHeaders['set-cookie'])) resHeaders['set-cookie'] = resHeaders['set-cookie'].map(fix);
+          else resHeaders['set-cookie'] = fix(resHeaders['set-cookie']);
+        }
+      };
+      // ===== 认证失效兜底：dsh 返回 401 authentication required =====
+      // 覆盖「浏览器残留旧/过期 cookie」场景。改用 302 自动带 token 重新认证。
+      if (dshToken && proxyRes.statusCode === 401 && clientReq.method === 'GET' &&
+          !clientReq.url.includes('token=') && !clientReq.headers.upgrade) {
+        proxyRes.resume();
+        autoAuthRedirect(clientReq, clientRes);
+        return;
+      }
+      const isHtmlResp = (proxyRes.headers['content-type'] || '').includes('text/html');
+      if (isHtmlResp) {
+        let chunks = [];
+        proxyRes.on('data', chunk => chunks.push(chunk));
+        proxyRes.on('end', () => {
+          let body = Buffer.concat(chunks).toString('utf-8');
+          if (body.includes('<head>')) body = body.replace('<head>', `<head>${polyfill}`);
+          else body = polyfill + body;
+          const resHeaders = { ...proxyRes.headers };
+          delete resHeaders['content-length'];
+          resHeaders['content-length'] = Buffer.byteLength(body, 'utf-8');
+          resHeaders['cache-control'] = 'no-store, no-cache, must-revalidate';
+          resHeaders['pragma'] = 'no-cache';
+          fixSetCookie(resHeaders);
+          clientRes.writeHead(proxyRes.statusCode, resHeaders);
+          clientRes.end(body);
+        });
+      } else {
+        const resHeaders = { ...proxyRes.headers };
+        resHeaders['cache-control'] = 'no-store, no-cache, must-revalidate';
+        resHeaders['pragma'] = 'no-cache';
+        fixSetCookie(resHeaders);
+        clientRes.writeHead(proxyRes.statusCode, resHeaders);
+        proxyRes.pipe(clientRes, { end: true });
+      }
+    });
+    proxyReq.on('error', () => {
+      if (!clientRes.headersSent) {
+        clientRes.writeHead(502, { 'Content-Type': 'text/html; charset=utf-8' });
+        clientRes.end('<h3>DSH 正在启动中，请稍候刷新...</h3>');
+      }
+    });
+    clientReq.pipe(proxyReq, { end: true });
+  });
+
+  proxyServer.on('upgrade', (req, socket, head) => {
+    const headers = { ...req.headers, host: `127.0.0.1:${dshPort}` };
+    if (headers.origin) headers.origin = `http://127.0.0.1:${dshPort}`;
+    if (headers['sec-fetch-site'] === 'cross-site') headers['sec-fetch-site'] = 'same-origin';
+    const proxySocket = net.connect(dshPort, '127.0.0.1', () => {
+      proxySocket.write(`${req.method} ${req.url} HTTP/${req.httpVersion}\r\n` +
+        Object.entries(headers).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n\r\n');
+      if (head && head.length) proxySocket.write(head);
+      socket.pipe(proxySocket); proxySocket.pipe(socket);
+    });
+    proxySocket.on('error', () => socket.destroy());
+    socket.on('error', () => proxySocket.destroy());
+  });
+
+  proxyServer.listen(proxyPort, '0.0.0.0', () => {
+    console.log(`[√] 反代: http://0.0.0.0:${proxyPort} -> http://127.0.0.1:${dshPort}`);
+  });
+
+  const containerHtml = buildContainerHtml();
+  const containerServer = http.createServer((req, res) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'Pragma': 'no-cache',
+    });
+    res.end(containerHtml);
+  });
+  containerServer.listen(containerPort, '0.0.0.0', () => {
+    console.log(`[√] 容器: http://0.0.0.0:${containerPort}/`);
+  });
+
+  let tokenWait = 0;
+  while (!dshToken && tokenWait < 40) {
+    await new Promise(r => setTimeout(r, 500));
+    tokenWait++;
+  }
+
+  console.log('═══════════════════════════════════════');
+  console.log('  DSH 修复完成');
+  console.log('═══════════════════════════════════════');
+  if (dshToken) {
+    console.log(`  首次认证: http://127.0.0.1:${dshPort}/?token=${dshToken}`);
+    console.log(`  首次认证: http://<NAS-IP>:${proxyPort}/?token=${dshToken}`);
+    console.log('');
+  }
+  console.log(`  认证后访问: http://<NAS-IP>:${proxyPort}/`);
+  console.log(`  容器页面: http://<NAS-IP>:${containerPort}/`);
+  console.log('═══════════════════════════════════════');
+
+  function shutdown(signal) {
+    console.log(`\n[!] 收到 ${signal}，正在停止...`);
+    try { fs.unlinkSync(PID_FILE); } catch {}
+    try { if (dshProcess && !dshProcess.killed) dshProcess.kill('SIGKILL'); } catch {}
+    try { proxyServer.close(); } catch {}
+    try { containerServer.close(); } catch {}
+    process.exit(0);
+  }
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGHUP', () => shutdown('SIGHUP'));
+}
+
+main().catch(err => {
+  console.error('[!] 修复失败:', err.message);
+  try { fs.unlinkSync(PID_FILE); } catch {}
+  process.exit(1);
+});
+DSH_REPAIR_EOF
+)
+
+# ---------- 工具 ----------
+is_running() {
+  [ -f "$PID_FILE" ] || return 1
+  local pid
+  pid=$(cat "$PID_FILE" 2>/dev/null)
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+get_token() {
+  grep -o 'token=[A-Za-z0-9_-]*' "$LOG_FILE" 2>/dev/null | tail -1 | cut -d= -f2
+}
+
+# ---------- start ----------
+cmd_start() {
+  # dsh 命令软链：让系统里直接敲 `dsh` 调 DSH CLI（优先 /usr/bin——
+  # 群晖 SSH 的 PATH 只含 /usr/bin:/bin:/usr/sbin:/sbin，不含 /usr/local/bin）。
+  # 放在 is_running 之前：无论 DSH 是否已在运行，start 时都确保软链存在；
+  # 否则若软链丢失而 DSH 仍在运行，会被下面 is_running 短路跳过永远不重建。
+  # ln -sf 幂等（已存在则覆盖式更新），重复执行无害。
+  # 注：DSM 的 synopkg 服务以套件用户（非 root）运行本脚本，/usr/bin、/usr/local/bin
+  #   均不可写；此时兜底建到 $HOME/.local/bin（须先 mkdir -p，ln 不自动建父目录）。
+  if [ -f "$DSH_DIR/bin/dsh" ]; then
+    if ! ln -sf "$DSH_DIR/bin/dsh" /usr/bin/dsh 2>/dev/null; then
+      if ! ln -sf "$DSH_DIR/bin/dsh" /usr/local/bin/dsh 2>/dev/null; then
+        mkdir -p "$HOME/.local/bin" 2>/dev/null
+        ln -sf "$DSH_DIR/bin/dsh" "$HOME/.local/bin/dsh" 2>/dev/null || true
+      fi
+    fi
+  fi
+  # pnpm 命令软链：让系统里直接敲 `pnpm` 调随包 pnpm（与 dsh 同款 fallback 链）
+  if [ -f "$DSH_DIR/bin/pnpm" ]; then
+    if ! ln -sf "$DSH_DIR/bin/pnpm" /usr/bin/pnpm 2>/dev/null; then
+      if ! ln -sf "$DSH_DIR/bin/pnpm" /usr/local/bin/pnpm 2>/dev/null; then
+        mkdir -p "$HOME/.local/bin" 2>/dev/null
+        ln -sf "$DSH_DIR/bin/pnpm" "$HOME/.local/bin/pnpm" 2>/dev/null || true
+      fi
+    fi
+  fi
+  if is_running; then
+    echo "DSH 已在运行 (PID $(cat "$PID_FILE"))"
+    local TOKEN
+    TOKEN=$(get_token)
+    if [ -n "$TOKEN" ]; then
+      echo "  Token: $TOKEN"
+      echo "  局域网访问: http://${LAN_IP}:${PROXY_PORT}/?token=$TOKEN"
+    fi
+    return 0
+  fi
+  echo "启动 DSH ..."
+  # PATH 前置用户级 pnpm wrapper（如需 pnpm 插件安装）
+  export PATH="$HOME/.local/bin:$PATH"
+  ensure_tmpfile_writable "$LOG_FILE" || return 1
+  DSH_REPAIR_DIR="$DSH_DIR" \
+  DSH_REPAIR_HOME="$DSH_HOME_DIR" \
+  DSH_REPAIR_HOME_PARENT="$DSH_HOME_PARENT" \
+  DSH_REPAIR_NODE="$NODE_BIN" \
+  DSH_REPAIR_ENTRY="$ENTRY" \
+  DSH_REPAIR_TSX="$TSX" \
+  DSH_REPAIR_DSH_PORT="$DSH_PORT" \
+  DSH_REPAIR_PROXY_PORT="$PROXY_PORT" \
+  DSH_REPAIR_CONTAINER_PORT="$CONTAINER_PORT" \
+  DSH_REPAIR_PID_FILE="$PID_FILE" \
+  nohup "$NODE_BIN" --input-type=commonjs -e "$REPAIR_CODE" > "$LOG_FILE" 2>&1 &
+  echo "后台启动中，日志: $LOG_FILE"
+  # 等端口就绪（首次 tsx 编译较慢，最多 90 秒）
+  for i in $(seq 1 45); do
+    sleep 2
+    local ready=1
+    for p in $PORT_LIST; do
+      netstat -tln 2>/dev/null | grep -q ":$p " || { ready=0; break; }
+    done
+    if [ "$ready" = "1" ]; then
+      sleep 3
+      echo "DSH 启动完成"
+      echo ""
+      local TOKEN
+      TOKEN=$(get_token)
+      if [ -n "$TOKEN" ]; then
+        echo "  Token: $TOKEN"
+        echo "  首次认证: http://${LAN_IP}:${PROXY_PORT}/?token=$TOKEN"
+        echo "  认证后访问: http://${LAN_IP}:${PROXY_PORT}/"
+        echo "  容器页面: http://${LAN_IP}:${CONTAINER_PORT}/"
+      else
+        tail -15 "$LOG_FILE" | grep -E "✅|认证|访问|容器|DSH" || true
+      fi
+      return 0
+    fi
+  done
+  echo "! 端口未就绪，请查看日志: $LOG_FILE"
+  return 1
+}
+
+# ---------- stop ----------
+cmd_stop() {
+  if ! is_running; then
+    echo "DSH 未运行"
+    return 0
+  fi
+  local pid
+  pid=$(cat "$PID_FILE")
+  echo "停止 DSH (PID $pid) ..."
+  kill "$pid" 2>/dev/null
+  # 等主进程退出
+  for i in $(seq 1 10); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 1
+  done
+  # 兜底：清理孤儿 DSH web 进程（cwd 匹配本实例）
+  for p in $(pgrep -f "bin.ts web|bin.js web" 2>/dev/null); do
+    cwd=$(readlink /proc/$p/cwd 2>/dev/null)
+    if [ "$cwd" = "$DSH_DIR" ]; then
+      kill -9 "$p" 2>/dev/null
+    fi
+  done
+  # 清理构建进度占位进程（精简包构建中 stop：占位是 nohup 后台，主进程 kill 不到）
+  PH_PID_FILE="$DSH_HOME_PARENT/.build-placeholder.pid"
+  if [ -f "$PH_PID_FILE" ]; then
+    php=$(cat "$PH_PID_FILE" 2>/dev/null || echo "")
+    [ -n "$php" ] && kill "$php" 2>/dev/null
+    rm -f "$PH_PID_FILE"
+  fi
+  rm -f "$PID_FILE"
+  # 等端口释放
+  for i in $(seq 1 10); do
+    local busy=0
+    for p in $PORT_LIST; do
+      netstat -tln 2>/dev/null | grep -q ":$p " && busy=1
+    done
+    [ "$busy" = "0" ] && break
+    sleep 1
+  done
+  echo "DSH 已停止"
+}
+
+# ---------- restart ----------
+cmd_restart() {
+  cmd_stop
+  cmd_start
+}
+
+# ---------- status ----------
+cmd_status() {
+  if is_running; then
+    local pid
+    pid=$(cat "$PID_FILE")
+    echo "DSH 运行中 (PID $pid)"
+    local TOKEN
+    TOKEN=$(get_token)
+    if [ -n "$TOKEN" ]; then
+      echo ""
+      echo "  Token: $TOKEN"
+      echo "  局域网访问: http://${LAN_IP}:${PROXY_PORT}/?token=$TOKEN"
+    fi
+  else
+    echo "DSH 未运行"
+  fi
+  echo ""
+  echo "端口状态:"
+  for p in $PORT_LIST; do
+    if netstat -tln 2>/dev/null | grep -q ":$p "; then
+      echo "  $p  ✅ 监听中"
+    else
+      echo "  $p  ❌ 未监听"
+    fi
+  done
+  echo ""
+  echo "日志: $LOG_FILE"
+}
+
+# ---------- main ----------
+case "$DSH_CMD" in
+  start)   cmd_start ;;
+  stop)    cmd_stop ;;
+  restart) cmd_restart ;;
+  status)  cmd_status ;;
+  *)
+    echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status]"
+    exit 1
+    ;;
+esac

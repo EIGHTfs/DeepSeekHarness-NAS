@@ -1,0 +1,12 @@
+{
+  "_comment": "SPK/FPK 裁剪白名单（唯一权威，build.sh 读取执行）：黑名单（build-prune-blacklist.json）命中的 .pnpm 目录，若包名在此白名单则保留（白大于黑）。workspaceRuntimeDeps=true 表示动态收集 target/packages/*/package.json 的 dependencies（运行时必需，js-yaml/sharp/execa/lexical 等）；extra 为手工补充的强制保留项。",
+  "_note": "2026-09-12 实装定案：根 devDeps 与 workspace 运行时依赖同名（js-yaml/execa 等）时，白名单优先保留——删了 app-boot/sandbox-local/ui 加载必失败。",
+
+  "workspaceRuntimeDeps": true,
+  "_wsNote": "动态收集：扫描 target/packages/**/package.json 的 dependencies 全名进白名单（279 个运行时依赖，2026-09-12 实测）",
+
+  "extra": [
+    "native"
+  ],
+  "_extraNote": "native 不是 .pnpm 包，由黑名单 sourceDirs 保护逻辑单独处理；此处保留字段供未来手工白名单包使用"
+}

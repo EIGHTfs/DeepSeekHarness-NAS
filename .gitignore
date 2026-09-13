@@ -1,0 +1,41 @@
+# ───────────── 跟踪白名单 / 黑名单规则（2026-09-11 用户整理后）─────────────
+# 白名单（跟踪）: docs/  scripts/  tools/  build/（除 spk-build/staging/bin）  + 根 README.md
+# 黑名单（忽略）: src/  assets/  release/  build/spk-build/  build/staging/  build/bin/  + 所有 *.bak*
+#
+# 注意：gitignore 不支持行内尾随注释（# 与模式同行会被视为模式），
+#       所以注释一律独立成行，不跟在模式后面。
+
+# ── 黑名单：大型/产物/备份目录，一律不入库 ──
+/src/
+/assets/
+/release/
+/build/bin/
+/build/spk-build/
+/build/staging/
+/build/.inspect*/
+/build/.slim-test/
+/build/tmpcheck/
+/build/spk-check*/
+/build/tmp/
+/build/.trash/
+/build/fix-nas2/
+*.bak*
+
+# ── 敏感/运行时文件（含密码/凭据，严禁入库） ──
+/install-config.json
+/server-install.log
+/DSHProbe-*.spk
+/__pycache__/
+*.pyc
+
+# ── 本地回收站（安全删除暂存） ──
+/.trash/
+
+# ── 操作系统 / 编辑器杂项 ──
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+node_modules/
+node_modules.orig/

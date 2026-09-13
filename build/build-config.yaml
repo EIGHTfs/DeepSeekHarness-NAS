@@ -1,0 +1,46 @@
+# DeepSeek Harness NAS — 打包配置文件
+# 优先级：命令行参数 > YAML section > YAML defaults
+
+# ============================================================================
+# 第一大类：全局默认配置（SPK 与 FPK 共用）
+# ============================================================================
+defaults:
+  # 应用名（用于 INFO package / manifest appname / applaunchname / config/resource 等）
+  appname: DeepSeekHarness-NAS
+
+  # ── 工作区分类目录（相对脚本所在目录；亦可环境变量覆盖，优先级更高） ──
+  #   优先级：命令行参数 > 环境变量(D_SRC=...) > config 此处 > 默认<工作区>/<名>
+  src_dir:     ./src        # 源码（deepseek-ai 官方快照）
+  assets_dir:  ./build      # 复用打包素材（图标 / 模板 / 权限，存 build/ 以便入库跟踪）
+  build_dir:   ./build      # 构建中间产物与缓存
+  release_dir: ./release    # 发布产物目录（只放【实测通过】的 .spk / .fpk）
+  staging_dir: ./build/staging  # 打包输出暂存区（build.sh 产物落这里，验证后 promote-release.sh 提升）
+  tools_dir:   ./tools      # 构建工具（pnpm / fnpack / 桥接脚本）
+  scripts_dir: ./scripts    # 运行/安装脚本（start.sh.spk / dsh / installer）
+
+  # 端口分配（通用默认 = 3080 段；spk 专属段在下方 spk: 覆盖成 30800）
+  proxy_port: 3080
+  dsh_port: 3081
+  container_port: 3082
+
+# ============================================================================
+# 第二大类：SPK 专属配置（只覆盖端口，其余复用 defaults 通用值）
+# ============================================================================
+spk:
+  # 覆盖 defaults 中的配置（留空则沿用通用默认）
+  # appname: DeepSeekHarness-NAS
+  # ↓ SPK 端口段：仅这里覆盖成 30800 段，其他配置全部复用 defaults 通用值
+  proxy_port: 30800      # SPK 反代端口（覆盖通用 3080）
+  dsh_port: 30801        # SPK DSH 端口（覆盖通用 3081）
+  container_port: 30802  # SPK 容器页端口（覆盖通用 3082）
+
+# ============================================================================
+# 第三大类：FPK 专属配置（不填 = 完全沿用 defaults 通用默认，即 3080 段）
+# ============================================================================
+fpk:
+  # 覆盖 defaults 中的配置（留空则沿用通用默认）
+  # appname: DeepSeekHarness-NAS
+  # ↓ FPK 端口段：不填即用通用 3080 段（与 spk 的 30800 段隔离）
+  # proxy_port: 3080
+  # dsh_port: 3081
+  # container_port: 3082

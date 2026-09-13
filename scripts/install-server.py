@@ -1,0 +1,335 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+DeepSeekHarness-NAS 安装工具服务端（网页直调远程脚本版）
+- GET  /                      前端页面（install.html / install-fpk.html）
+- GET  /api/config            读取已保存的配置（工作区根 install-config.json）
+- POST /api/save              保存配置（工作区根 install-config.json）
+- POST /api/detect            远程探测系统类型（群晖 DSM / 飞牛 fnOS）→ spk/fpk
+- POST /api/run               后台执行远程脚本（install / uninstall / check）
+- GET  /api/run-status        轮询后台任务状态与输出
+- GET  /api/tasks             历史任务（兼容旧版）
+纯标准库，无需 pip 依赖。sshpass 需本机已安装。
+"""
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse, parse_qs
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+WS_ROOT = os.path.dirname(BASE_DIR)
+CONFIG_FILE = os.path.join(WS_ROOT, 'install-config.json')   # 与 install-remote-spk.sh 同源！
+TASKS_FILE = os.path.join(WS_ROOT, 'install-tasks.jsonl')
+LOG_FILE = os.path.join(WS_ROOT, 'install-server.log')
+HTML_FILE = os.path.join(BASE_DIR, 'install.html')
+HTML_FILE_LEGACY = os.path.join(BASE_DIR, 'install-fpk.html')
+SCRIPT = os.path.join(BASE_DIR, 'install-remote-spk.sh')
+PORT = int(os.environ.get('INSTALL_SERVER_PORT', '8765'))
+SSHPASS = os.environ.get('SSHPASS_BIN', 'sshpass')
+
+
+def log(msg):
+    """写日志到 install-server.log（追加，带时间戳）"""
+    ts = time.strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        with open(LOG_FILE, 'a', encoding='utf-8') as f:
+            f.write('[%s] %s\n' % (ts, msg))
+    except Exception:
+        pass
+
+# 后台运行任务表：run_id -> {status, output, exit_code, started, finished}
+RUNS = {}
+RUNS_LOCK = threading.Lock()
+
+# 系统判别特征（实测固化：群晖 / 飞牛各两条以上，任一命中即判）
+DSM_FEATURES = ['/etc.defaults/VERSION', '/usr/syno/bin/synopkg']
+FNOS_FEATURES = ['/usr/trim', '/usr/local/bin/appcenter-cli', '/usr/local/bin/fnpack']
+
+
+def read_config():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def write_config(cfg):
+    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=2)
+    return cfg
+
+
+def list_packages():
+    """扫描工作区候选包：SPK（build/staging、release）与 FPK（release、build/staging）。"""
+    pkgs = {'spk': [], 'fpk': []}
+    roots = [os.path.join(WS_ROOT, 'build', 'staging'), os.path.join(WS_ROOT, 'release')]
+    seen = set()
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for fn in sorted(os.listdir(root), reverse=True):
+            path = os.path.join(root, fn)
+            if not os.path.isfile(path):
+                continue
+            low = fn.lower()
+            kind = None
+            if low.endswith('.spk'):
+                kind = 'spk'
+            elif low.endswith('.fpk'):
+                kind = 'fpk'
+            if not kind:
+                continue
+            if path in seen:
+                continue
+            seen.add(path)
+            size = os.path.getsize(path)
+            pkgs[kind].append({
+                'path': path, 'name': fn, 'kind': kind,
+                'size': '%.1f MB' % (size / 1048576.0),
+                'full': size > 200 * 1048576,
+            })
+    return pkgs
+
+
+def detect_system(host, port, username, password, timeout=20):
+    """SSH 探测远端系统类型。返回 (system, features)。system ∈ dsm|fnos|unknown|error。"""
+    if not (host and username and password):
+        return 'error', []
+    checks = ' ; '.join('test -e %s && echo YES:%s || echo NO:%s' % (p, p, p) for p in DSM_FEATURES + FNOS_FEATURES)
+    cmd = [
+        SSHPASS, '-p', password, 'ssh',
+        '-o', 'PreferredAuthentications=password', '-o', 'PubkeyAuthentication=no',
+        '-o', 'ConnectTimeout=%d' % timeout, '-o', 'StrictHostKeyChecking=no',
+        '-p', str(port), '%s@%s' % (username, host),
+        'echo __DSH_DETECT_START__; %s' % checks,
+    ]
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 10)
+        out = p.stdout or ''
+        features = []
+        for m in re.finditer(r'YES:(\S+)', out):
+            features.append(m.group(1))
+        dsm_hits = [f for f in features if f in DSM_FEATURES]
+        fnos_hits = [f for f in features if f in FNOS_FEATURES]
+        if dsm_hits:
+            system = 'dsm'
+        elif fnos_hits:
+            system = 'fnos'
+        else:
+            system = 'unknown'
+        return system, features
+    except subprocess.TimeoutExpired:
+        return 'error', ['SSH 超时']
+    except FileNotFoundError:
+        return 'error', ['本机缺少 sshpass']
+    except Exception as e:
+        return 'error', ['%s: %s' % (type(e).__name__, e)]
+
+
+def run_script(cmd, spk='', system=''):
+    """后台执行 install-remote-spk.sh <cmd> [spk] [system]。返回 run_id。
+    参数位约定（见 install-remote-spk.sh 解析）:
+      install     → bash SCRIPT install <spk> [host] [user] [app] [system]   system=$6
+      uninstall/check → bash SCRIPT <cmd> [host] [user] [app] [system]       system=$5
+    host/user/app 传空由脚本 ${N:-$(read_cfg)} 兜底；system 传空由脚本推断链兜底。
+    """
+    run_id = '%d-%d' % (int(time.time() * 1000), threading.get_ident())
+    with RUNS_LOCK:
+        RUNS[run_id] = {'status': 'running', 'output': '', 'exit_code': None,
+                        'started': time.strftime('%H:%M:%S'), 'finished': ''}
+
+    def _work():
+        # repair = 清残留 + 重装（先调 clean-dsm-residue.sh，再 install）
+        if cmd == 'repair':
+            # 远程真清理：host/user 从已保存配置读（clean-dsm-residue.sh 支持 [主机] [SSH用户]）
+            cfg = read_config() or {}
+            r_host = cfg.get('host') or cfg.get('ip') or ''
+            r_user = cfg.get('user') or cfg.get('username') or cfg.get('account') or ''
+            argv_clean = ['bash', os.path.join(BASE_DIR, 'clean-dsm-residue.sh'),
+                          'DeepSeekHarness-NAS', r_host, r_user]
+            try:
+                p0 = subprocess.run(argv_clean, capture_output=True, text=True, timeout=180)
+                with RUNS_LOCK:
+                    RUNS[run_id]['output'] = '── 清残留 ──\n' + (p0.stdout or '') + (p0.stderr or '') + '\n── 重装 ──\n'
+            except Exception as e:
+                with RUNS_LOCK:
+                    RUNS[run_id]['output'] = '清残留失败: %s\n── 重装 ──\n' % e
+            # 继续走 install 流程
+            actual_cmd = 'install'
+        else:
+            actual_cmd = cmd
+        argv = ['bash', SCRIPT, actual_cmd]
+        if actual_cmd == 'install':
+            argv += [spk, '', '', '']
+            if system:
+                argv.append(system)
+        else:
+            argv += ['', '', '']
+            if system:
+                argv.append(system)
+        try:
+            p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 text=True, errors='replace')
+            out_lines = []
+            for line in p.stdout:
+                out_lines.append(line)
+                with RUNS_LOCK:
+                    RUNS[run_id]['output'] = ''.join(out_lines[-80:])  # 只留尾部
+            p.wait()
+            with RUNS_LOCK:
+                RUNS[run_id]['output'] = ''.join(out_lines)
+                RUNS[run_id]['exit_code'] = p.returncode
+                RUNS[run_id]['status'] = 'done' if p.returncode == 0 else 'error'
+                RUNS[run_id]['finished'] = time.strftime('%H:%M:%S')
+                log('DONE run_id=%s cmd=%s exit=%d' % (run_id, cmd, p.returncode))
+        except Exception as e:
+            with RUNS_LOCK:
+                RUNS[run_id]['output'] = '执行失败: %s' % e
+                RUNS[run_id]['status'] = 'error'
+                RUNS[run_id]['exit_code'] = 1
+                RUNS[run_id]['finished'] = time.strftime('%H:%M:%S')
+
+    threading.Thread(target=_work, daemon=True).start()
+    return run_id
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = 'DSHInstallServer/2.0'
+
+    def _json(self, code, obj):
+        body = json.dumps(obj, ensure_ascii=False).encode('utf-8')
+        self.send_response(code)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _html(self, path):
+        if os.path.exists(path):
+            with open(path, 'rb') as f:
+                body = f.read()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return True
+        return False
+
+    def _read_body(self):
+        length = int(self.headers.get('Content-Length', 0) or 0)
+        if length <= 0:
+            return {}
+        try:
+            return json.loads(self.rfile.read(length).decode('utf-8'))
+        except Exception:
+            return {}
+
+    def do_GET(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path in ('/', '/install.html', '/install-fpk.html'):
+            if self._html(HTML_FILE if path in ('/', '/install.html') else HTML_FILE_LEGACY):
+                return
+            if self._html(HTML_FILE_LEGACY):
+                return
+            self._json(404, {'success': False, 'error': '前端页面缺失（install.html / install-fpk.html）'})
+        elif path == '/api/config':
+            self._json(200, {'success': True, 'config': read_config()})
+        elif path == '/api/packages':
+            self._json(200, {'success': True, **list_packages()})
+        elif path == '/api/log':
+            lines = int(parse_qs(parsed.query).get('lines', ['100'])[0])
+            try:
+                with open(LOG_FILE, 'r', encoding='utf-8') as f:
+                    all_lines = f.readlines()
+                tail = all_lines[-lines:] if len(all_lines) > lines else all_lines
+                self._json(200, {'success': True, 'log': ''.join(tail), 'total': len(all_lines)})
+            except FileNotFoundError:
+                self._json(200, {'success': True, 'log': '', 'total': 0})
+            except Exception as e:
+                self._json(500, {'success': False, 'error': str(e)})
+        elif path == '/api/run-status':
+            run_id = parse_qs(parsed.query).get('run_id', [''])[0]
+            with RUNS_LOCK:
+                info = dict(RUNS.get(run_id, {}))
+            if not info:
+                self._json(404, {'success': False, 'error': f'未找到任务 {run_id}'})
+            else:
+                self._json(200, {'success': True, **info})
+        else:
+            self._json(404, {'success': False, 'error': f'未知路径: {path}'})
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+        body = self._read_body()
+        if path == '/api/save':
+            if not body:
+                self._json(400, {'success': False, 'error': '空请求体'})
+                return
+            write_config(body)
+            safe = dict(body)
+            if safe.get('password'):
+                safe['password'] = '******'
+            log('SAVE config host=%s user=%s' % (safe.get('host',''), safe.get('username','')))
+            self._json(200, {'success': True, 'config': safe,
+                             'file': CONFIG_FILE})
+        elif path == '/api/detect':
+            host = str(body.get('host', '')).strip()
+            port = int(body.get('port') or 22)
+            username = str(body.get('username', '')).strip()
+            password = str(body.get('password', '') or read_config().get('password', '')).strip()
+            if not host or not username:
+                self._json(400, {'success': False, 'error': '缺少 host/username'})
+                return
+            log('DETECT host=%s@%s:%s' % (username, host, port))
+            system, features = detect_system(host, port, username, password)
+            log('DETECT result=%s features=%s' % (system, features))
+            self._json(200, {
+                'success': system != 'error',
+                'system': system,
+                'package_type': 'spk' if system == 'dsm' else ('fpk' if system == 'fnos' else ''),
+                'features': features,
+                'hint': {'dsm': '✅ 群晖 DSM → 装 SPK 套件',
+                         'fnos': '✅ 飞牛 fnOS → 装 FPK 应用',
+                         'unknown': '⚠️ 未识别系统（两者特征都未命中）',
+                         'error': '❌ 探测失败'}.get(system, ''),
+            })
+        elif path == '/api/run':
+            cmd = str(body.get('cmd', '')).strip()
+            spk = str(body.get('spk', '')).strip()
+            system = str(body.get('system', '')).strip()
+            if cmd not in ('install', 'uninstall', 'check', 'repair'):
+                self._json(400, {'success': False, 'error': 'cmd 必须是 install|uninstall|check|repair'})
+                return
+            run_id = run_script(cmd, spk, system)
+            log('RUN cmd=%s spk=%s system=%s -> run_id=%s' % (cmd, os.path.basename(spk) if spk else '', system, run_id))
+            self._json(200, {'success': True, 'run_id': run_id, 'cmd': cmd})
+        else:
+            self._json(404, {'success': False, 'error': f'未知路径: {path}'})
+
+    def log_message(self, fmt, *args):
+        sys.stderr.write('[%s] %s\n' % (self.log_date_time_string(), fmt % args))
+
+
+def main():
+    log('=== install-server.py 启动 port=%d ===' % PORT)
+    server = ThreadingHTTPServer(('0.0.0.0', PORT), Handler)
+    print(f'DSH 安装工具服务端已启动: http://0.0.0.0:{PORT}/install.html')
+    print(f'配置落盘: {CONFIG_FILE}')
+    print(f'脚本调用: {SCRIPT}')
+    print(f'日志文件: {LOG_FILE}')
+    server.serve_forever()
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,49 @@
+#!/bin/bash
+# ============================================================
+#  dsh 命令包装器 —— 让系统里直接敲 `dsh` 就能用 DSH CLI
+#  （等价官方 bin 定义: @deepseek-ai/dsh -> lib/bin.js）
+#  用法: dsh <子命令> [参数...]  （如 dsh web / dsh chat / dsh config）
+# ============================================================
+set -u
+# 解析软链到真实文件路径（/usr/local/bin/dsh → …/target/bin/dsh）
+SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+# 定位 DSH 实例根：<实例>/bin/dsh → <实例>
+DSH_DIR="$(dirname "$SCRIPT_DIR")"
+
+# 自检实例完整性
+if [ ! -f "$DSH_DIR/apps/cli/lib/bin.js" ] && [ ! -f "$DSH_DIR/apps/cli/src/bin.ts" ]; then
+  echo "[dsh] 未找到 DSH 实例入口 (apps/cli/lib/bin.js) at: $DSH_DIR" >&2
+  exit 1
+fi
+
+# 找 node（与 start.sh / scripts/pnpm 一致；不硬编码第三方套件路径）
+find_node() {
+  # 1) 本实例自带 node（相对路径，与包名无关）
+  # 2) 系统标准路径（/usr/local/bin /usr/bin）
+  # 3) PATH 兜底
+  for c in "$DSH_DIR/bin/node" "/usr/local/bin/node" "/usr/bin/node"; do
+    [ -x "$c" ] && { echo "$c"; return 0; }
+  done
+  command -v node 2>/dev/null
+}
+NODE_BIN="$(find_node)" || { echo "[dsh] 未找到 node，请先安装 Node.js" >&2; exit 1; }
+
+# 入口（编译产物优先）
+if [ -f "$DSH_DIR/apps/cli/lib/bin.js" ]; then
+  ENTRY="$DSH_DIR/apps/cli/lib/bin.js"; TSX=0
+elif [ -f "$DSH_DIR/apps/cli/src/bin.ts" ]; then
+  ENTRY="$DSH_DIR/apps/cli/src/bin.ts"; TSX=1
+elif [ -f "$DSH_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js" ]; then
+  ENTRY="$DSH_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js"; TSX=0
+else
+  echo "[dsh] 未找到 DSH 入口" >&2
+  exit 1
+fi
+
+if [ "$TSX" = "1" ]; then
+  TSX="$(command -v tsx 2>/dev/null || echo "$DSH_DIR/node_modules/.bin/tsx")"
+  exec "$NODE_BIN" --import "$TSX/esm" "$ENTRY" "$@"
+else
+  exec "$NODE_BIN" --expose-internals "$ENTRY" "$@"
+fi

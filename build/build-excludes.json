@@ -1,0 +1,37 @@
+{
+  "_comment": "SPK/FPK 打包 tar 排除规则（--exclude 模式，仅用于 tar 打包阶段）。实际裁剪（rm -rf .pnpm 平台变体 / devDeps / 源码目录）由 build-prune-blacklist.json + build-prune-whitelist.json 黑白名单驱动，见 build.sh。",
+  "_note": "NAS 目标 = linux-x64-glibc。native/ 不在排除列表：node-addon-system-linux-x64 软链真身，必须保留（2026-09-12 实装定案）。",
+
+  "slim": {
+    "description": "已废弃：唯一模式 = dist（预构建产物包）。保留此段仅为旧配置兼容，build.sh 不再读取。",
+    "excludes": []
+  },
+
+  "dist": {
+    "description": "预构建产物包：本地构建产物 + 运行时 node_modules（删 devDeps/源码），装完即用，无首启构建",
+    "excludes": [
+      "_comment_source_maps",
+      "--exclude=./**/*.map",
+
+      "_comment_benchmark_test",
+      "--exclude=./benchmarks",
+      "--exclude=./**/__tests__",
+      "--exclude=./**/__test__",
+      "--exclude=./**/*.test.*",
+      "--exclude=./**/*.spec.*",
+      "--exclude=./**/test",
+      "--exclude=./**/tests",
+
+      "_comment_ci_docs_meta",
+      "--exclude=./.github",
+      "--exclude=./website",
+      "--exclude=./.claude",
+      "--exclude=./.agents",
+      "--exclude=./**/CHANGELOG*",
+      "--exclude=./**/HISTORY*",
+      "--exclude=./**/.editorconfig",
+      "--exclude=./**/.eslintrc*",
+      "--exclude=./**/.prettierrc*"
+    ]
+  }
+}
