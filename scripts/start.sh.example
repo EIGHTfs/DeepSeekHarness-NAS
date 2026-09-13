@@ -338,7 +338,51 @@ function buildPolyfillScript() {
       try { if (!g.crypto.randomUUID) { Object.defineProperty(g.crypto, 'randomUUID', { value: createUUID, writable: true, configurable: true, enumerable: true }); } }
       catch(e) { g.crypto.randomUUID = createUUID; }
     }
+    if (typeof Crypto !== 'undefined' && Crypto.prototype && !Crypto.prototype.randomUUID) {
+      try { Object.defineProperty(Crypto.prototype, 'randomUUID', { value: createUUID, writable: true, configurable: true, enumerable: true }); }
+      catch(e) {}
+    }
   } catch(e) { console.warn('[DSH] randomUUID:', e); }
+  // AbortSignal.any polyfill（华为平板/安卓旧浏览器/微信 WebView "AbortSignal.any is not a function"）
+  try {
+    if (typeof g.AbortSignal !== 'undefined' && !g.AbortSignal.any) {
+      g.AbortSignal.any = function(signals) {
+        var controller = new AbortController();
+        if (!signals || !signals.length) return controller.signal;
+        for (var i = 0; i < signals.length; i++) {
+          var s = signals[i];
+          if (!s) continue;
+          if (s.aborted) { controller.abort(s.reason); return controller.signal; }
+          s.addEventListener('abort', function() { controller.abort(this.reason); }, { once: true });
+        }
+        return controller.signal;
+      };
+    }
+  } catch(e) { console.warn('[DSH] AbortSignal.any:', e); }
+  // AbortSignal.timeout polyfill
+  try {
+    if (typeof g.AbortSignal !== 'undefined' && !g.AbortSignal.timeout) {
+      g.AbortSignal.timeout = function(ms) {
+        var controller = new AbortController();
+        setTimeout(function() {
+          var err = new Error('The operation timed out');
+          err.name = 'TimeoutError';
+          controller.abort(err);
+        }, ms);
+        return controller.signal;
+      };
+    }
+  } catch(e) { console.warn('[DSH] AbortSignal.timeout:', e); }
+  // Promise.withResolvers polyfill
+  try {
+    if (typeof Promise !== 'undefined' && !Promise.withResolvers) {
+      Promise.withResolvers = function() {
+        var resolve, reject;
+        var promise = new Promise(function(res, rej) { resolve = res; reject = rej; });
+        return { promise: promise, resolve: resolve, reject: reject };
+      };
+    }
+  } catch(e) { console.warn('[DSH] Promise.withResolvers:', e); }
 })();
 </script>`;
 }
