@@ -15,7 +15,7 @@
 #                  或 spk-build/master-build）
 #   2. SKIP_BUILD  1=复用已有完整 target（不重新构建；缺省=0 全量构建）
 #
-# 打包模式：唯一模式 = 预构建产物包（-dist 后缀）
+# 打包模式：唯一模式 = 预构建产物包（装完即用）
 #   - 本地 pnpm install + pnpm build 生成全部构建产物（apps/cli/lib、apps/web/dist 等）
 #   - 裁剪段删除：非目标平台二进制 / devDependencies（含传递依赖，清单动态读根 package.json）
 #     / claude-agent-sdk+codex / packages|apps 的 src / docs / benchmarks / native
@@ -29,8 +29,8 @@
 #                     —— spk/fpk 打包脚本 source 它获取元数据（单一真源）
 #
 # 之后:
-#   ./build-spk.sh    → build/staging/DeepSeekHarness-x86_64-<SPK_VERSION>-dist.spk
-#   ./build-fpk.sh    → build/staging/<APP_NAME>_<FPK_VERSION>-dist_x86.fpk
+#   ./build-spk.sh    → build/staging/<APP_NAME>_x86_64-<SPK_VERSION>.spk
+#   ./build-fpk.sh    → build/staging/<APP_NAME>_x86-<FPK_VERSION>.fpk
 #===============================================================================
 set -euo pipefail
 

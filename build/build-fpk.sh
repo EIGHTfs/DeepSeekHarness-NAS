@@ -13,7 +13,7 @@
 #     前置：先运行 ./build-common.sh 生成 target）
 #
 # 产物:
-#   build/staging/<APP_NAME>_<FPK_VERSION>-dist_x86.fpk
+#   build/staging/<APP_NAME>_x86-<FPK_VERSION>.fpk
 #
 # 关键设计（注释按本脚本职责重新整理）:
 #   - 端口: proxy/dsh/container 读 build-config.yaml fpk: 段（默认 3080/3081/3082，
@@ -381,7 +381,7 @@ cp "$D_ASSETS/PACKAGE_ICON_256.PNG" "$FPK_SRC/ICON_256.PNG"
 #===============================================================================
 # cmd 内占位符统一替换为实际 APP_NAME
 sed -i "s/__APP_NAME__/${APP_NAME}/g" "$FPK_SRC/cmd/"* 2>/dev/null || true
-OUT_FPK="$D_STAGING/${APP_NAME}_${FPK_VERSION}-dist_x86.fpk"
+OUT_FPK="$D_STAGING/${APP_NAME}_x86-${FPK_VERSION}.fpk"
 echo "▶ 组装外层 FPK → $OUT_FPK"
 # ⚠ 条目必须与 fnpack 官方格式一致：无 ./ 前缀、无目录尾斜杠条目
 #   find 只列文件/软链（避开 GNU tar 给目录自动补 `/`）；排除 app/（内容已进 app.tgz）

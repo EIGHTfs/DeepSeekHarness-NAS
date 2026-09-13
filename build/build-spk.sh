@@ -13,7 +13,7 @@
 #     前置：先运行 ./build-common.sh 生成 target）
 #
 # 产物:
-#   build/staging/DeepSeekHarness-x86_64-<SPK_VERSION>-dist.spk
+#   build/staging/<APP_NAME>_x86_64-<SPK_VERSION>.spk
 #
 # 关键设计（注释按本脚本职责重新整理）:
 #   - 端口: proxy/dsh/container 读 build-config.yaml spk: 段（默认 30800/30801/30802）
@@ -364,7 +364,7 @@ find "$ASSEMBLE" -type f -exec chmod 644 {} + 2>/dev/null
 chmod 755 "$ASSEMBLE/scripts/"* 2>/dev/null || true
 chmod 755 "$ASSEMBLE/scripts/start-stop-status" "$ASSEMBLE/scripts/installer" 2>/dev/null || true
 
-OUT_SPK="$D_STAGING/DeepSeekHarness-x86_64-${SPK_VERSION}-dist.spk"
+OUT_SPK="$D_STAGING/${APP_NAME}_x86_64-${SPK_VERSION}.spk"
 echo "▶ 组装外层 SPK → $OUT_SPK"
 ( cd "$ASSEMBLE" && tar -cf "$OUT_SPK" INFO PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG conf scripts ui package.tgz )
 

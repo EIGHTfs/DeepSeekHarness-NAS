@@ -40,8 +40,8 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 ./build/build-common.sh "" 1                   # 复用已有 target（跳过编译，秒级）
 
 # ② 打包（消费 ① 的 target；无参数，配置读 build-config.yaml）
-./build/build-spk.sh                           # → build/staging/DeepSeekHarness-x86_64-<SPK版本>-dist.spk
-./build/build-fpk.sh                           # → build/staging/<APP_NAME>_<FPK版本>-dist_x86.fpk
+./build/build-spk.sh                           # → build/staging/<APP_NAME>_x86_64-<SPK版本>.spk
+./build/build-fpk.sh                           # → build/staging/<APP_NAME>_x86-<FPK版本>.fpk
 ```
 
 **参数与配置来源**（已精简，去掉「套件类型 / 套件说明 / 品牌名」三个参数）：
@@ -53,7 +53,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 - **元数据传递**：`build-common.sh` 写 `build/spk-build/build-<版本>/build-meta.env`，两个打包脚本 `source` 它（避免各脚本重复推导版本/名字/描述）
 - **环境变量覆盖**：`APP_NAME` / `D_SRC` / `D_BUILD` / `D_STAGING` / `D_ASSETS` / `D_SCRIPTS` 可临时覆盖（换名实验、目录迁移）
 
-> **打包模式**：唯一模式 = 预构建产物包（`-dist` 后缀，装完即用，无首启构建）。
+> **打包模式**：唯一模式 = 预构建产物包（装完即用，无首启构建）。
 > 原「精简包首启构建」逻辑（`ensure_built` + 构建进度占位页）已抽离留档，见 `scripts/first-build-logic.sh`（实际打包不再使用）。
 
 产物统一输出到 `build/staging/`（验证后 `promote-release.sh` 提升到 `release/`，可用 `D_REL=<dir>` 覆盖）。
@@ -69,8 +69,8 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 
 | 类型 | 产物文件 | 说明 |
 |------|----------|------|
-| SPK | `build/staging/DeepSeekHarness-x86_64-0.1.5-dist.spk` | 预构建产物包：本地构建产物 + 裁剪后 node_modules，装完即用 |
-| FPK | `build/staging/<APP_NAME>_<FPK版本>-dist_x86.fpk` | 同上（手动 tar+gzip；app.tgz 与外层均无 `./` 前缀） |
+| SPK | `build/staging/<APP_NAME>_x86_64-<SPK版本>.spk` | 预构建产物包：本地构建产物 + 裁剪后 node_modules，装完即用 |
+| FPK | `build/staging/<APP_NAME>_x86-<FPK版本>.fpk` | 同上（手动 tar+gzip；app.tgz 与外层均无 `./` 前缀） |
 
 > **裁剪（有依据，非盲删）**：①非 linux-x64 平台变体（darwin/win32/arm/musl/ia32…）；②**devDependencies 及其传递依赖**（清单从根 `package.json` 动态读取，不硬编码——已实测删后 `dsh --version` 与 web HTTP 200 正常）；③claude-agent-sdk/codex（体积大头，明确不需要）；④`packages|apps` 的 src（构建产物在 lib/dist）+ docs/benchmarks/native。保留：`bin/node` + `bin/dsh` + `bin/pnpm` + 随包 pnpm + 各包 lib/dist 产物 + 运行时 node_modules。
 >
@@ -253,7 +253,7 @@ DeepSeekHarness-NAS/
 │   ├── conf/                    #   权限/资源声明（privilege/resource）
 │   ├── ui/images/               #   门户图标
 │   ├── PACKAGE_ICON*.PNG        #   套件图标
-│   ├── staging/                 #   打包输出暂存区（-dist.spk）
+│   ├── staging/                 #   打包输出暂存区（.spk/.fpk）
 │   └── spk-build/               #   SPK 构建中间树（git 黑名单）
 ├── scripts/                     # 【脚本】
 │   ├── start.sh.example         #   SPK/FPK 运行模板母版（唯一权威，打包脚本注入端口生成最终 start.sh）
@@ -267,7 +267,7 @@ DeepSeekHarness-NAS/
 ├── docs/                        # 【文档】SPK-FPK 验收清单、打包开发文档
 ├── tools/pnpm                   #   项目自带 pnpm（构建/随包分发用，不用系统 pnpm）
 ├── release/                     # 【发布物】只放实测通过的 .spk/.fpk
-│   └── DeepSeekHarness-x86_64-0.1.5-dist.spk / *.fpk
+│   └── DeepSeekHarness-NAS_x86_64-0.1.5.spk / *.fpk
 ├── tools/                       # 【工具】
 │   ├── pnpm/                    #   pnpm 11.7.0（随包分发用）
 │   ├── pnpm-bridge.py           #   pnpm 11 配置桥接器

@@ -1,0 +1,49 @@
+name: Build SPK (DeepSeekHarness-NAS)
+
+on:
+  workflow_dispatch:          # 手动触发（Actions 页点按钮）
+  push:
+    tags: ['v*']              # 打 v* tag 自动触发
+
+jobs:
+  build-spk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node 22（打包与运行均需 >=22.19）
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # build-common.sh 默认取 /usr/bin/node（runner 系统旧版），
+      # 显式指向 setup-node 装的新版，避免打到 20.x 打包进套件
+      - name: 指定打包用 node 路径
+        run: echo "NODE_SRC=$(command -v node)" >> "$GITHUB_ENV"
+
+      - name: 拉取官方最新源码到 src/deepseek-ai/{tag}
+        run: ./fetch-dsh-latest.sh
+
+      - name: 公共预编译（pnpm install + build + 裁剪）
+        run: ./build/build-common.sh
+
+      - name: 打 SPK
+        run: ./build/build-spk.sh
+
+      # -- FPK 暂不构建（注释保留，恢复时去掉下面两行 # 即可）--
+      # - name: 打 FPK
+      #   run: ./build/build-fpk.sh
+
+      - name: 上传 SPK 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: spk-dist
+          path: |
+            build/staging/*.spk
+
+      - name: 打 tag 时发布 Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/staging/*.spk
