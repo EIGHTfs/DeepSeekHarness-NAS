@@ -27,7 +27,7 @@
 #   - app.tgz: gzip + --hard-dereference（硬链展开；软链保留，fnpack 官方支持 symlink）
 #     ⚠ 条目无 ./ 前缀（用 find 顶层列表，fnOS 后端把 ./ 当字面路径 → 10111）
 #   - 外层 .fpk: gzip；条目只列文件/软链不列目录（GNU tar 目录尾斜杠 → fnOS 解析错 → 10111）
-#   - 门户 ui/ 只放外层（app.tgz 内不带 ui/；install_start 安全扫描枚举外层 dir:ui）
+#   - 门户 ui/ 内外两份都要（app.tgz 内供门户「打开」按钮取图标；外层供 install_start 安全扫描枚举 dir:ui）
 #   - 外层 <appname>.sc 协议文件声明端口（manifest service_port 对应；缺失 → 10111）
 #   - manifest: version=官方完整版本；checksum=app.tgz 的 MD5（实测）
 #   - cmd 生命周期: 启停全代理到 bin/start.sh；username/groupname 必须小写
@@ -53,7 +53,8 @@ D_STAGING="${D_STAGING:-$D_BUILD/staging}"
 D_SCRIPTS="${D_SCRIPTS:-$WS/scripts}"
 
 # ----------------------------------------------------------------------------
-# build-config.yaml 解析（FPK 段覆盖 defaults：端口 + appname）
+# build-config.yaml 解析（FPK 段覆盖 defaults：端口 + appname + 品牌元数据）
+#   全部字段一律来自配置，脚本内不写死任何可变值（no-hardcode-config）
 # ----------------------------------------------------------------------------
 eval "$(python3 -c "
 import yaml, sys
@@ -62,11 +63,34 @@ with open('$CONFIG_FILE') as f:
 defaults = cfg.get('defaults') or {}
 fpk = cfg.get('fpk') or {}
 for k, v in {**defaults, **fpk}.items():
+    if v is None:
+        continue
     print(f'FPKCFG_{k.upper()}=\"{v}\"')
 " 2>/dev/null || true)"
 FPK_PROXY_PORT="${FPKCFG_PROXY_PORT:-3080}"
 FPK_DSH_PORT="${FPKCFG_DSH_PORT:-3081}"
 FPK_CONTAINER_PORT="${FPKCFG_CONTAINER_PORT:-3082}"
+
+# ── 品牌 / 元数据（配置驱动；缺省值仅作最后兜底，正常一律命中配置） ──
+CFG_APPNAME="${FPKCFG_APPNAME:-DeepSeekHarness-NAS}"
+CFG_BRAND_NAME="${FPKCFG_BRAND_NAME:-$CFG_APPNAME}"
+CFG_DISPLAY_NAME="${FPKCFG_DISPLAY_NAME:-DeepSeek Harness}"
+CFG_TITLE="${FPKCFG_TITLE:-$CFG_DISPLAY_NAME}"
+CFG_DESC="${FPKCFG_DESC:-}"
+CFG_DESC_SHORT="${FPKCFG_DESC_SHORT:-$CFG_DISPLAY_NAME Web UI}"
+CFG_MAINTAINER="${FPKCFG_MAINTAINER:-DeepSeek AI}"
+CFG_MAINTAINER_URL="${FPKCFG_MAINTAINER_URL:-}"
+CFG_DISTRIBUTOR="${FPKCFG_DISTRIBUTOR:-}"
+CFG_DISTRIBUTOR_URL="${FPKCFG_DISTRIBUTOR_URL:-}"
+CFG_OS_MIN_VERSION="${FPKCFG_OS_MIN_VERSION:-1.1.0}"
+CFG_BRAND_VERSION_ORDER="${FPKCFG_BRAND_VERSION_ORDER:-dsh,npm}"
+# 体积门禁（MB；0 = 不检查。任务① 验收口径 fpk≈100MiB，留余量设 200）
+CFG_SIZE_LIMIT_MB="${FPKCFG_SIZE_LIMIT_MB:-200}"
+# 共享区（@appshare）目录名：根路径由 TRIM_PKGVAR 自动推导，此处只定根下目录名
+# ⚠ 必须用 "-" 而非 ":-"：:- 会把配置里的空串当成"未设置"而回退成默认值，
+#   导致「配置留空=不创建」失效（实测踩过）。空 = 不创建，故默认就是空。
+CFG_SHARE_WORKSPACE_DIR="${FPKCFG_SHARE_WORKSPACE_DIR-}"
+CFG_SHARE_DATA_DIR="${FPKCFG_SHARE_DATA_DIR-}"
 
 # ----------------------------------------------------------------------------
 # 元数据（双链路：--npm 读 npm-meta.env，默认读 build-meta.env）
@@ -121,9 +145,14 @@ gen_start_sh() {
       -e "s|__CONTAINER_PORT__|${cont}|g" \
       -e "s|__APP_NAME__|${APP_NAME}|g" \
       -e "s|__APP_ID__|${APP_ID}|g" \
+      -e "s|__BRAND_NAME__|${CFG_BRAND_NAME}|g" \
+      -e "s|__BRAND_VERSION_ORDER__|${CFG_BRAND_VERSION_ORDER}|g" \
+      -e "s|__FPK_VERSION__|${FPK_VERSION}|g" \
+      -e "s|__PORTAL_TITLE__|${CFG_TITLE}|g" \
+      -e "s|__PORTAL_DESC__|${CFG_DESC_SHORT:-$CFG_DISPLAY_NAME Web UI}|g" \
       "$D_SCRIPTS/start.sh.example" > "$out"
   chmod +x "$out"
-  if grep -q "__PROXY_PORT__\|__DSH_PORT__\|__CONTAINER_PORT__\|__APP_NAME__\|__APP_ID__" "$out"; then
+  if grep -qE "__PROXY_PORT__|__DSH_PORT__|__CONTAINER_PORT__|__APP_NAME__|__APP_ID__|__BRAND_NAME__|__BRAND_VERSION_ORDER__|__FPK_VERSION__|__PORTAL_TITLE__|__PORTAL_DESC__" "$out"; then
     echo "[!] start.sh 占位符未全部替换: $out" >&2; exit 1
   fi
 }
@@ -157,15 +186,19 @@ CONTAINER_PORT=${FPK_CONTAINER_PORT}
 PORTS_EOF
 echo "  ✓ fpk var/ports 已按 FPK 端口段重写"
 
-# 飞牛门户 config（$FPK_SRC/ui，fpk 外层；app.tgz 内不放 ui/）：
-#   ui/config 由 start.sh gen-portal 生成（iframe 型、键名无 SYNO.SDS. 前缀）
-#   --key-id APP_NAME：FPK 键名须带连字符与 manifest desktop_applaunchname 对齐
-mkdir -p "$FPK_SRC/ui/images"
+# 飞牛门户 ui —— 两份都必须有，缺一不可：
+#   ① app.tgz 内 <APPDIR>/ui：门户「打开」按钮与桌面图标按
+#      /app-center-static/serviceicon/<APP>/ui/images/icon_{0}.png 从【应用目录】取，
+#      app 体内没有 ui/ → 桌面图标空白且不出现「打开」按钮（2026-09-13 实机实测）。
+#   ② fpk 外层 ui/：install_start 安全扫描会枚举外层 dir:ui。
+#   type=url：门户点击直接跳转 URL 打开（非 iframe 内嵌）。
+#   --key-id APP_NAME：FPK 键名须带连字符与 manifest desktop_applaunchname 对齐。
+mkdir -p "$FPK_SRC/ui/images" "$FPK_APP/ui/images"
 cp "$D_ASSETS/ui/images/"*.png "$FPK_SRC/ui/images/" 2>/dev/null || true
-"$FPK_APP/bin/start.sh" gen-portal --type iframe --key-prefix "" --all-users true --with-url true --key-id "$APP_NAME" \
+cp "$D_ASSETS/ui/images/"*.png "$FPK_APP/ui/images/" 2>/dev/null || true
+"$FPK_APP/bin/start.sh" gen-portal --type url --key-prefix "" --all-users true --with-url true --key-id "$APP_NAME" \
   > "$FPK_SRC/ui/config"
-# ui/ 只在 fpk 外层，app 体内不留（避免内外重复）
-rm -rf "$FPK_APP/ui"
+cp "$FPK_SRC/ui/config" "$FPK_APP/ui/config"
 
 # 外层 .sc 协议文件（manifest service_port 对应；缺失 → 后端 GetCloudDetail 读端口
 # nil panic → CLI 10111。端口 = FPK 三段）
@@ -199,20 +232,20 @@ FPK_CHECKSUM="$(md5sum "$FPK_SRC/app.tgz" | awk '{print $1}')"
 cat > "$FPK_SRC/manifest" <<EOF
 appname               = ${APP_NAME}
 version               = ${FPK_VERSION}
-display_name          = DeepSeek Harness
+display_name          = ${CFG_DISPLAY_NAME}
 platform              = x86
-maintainer            = DeepSeek AI
-maintainer_url        = https://github.com/deepseek-ai/deepseek-harness
-distributor           = EIGHTfs
-distributor_url       = https://github.com/EIGHTfs/DeepSeekHarness-NAS
-os_min_version        = 1.1.0
+maintainer            = ${CFG_MAINTAINER}
+maintainer_url        = ${CFG_MAINTAINER_URL}
+distributor           = ${CFG_DISTRIBUTOR}
+distributor_url       = ${CFG_DISTRIBUTOR_URL}
+os_min_version        = ${CFG_OS_MIN_VERSION}
 desktop_uidir         = ui
 desktop_applaunchname = ${APP_NAME}.Application
 service_port          = ${FPK_PROXY_PORT}
 checkport             = false
 ctl_stop              = true
-desc                  = DeepSeek AI 官方开源的 Agent Harness（智能体框架），飞牛 fnOS 原生应用。版本号与官方 dsh 同步（${FPK_VERSION}），门户打开自动携带 token 免密登录。
-source                = thirdparty
+desc                  = ${CFG_DESC}
+source                = ${FPKCFG_SOURCE:-thirdparty}
 wizard_dir            = wizard
 checksum              = ${FPK_CHECKSUM}
 EOF
@@ -221,6 +254,8 @@ EOF
 mkdir -p "$FPK_SRC/cmd" "$FPK_SRC/config" "$FPK_SRC/wizard"
 
 # cmd/main：start/stop/status/restart 全代理到 bin/start.sh
+#   端口一律从 <app>/var/ports 读取（打包期由 build-config.yaml 落盘，不硬编码）
+#   启停含兜底：stop 先优雅停再补杀残留；start 后做运行检测
 cat > "$FPK_SRC/cmd/main" <<'EOF'
 #!/bin/bash
 APPNAME="__APP_NAME__"
@@ -240,34 +275,98 @@ if [ -z "${TRIM_PKGVAR:-}" ]; then
 fi
 mkdir -p "${TRIM_PKGVAR}" 2>/dev/null || true
 LOG_FILE="${TRIM_PKGVAR}/${APPNAME}.log"
+PID_FILE="${TRIM_PKGVAR}/${APPNAME}.pid"
 log_msg(){ echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "${LOG_FILE}"; }
 
+# ── 端口：优先读应用体自带 var/ports（打包期生成），缺失则回退包内默认 ──
+PORT_FILE="${TRIM_APPDEST}/var/ports"
+if [ -f "$PORT_FILE" ]; then
+  . "$PORT_FILE"
+fi
+if [ -z "${PROXY_PORT:-}" ] || [ -z "${DSH_PORT:-}" ] || [ -z "${CONTAINER_PORT:-}" ]; then
+  log_msg "错误：未找到 ${PORT_FILE}（端口应由打包时生成），无法确定服务端口"
+  echo "✗ 未找到 ${PORT_FILE}，无法确定服务端口" >&2
+  exit 1
+fi
+
+# ── 运行检测：DSH 端口在听 或 start.sh 进程在（两者其一即视为运行）──
+running_dsh() {
+  # 判定顺序：① DSH 端口在听（最可靠）→ ② 本应用 start.sh 进程在（按绝对路径精确匹配）
+  # ⚠ 禁止宽松的 `ps -ef | grep start.sh`：会命中任何命令行里含 "start.sh" 的无关进程
+  #   （含诊断命令自身），实测导致 status 恒判「运行中」→ 系统不再拉起服务（2026-09-13）。
+  if command -v netstat >/dev/null 2>&1; then
+    netstat -tln 2>/dev/null | grep -q ":${DSH_PORT} " && return 0
+  elif command -v ss >/dev/null 2>&1; then
+    ss -tln 2>/dev/null | grep -q ":${DSH_PORT} " && return 0
+  fi
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -f "${TRIM_APPDEST}/bin/start\.sh" >/dev/null 2>&1 && return 0
+  fi
+  return 1
+}
+
 start_process() {
-  log_msg "Starting ${APPNAME}..."
+  log_msg "Starting ${APPNAME}... (proxy=${PROXY_PORT} dsh=${DSH_PORT} container=${CONTAINER_PORT})"
+  mkdir -p "${TRIM_PKGVAR}/logs" "${TRIM_PKGVAR}/data" 2>/dev/null || true
   export PATH="${TRIM_APPDEST}/bin:$PATH" HOME="${TRIM_APPDEST}"
   export TRIM_APPDEST="${TRIM_APPDEST}" TRIM_PKGVAR="${TRIM_PKGVAR}"
+  # 给应用用户可写的私有 tmp（fnOS /tmp 无 sticky 且属 root，应用不可写）
+  export TMPDIR="${TRIM_PKGVAR}/tmp" TMP="${TRIM_PKGVAR}/tmp" TEMP="${TRIM_PKGVAR}/tmp"
+  mkdir -p "$TMPDIR" 2>/dev/null || true
   cd "${TRIM_PKGVAR}"
-  "${TRIM_APPDEST}/bin/start.sh" start >> "${LOG_FILE}" 2>&1
+  "${TRIM_APPDEST}/bin/start.sh" start \
+    --proxy-port "$PROXY_PORT" \
+    --dsh-port "$DSH_PORT" \
+    --container-port "$CONTAINER_PORT" >> "${LOG_FILE}" 2>&1
   local rc=$?
   log_msg "start.sh rc=${rc}"
-  return ${rc}
+  sleep 3
+  if ! running_dsh; then
+    log_msg "启动后运行检测未通过（端口 ${DSH_PORT} 未监听）"
+    return 1
+  fi
+  log_msg "运行检测通过"
+  return 0
 }
+
 stop_process() {
   log_msg "Stopping ${APPNAME}..."
   export TRIM_APPDEST="${TRIM_APPDEST}" TRIM_PKGVAR="${TRIM_PKGVAR}"
-  "${TRIM_APPDEST}/bin/start.sh" stop >> "${LOG_FILE}" 2>&1
+  "${TRIM_APPDEST}/bin/start.sh" stop \
+    --proxy-port "$PROXY_PORT" \
+    --dsh-port "$DSH_PORT" \
+    --container-port "$CONTAINER_PORT" >> "${LOG_FILE}" 2>&1 || true
+  # 兜底：PID 文件残留进程 → 精确 TERM → 残留子进程 → KILL（先 TERM 后 KILL）
+  # start.sh 把 PID 写在版本数据目录（<TRIM_PKGVAR>/<version>/<APPNAME>.pid），此处按同规则定位
+  local _pidfile _pid
+  for _pidfile in "${TRIM_PKGVAR}/${APPNAME}.pid" "${TRIM_PKGVAR}"/*/"${APPNAME}.pid"; do
+    [ -f "$_pidfile" ] || continue
+    _pid="$(tr -dc '0-9' < "$_pidfile" 2>/dev/null)"
+    if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
+      kill -TERM "$_pid" 2>/dev/null || true
+      sleep 2
+      kill -0 "$_pid" 2>/dev/null && { kill -KILL "$_pid" 2>/dev/null || true; }
+    fi
+    rm -f "$_pidfile" 2>/dev/null || true
+  done
+  pkill -f "bin\.js web" 2>/dev/null || true
+  sleep 1
+  pkill -9 -f "start\.sh" 2>/dev/null || true
+  log_msg "Stopped"
   return 0
 }
+
 status_process() {
   export TRIM_APPDEST="${TRIM_APPDEST}" TRIM_PKGVAR="${TRIM_PKGVAR}"
-  "${TRIM_APPDEST}/bin/start.sh" status > /dev/null 2>&1
-  return $?
+  "${TRIM_APPDEST}/bin/start.sh" status > /dev/null 2>&1 && return 0
+  running_dsh
 }
+
 case "$1" in
-  start)   start_process && { echo "✓ 启动成功"; exit 0; } || { echo "✗ 启动失败"; exit 1; } ;;
+  start)   start_process && { echo "✓ 启动成功"; exit 0; } || { echo "✗ 启动失败（运行检测未通过）"; exit 1; } ;;
   stop)    stop_process; echo "✓ 已停止"; exit 0 ;;
-  status)  status_process && echo "✓ 服务运行中" || { echo "✗ 服务未运行"; exit 3; } ;;
-  restart) stop_process; sleep 1; start_process && { echo "✓ 重启成功"; exit 0; } || { echo "✗ 重启失败"; exit 1; } ;;
+  status)  status_process && { echo "✓ 服务运行中"; exit 0; } || { echo "✗ 服务未运行"; exit 3; } ;;
+  restart) stop_process; sleep 2; start_process && { echo "✓ 重启成功"; exit 0; } || { echo "✗ 重启失败"; exit 1; } ;;
   *) echo "Usage: $0 {start|stop|status|restart}"; exit 1 ;;
 esac
 EOF
@@ -286,33 +385,76 @@ install_log="${TRIM_PKGVAR:-/tmp}/${APPNAME}.install.log"
 EOF
 
 # cmd/service-setup：服务定义 + 安装后初始化（工作区目录 + 权限）
+#   端口从 <app>/var/ports 读取（打包期由 build-config.yaml 落盘）；启停一律带端口参数
 cat > "$FPK_SRC/cmd/service-setup" <<EOF
 #!/bin/bash
 LOG_FILE="\${TRIM_PKGVAR}/__APP_NAME__.log"
 PID_FILE="\${TRIM_PKGVAR}/__APP_NAME__.pid"
 APP_DIR="\${TRIM_APPDEST}"
 export PATH="\${APP_DIR}/bin:\$PATH" HOME="\${APP_DIR}"
-SERVICE_COMMAND="\${APP_DIR}/bin/start.sh start"
+# 应用用户可写的私有 tmp（fnOS /tmp 无 sticky 且属 root，应用不可写）
+export TMPDIR="\${TRIM_PKGVAR}/tmp" TMP="\${TRIM_PKGVAR}/tmp" TEMP="\${TRIM_PKGVAR}/tmp"
+
+# ── 端口：读应用体自带 var/ports（打包期生成），缺失则报错不放行 ──
+PORT_FILE="\${APP_DIR}/var/ports"
+[ -f "\${PORT_FILE}" ] && . "\${PORT_FILE}"
+if [ -z "\${PROXY_PORT:-}" ] || [ -z "\${DSH_PORT:-}" ] || [ -z "\${CONTAINER_PORT:-}" ]; then
+  echo "错误：未找到 \${PORT_FILE}（端口应由打包时生成），无法确定服务端口" >&2
+  exit 1
+fi
+
+SERVICE_COMMAND="\${APP_DIR}/bin/start.sh start --proxy-port \${PROXY_PORT} --dsh-port \${DSH_PORT} --container-port \${CONTAINER_PORT}"
 SVC_BACKGROUND=y
 SVC_WRITE_PID=y
 SVC_CWD="\${TRIM_PKGVAR}"
 SVC_WAIT_TIMEOUT=15
 service_postinst(){
-  mkdir -p "\${TRIM_PKGVAR}/config" 2>/dev/null || true
-  SHARE_WORKSPACE="/vol1/@appshare/__APP_NAME__"
-  if [ -d "/vol1" ]; then
-    mkdir -p "\${SHARE_WORKSPACE}/workspace" "\${SHARE_WORKSPACE}/data" 2>/dev/null || true
-    chmod -R 777 "\${SHARE_WORKSPACE}/workspace" "\${SHARE_WORKSPACE}/data" 2>/dev/null || true
+  mkdir -p "\${TRIM_PKGVAR}/config" "\${TRIM_PKGVAR}/tmp" 2>/dev/null || true
+  # ── 共享区（@appshare）映射：默认关闭，配置为空则整段不执行（零副作用）──
+  # 开启方式：build-config.yaml 的 share_workspace_dir / share_data_dir 填目录名。
+  # 路径全自动推导：TRIM_PKGVAR 形如 /vol2/@appdata/<APP>（fnOS 注入，卷随安装位置变），
+  # 把其中的 @appdata 换成 @appshare 即共享区根 —— 不写卷号、不写应用名。
+  SHARE_WORKSPACE="\${TRIM_PKGVAR/@appdata/@appshare}"
+  SHARE_VOL="\${SHARE_WORKSPACE%%/@appshare*}"
+  SHARE_WS_NAME="__SHARE_WORKSPACE_DIR__"
+  SHARE_DATA_NAME="__SHARE_DATA_DIR__"
+  if [ -n "\${SHARE_WS_NAME}\${SHARE_DATA_NAME}" ] && [ -n "\${SHARE_VOL}" ] && [ -d "\${SHARE_VOL}" ]; then
     DSH_OWNER="\${TRIM_USERNAME:-__APP_NAME__}:\${TRIM_GROUPNAME:-__APP_NAME__}"
+    if [ -n "\${SHARE_WS_NAME}" ]; then
+      mkdir -p "\${SHARE_WORKSPACE}/\${SHARE_WS_NAME}" 2>/dev/null || true
+      chmod -R 777 "\${SHARE_WORKSPACE}/\${SHARE_WS_NAME}" 2>/dev/null || true
+    fi
+    if [ -n "\${SHARE_DATA_NAME}" ]; then
+      mkdir -p "\${SHARE_WORKSPACE}/\${SHARE_DATA_NAME}" 2>/dev/null || true
+      chmod -R 777 "\${SHARE_WORKSPACE}/\${SHARE_DATA_NAME}" 2>/dev/null || true
+      [ -d "\${TRIM_PKGVAR}/\${SHARE_DATA_NAME}" ] && [ ! -L "\${TRIM_PKGVAR}/\${SHARE_DATA_NAME}" ] && { cp -a "\${TRIM_PKGVAR}/\${SHARE_DATA_NAME}/." "\${SHARE_WORKSPACE}/\${SHARE_DATA_NAME}/" 2>/dev/null || true; rm -rf "\${TRIM_PKGVAR}/\${SHARE_DATA_NAME}"; }
+      ln -sfn "\${SHARE_WORKSPACE}/\${SHARE_DATA_NAME}" "\${TRIM_PKGVAR}/\${SHARE_DATA_NAME}" 2>/dev/null || true
+    fi
     [ -e "\${SHARE_WORKSPACE}/.dsh" ] && { chown -R "\${DSH_OWNER}" "\${SHARE_WORKSPACE}/.dsh" 2>/dev/null || true; find "\${SHARE_WORKSPACE}/.dsh" -type d -exec chmod 700 {} + 2>/dev/null || true; find "\${SHARE_WORKSPACE}/.dsh" -type f -exec chmod 600 {} + 2>/dev/null || true; }
-    [ -d "\${TRIM_PKGVAR}/data" ] && [ ! -L "\${TRIM_PKGVAR}/data" ] && { cp -a "\${TRIM_PKGVAR}/data/." "\${SHARE_WORKSPACE}/data/" 2>/dev/null || true; rm -rf "\${TRIM_PKGVAR}/data"; }
-    ln -sfn "\${SHARE_WORKSPACE}" "\${TRIM_PKGVAR}/data" 2>/dev/null || true
   fi
 }
 service_postupgrade(){ service_postinst; }
+# 运行检测：DSH 端口在听 或 start.sh 进程在
+service_running(){
+  if command -v netstat >/dev/null 2>&1; then
+    netstat -tln 2>/dev/null | grep -q ":\${DSH_PORT} " && return 0
+  elif command -v ss >/dev/null 2>&1; then
+    ss -tln 2>/dev/null | grep -q ":\${DSH_PORT} " && return 0
+  fi
+  # 精确匹配本应用 start.sh 绝对路径（宽松 grep 会误命中无关进程）
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -f "\${APP_DIR}/bin/start\.sh" >/dev/null 2>&1 && return 0
+  fi
+  return 1
+}
+service_poststart(){
+  sleep 3
+  service_running || { echo "启动后运行检测未通过（端口 \${DSH_PORT} 未监听）" >> "\${LOG_FILE}" 2>/dev/null; return 1; }
+  return 0
+}
 service_preuninst(){
   export TRIM_APPDEST="\${TRIM_APPDEST}" TRIM_PKGVAR="\${TRIM_PKGVAR}"
-  "\${APP_DIR}/bin/start.sh" stop >> "\${TRIM_PKGVAR}/__APP_NAME__.log" 2>&1 || true
+  "\${APP_DIR}/bin/start.sh" stop --proxy-port "\${PROXY_PORT}" --dsh-port "\${DSH_PORT}" --container-port "\${CONTAINER_PORT}" >> "\${TRIM_PKGVAR}/__APP_NAME__.log" 2>&1 || true
   rm -f "\${PID_FILE}" 2>/dev/null || true
 }
 service_poststop(){ service_preuninst; }
@@ -334,32 +476,134 @@ for hook in install_init uninstall_init upgrade_init config_init config_callback
   printf '#!/bin/bash\n### %s hook\nif [ -r "$(dirname $0)/common" ]; then . "$(dirname $0)/common"; fi\nexit 0\n' "$hook" > "$FPK_SRC/cmd/$hook"
 done
 
-# install_callback：预建版本数据目录（/vol1/@appdata 属 root，应用用户无权限自建）
+# cmd/install_callback：预建版本数据目录（/vol1/@appdata 属 root，应用用户无权限自建）
+#   版本号来源与 bin/start.sh 的 resolve_pkg_version 保持一致（dsh 包 → npm 产物 → 顶层），
+#   否则建目录与实际使用目录不一致（2026-09-13 实测：npm 链路顶层是外壳 dsh-web/1.0.0）
+#   ⚠ APP_DIR 不得依赖 TRIM_APPDEST 注入（fnOS 安装期不注入它，实测为空→回退 /vol1 错位）；
+#     必须像 cmd/main 一样经 /var/apps/<APP>/target 软链解析真实安装位置（实测 /vol2）。
 cat > "$FPK_SRC/cmd/install_callback" <<'EOF'
 #!/bin/bash
+# 执行痕迹（写应用数据目录而非 /tmp：fnOS /tmp 属 root 且无 sticky，应用用户写不进；
+# 2026-09-13 曾用 /tmp 探针得到"未执行"的假结论，改这里才能确诊 fnOS 是否/以何用户执行本钩子）
+{
+  echo "[install_callback] $(date '+%H:%M:%S') uid=$(id -u) user=$(id -un) TRIM_APPDEST=${TRIM_APPDEST:-<空>} TRIM_PKGVAR=${TRIM_PKGVAR:-<空>}"
+} >> "${TRIM_PKGVAR:-/var/apps/__APP_NAME__}/install-callback.trace" 2>/dev/null || true
+APP_NAME="__APP_NAME__"
 APP_USER="${TRIM_APPNAME:-__APP_NAME__}"
 PKG_ROOT="${TRIM_PKGVAR:-/vol1/@appdata/__APP_NAME__}"
-VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${TRIM_APPDEST:-/vol1/@appcenter/__APP_NAME__}/package.json" 2>/dev/null | head -1)"
-[ -z "$VERSION" ] && VERSION="0.1.5-alpha.1"
+# 真实应用目录：fnOS 把应用体解压后挂在 /var/apps/<APP>/target 软链上；
+# 安装期 TRIM_APPDEST 不注入，须经该软链解析（与 cmd/main 同款逻辑）
+if [ -n "${TRIM_APPDEST:-}" ]; then
+  APP_DIR="${TRIM_APPDEST}"
+elif [ -e "/var/apps/${APP_NAME}/target" ]; then
+  APP_DIR="$(readlink -f "/var/apps/${APP_NAME}/target" 2>/dev/null || echo "/var/apps/${APP_NAME}/target")"
+else
+  APP_DIR="/vol1/@appcenter/${APP_NAME}"
+fi
+# 版本号：dsh 包 version（优先）→ npm 产物 localBuildVersion 串 → 顶层 package.json → 打包期兜底值
+version_from(){
+  local src="$1" f v
+  case "$src" in
+    dsh)
+      for f in "$APP_DIR/node_modules/@deepseek-ai/dsh/package.json" \
+               "$APP_DIR/node_modules/node_modules/@deepseek-ai/dsh/package.json" \
+               "$APP_DIR/apps/cli/package.json"; do
+        [ -f "$f" ] || continue
+        v="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" 2>/dev/null | head -1)"
+        [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+      done ;;
+    npm)
+      for f in "$APP_DIR/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js" \
+               "$APP_DIR/node_modules/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js"; do
+        [ -f "$f" ] || continue
+        v="$(sed -n 's/.*function localBuildVersion()[^{]*{[[:space:]]*return[[:space:]]*`\([^`]*\)`.*/\1/p' "$f" 2>/dev/null | head -1)"
+        [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+      done ;;
+    top)
+      f="$APP_DIR/package.json"
+      [ -f "$f" ] && sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" 2>/dev/null | head -1 ;;
+  esac
+  return 0
+}
+VERSION=""
+for _s in __BRAND_VERSION_ORDER_COMMA__ top; do
+  VERSION="$(version_from "$_s")"
+  [ -n "$VERSION" ] && break
+done
+[ -z "$VERSION" ] && VERSION="__FPK_VERSION__"
 mkdir -p "${PKG_ROOT}/${VERSION}" 2>/dev/null || exit 0
 chown -R "${APP_USER}:${APP_USER}" "${PKG_ROOT}" 2>/dev/null || true
 chmod 700 "${PKG_ROOT}/${VERSION}" 2>/dev/null || true
+# ── dsh / pnpm 命令软链（本钩子由 fnOS 安装期以 root 执行，才能写系统 PATH；
+#    注意：service_postinst 在 fnOS 生命周期里从不被调用，软链只能放这里）──
+for _name in dsh pnpm; do
+  [ -f "${APP_DIR}/bin/${_name}" ] || continue
+  for _d in /usr/local/bin /usr/bin; do
+    [ -d "${_d}" ] || continue
+    ln -sfn "${APP_DIR}/bin/${_name}" "${_d}/${_name}" 2>/dev/null && break
+  done
+done
 exit 0
 EOF
 
-# uninstall_callback：只删本版本数据目录；父目录空则删父
+# uninstall_callback：只删本版本数据目录；父目录空则删父（仅剩一个版本时父目录即被删）
 cat > "$FPK_SRC/cmd/uninstall_callback" <<'EOF'
 #!/bin/bash
+APP_NAME="__APP_NAME__"
 APP_USER="${TRIM_APPNAME:-__APP_NAME__}"
 PKG_ROOT="${TRIM_PKGVAR:-/vol1/@appdata/__APP_NAME__}"
-VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${TRIM_APPDEST:-/vol1/@appcenter/__APP_NAME__}/package.json" 2>/dev/null | head -1)"
-[ -z "$VERSION" ] && VERSION="0.1.5-alpha.1"
+# 同 install_callback：TRIM_APPDEST 卸载期不注入，经 /var/apps/<APP>/target 解析真实位置
+if [ -n "${TRIM_APPDEST:-}" ]; then
+  APP_DIR="${TRIM_APPDEST}"
+elif [ -e "/var/apps/${APP_NAME}/target" ]; then
+  APP_DIR="$(readlink -f "/var/apps/${APP_NAME}/target" 2>/dev/null || echo "/var/apps/${APP_NAME}/target")"
+else
+  APP_DIR="/vol1/@appcenter/${APP_NAME}"
+fi
+version_from(){
+  local src="$1" f v
+  case "$src" in
+    dsh)
+      for f in "$APP_DIR/node_modules/@deepseek-ai/dsh/package.json" \
+               "$APP_DIR/node_modules/node_modules/@deepseek-ai/dsh/package.json" \
+               "$APP_DIR/apps/cli/package.json"; do
+        [ -f "$f" ] || continue
+        v="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" 2>/dev/null | head -1)"
+        [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+      done ;;
+    npm)
+      for f in "$APP_DIR/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js" \
+               "$APP_DIR/node_modules/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js"; do
+        [ -f "$f" ] || continue
+        v="$(sed -n 's/.*function localBuildVersion()[^{]*{[[:space:]]*return[[:space:]]*`\([^`]*\)`.*/\1/p' "$f" 2>/dev/null | head -1)"
+        [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+      done ;;
+    top)
+      f="$APP_DIR/package.json"
+      [ -f "$f" ] && sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" 2>/dev/null | head -1 ;;
+  esac
+  return 0
+}
+VERSION=""
+for _s in __BRAND_VERSION_ORDER_COMMA__ top; do
+  VERSION="$(version_from "$_s")"
+  [ -n "$VERSION" ] && break
+done
+[ -z "$VERSION" ] && VERSION="__FPK_VERSION__"
 if [ -n "$VERSION" ] && [ -d "$PKG_ROOT/$VERSION" ]; then
   rm -rf "$PKG_ROOT/$VERSION" 2>/dev/null
 fi
 if [ -d "$PKG_ROOT" ] && [ -z "$(ls -A "$PKG_ROOT" 2>/dev/null)" ]; then
   rm -rf "$PKG_ROOT" 2>/dev/null
 fi
+# 清理本应用建的 dsh/pnpm 软链（只删指向本应用 bin/ 的软链，不碰别的应用/真实文件）
+for _name in dsh pnpm; do
+  for _d in /usr/local/bin /usr/bin; do
+    if [ -L "${_d}/${_name}" ] && [ "$(readlink "${_d}/${_name}" 2>/dev/null)" = "${APP_DIR}/bin/${_name}" ]; then
+      rm -f "${_d}/${_name}" 2>/dev/null || true
+    fi
+  done
+done
 exit 0
 EOF
 
@@ -384,7 +628,7 @@ else
   printf '{"data-share":{"shares":[{"name":"%s","permission":{"rw":["%s"]}}]}}' "$APP_NAME" "$APP_NAME_LOWER" > "$FPK_SRC/config/resource"
 fi
 
-# wizard（安装向导页；install 一页 tips + uninstall 空数组）
+# wizard（安装向导页；install 一页 tips + uninstall 卸载确认）
 cat > "$FPK_SRC/wizard/install" <<EOF
 [
     {
@@ -398,7 +642,36 @@ cat > "$FPK_SRC/wizard/install" <<EOF
     }
 ]
 EOF
-printf '[]' > "$FPK_SRC/wizard/uninstall"
+cat > "$FPK_SRC/wizard/uninstall" <<'EOF'
+[
+    {
+        "stepTitle": "卸载确认",
+        "items": [
+            {
+                "type": "tips",
+                "helpText": "您即将卸载 DeepSeek Harness。请选择是否保留您的会话记录和模型配置数据："
+            },
+            {
+                "type": "radio",
+                "field": "wizard_delete_data",
+                "label": "数据保留选项",
+                "initValue": "false",
+                "options": [
+                    {
+                        "label": "保留数据（推荐）- 再次安装时可直接恢复所有会话和配置",
+                        "value": "false"
+                    },
+                    {
+                        "label": "彻底删除所有数据（不可恢复）",
+                        "value": "true"
+                    }
+                ]
+            }
+        ]
+    }
+]
+EOF
+# ⚠ 禁止把 wizard/uninstall 写成空数组 []：实测 fnOS GetCloudDetail 解析 WizardData 遇空数组 → nil panic → 10111（2026-09-13 exp-j 对照实验锁定：仅换 uninstall 为完整 JSON 即装成功）
 
 # ICON（透明化处理后）
 cp "$D_ASSETS/PACKAGE_ICON.PNG" "$FPK_SRC/ICON.PNG"
@@ -407,8 +680,13 @@ cp "$D_ASSETS/PACKAGE_ICON_256.PNG" "$FPK_SRC/ICON_256.PNG"
 #===============================================================================
 # 三、组装外层 fpk（gzip）
 #===============================================================================
-# cmd 内占位符统一替换为实际 APP_NAME
+# cmd 内占位符统一替换为实际配置值（品牌顺序 / 版本兜底 / 应用名 / 共享区目录名）
 sed -i "s/__APP_NAME__/${APP_NAME}/g" "$FPK_SRC/cmd/"* 2>/dev/null || true
+sed -i "s/__BRAND_VERSION_ORDER_COMMA__/${CFG_BRAND_VERSION_ORDER//,/ }/g; s/__FPK_VERSION__/${FPK_VERSION}/g" "$FPK_SRC/cmd/"* 2>/dev/null || true
+sed -i "s|__SHARE_WORKSPACE_DIR__|${CFG_SHARE_WORKSPACE_DIR}|g; s|__SHARE_DATA_DIR__|${CFG_SHARE_DATA_DIR}|g" "$FPK_SRC/cmd/"* 2>/dev/null || true
+if grep -rl "__APP_NAME__\|__BRAND_VERSION_ORDER_COMMA__\|__FPK_VERSION__\|__SHARE_WORKSPACE_DIR__\|__SHARE_DATA_DIR__" "$FPK_SRC/cmd/" 2>/dev/null | grep -q .; then
+  echo "[!] cmd 占位符未全部替换" >&2; exit 1
+fi
 OUT_FPK="$D_STAGING/${APP_NAME}_x86-${FPK_VERSION}.fpk"
 echo "▶ 组装外层 FPK → $OUT_FPK"
 # ⚠ 条目必须与 fnpack 官方格式一致：无 ./ 前缀、无目录尾斜杠条目
@@ -418,7 +696,15 @@ echo "▶ 组装外层 FPK → $OUT_FPK"
   && gzip -9 -f "${OUT_FPK}.tar" && mv "${OUT_FPK}.tar.gz" "$OUT_FPK" )
 
 sync   # CIFS 元数据滞后
+_FPK_SIZE_MB="$(du -m --apparent-size "$OUT_FPK" 2>/dev/null | cut -f1)"
 echo "  ✅ FPK: $OUT_FPK ($(du -h --apparent-size "$OUT_FPK" | cut -f1) | MD5 $(md5sum "$OUT_FPK" | awk '{print $1}'))"
+
+# 体积门禁（阈值来自 build-config.yaml size_limit_mb；0 = 不检查）
+if [ "${CFG_SIZE_LIMIT_MB:-0}" != "0" ] && [ -n "$_FPK_SIZE_MB" ] && [ "$_FPK_SIZE_MB" -gt "$CFG_SIZE_LIMIT_MB" ]; then
+  echo "[!] 体积门禁未通过：$_FPK_SIZE_MB MB > ${CFG_SIZE_LIMIT_MB} MB（阈值 size_limit_mb in build-config.yaml）" >&2
+  echo "    产物已生成但未达标，请先裁剪（build-prune-blacklist.json）后再发布。" >&2
+  exit 1
+fi
 
 #===============================================================================
 # 四、汇总
@@ -427,8 +713,10 @@ echo ""
 echo "════════════════════════════════════════════════"
 echo "✅ FPK 构建完成（产物已放入暂存区，尚未验证）"
 echo "  FPK   : $OUT_FPK"
+echo "  体积  : $(du -h --apparent-size "$OUT_FPK" | cut -f1)（门禁上限 ${CFG_SIZE_LIMIT_MB} MB）"
 echo "  版本  : 官方 $PKG_VER | FPK $FPK_VERSION"
-echo "  端口  : $FPK_PROXY_PORT / $FPK_DSH_PORT / $FPK_CONTAINER_PORT"
+echo "  名牌  : ${CFG_BRAND_NAME} + 版本号（优先级 ${CFG_BRAND_VERSION_ORDER}）"
+echo "  端口  : $FPK_PROXY_PORT / $FPK_DSH_PORT / $FPK_CONTAINER_PORT（var/ports 下发）"
 echo "────────────────────────────────────────────────"
 echo "发布目录 $D_STAGING 只放暂存；实装验证后执行:"
 echo "  scripts/promote-release.sh <包文件名>"

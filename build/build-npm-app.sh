@@ -44,6 +44,11 @@ APP_NAME_LOWER="$(echo "$APP_NAME" | tr 'A-Z' 'a-z')"
 FPK_PROXY_PORT="${CFG_PROXY_PORT:-3080}"
 FPK_DSH_PORT="${CFG_DSH_PORT:-3081}"
 FPK_CONTAINER_PORT="${CFG_CONTAINER_PORT:-3082}"
+# 品牌（配置驱动；名牌名称 + 版本号优先级链）
+CFG_BRAND_NAME="${CFG_BRAND_NAME:-$APP_NAME}"
+CFG_TITLE="${CFG_TITLE:-${CFG_DISPLAY_NAME:-DeepSeek Harness}}"
+CFG_DESC_SHORT="${CFG_DESC_SHORT:-${CFG_DISPLAY_NAME:-DeepSeek Harness} Web UI}"
+CFG_BRAND_VERSION_ORDER="${CFG_BRAND_VERSION_ORDER:-dsh,npm}"
 
 # ── 参数 ──
 VERSION="${1:-}"
@@ -102,30 +107,33 @@ if [ "$_NEED_INSTALL" = "1" ]; then
     [ "$OK" = true ] || { echo "✗ npm install @deepseek-ai/dsh@${VERSION} 失败" >&2; exit 1; }
   )
 fi
+# ⚠ 嵌套 bug 修复（2026-09-13 实测根因）：cp -a src dst 在 dst 已存在时，
+#   会把 src 复制成 dst/src 而非覆盖 → 重跑 build-npm-app.sh 产生
+#   app_root/node_modules/node_modules 双份物理副本 → @deepseek-ai/dsh-tools 被加载两份
+#   → TOOL_RUNTIME_SCHEDULER Symbol 对不上 → 飞牛 dsh 报
+#   "Cannot read properties of undefined (reading 'prepare')"。
+#   修复：复制前先移除目标目录，保证 cp 永远"创建目标"语义，不嵌套。
+rm -rf "$APP_ROOT/node_modules"
 cp -a "$DSH_WEB/node_modules" "$APP_ROOT/node_modules"
+[ ! -e "$APP_ROOT/node_modules/node_modules" ] || { echo "[!] 嵌套副本残留，清理" >&2; rm -rf "$APP_ROOT/node_modules/node_modules"; }
 cp "$DSH_WEB/package.json" "$APP_ROOT/package.json" 2>/dev/null || true
 
 # ── 3. 随包 pnpm（DSH plugin 子命令直接执行 pnpm；用我们自带的 tools/pnpm） ──
 echo "▶ 随包 pnpm（tools/pnpm，$(node "$WS/tools/pnpm/bin/pnpm.mjs" --version 2>/dev/null || echo unknown)）"
 mkdir -p "$APP_ROOT/tools"
 cp -a "$WS/tools/pnpm/." "$APP_ROOT/tools/pnpm/"
-# bin/pnpm 包装器（node 跑 pnpm.mjs，路径与包无关）
-cat > "$APP_ROOT/bin/pnpm" <<'PNPM_WRAP'
-#!/bin/bash
-BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="$(cd "${BIN_DIR}/.." && pwd)"
-exec "${BIN_DIR}/node" "${APP_DIR}/tools/pnpm/bin/pnpm.mjs" "$@"
-PNPM_WRAP
+# bin/pnpm 包装器：直接用母版 scripts/pnpm（内置 readlink 软链解析 + node 查找兜底，
+#   被 /usr/local/bin/pnpm 软链调用时也能正确定位实例根；路径与包名无关）
+# ⚠ 母版期望 <实例>/pnpm/dist/pnpm.mjs，npm 链路放 <实例>/tools/pnpm/，须 sed 适配
+cp "$WS/scripts/pnpm" "$APP_ROOT/bin/pnpm"
+sed -i 's|$DSH_DIR/pnpm/dist/pnpm\.mjs|$DSH_DIR/tools/pnpm/dist/pnpm.mjs|g' "$APP_ROOT/bin/pnpm"
 chmod +x "$APP_ROOT/bin/pnpm"
 
 # ── 4. dsh CLI 包装器（SSH 下直接 dsh 可用；与 SPK 的软链思路一致但包内自包含） ──
-cat > "$APP_ROOT/bin/dsh" <<'DSH_WRAP'
-#!/bin/bash
-BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="$(cd "${BIN_DIR}/.." && pwd)"
-export PATH="${BIN_DIR}:${PATH}"
-exec "${BIN_DIR}/node" "${APP_DIR}/node_modules/@deepseek-ai/dsh/lib/bin.js" "$@"
-DSH_WRAP
+#   直接用母版 scripts/dsh：readlink 解析软链 + find_node 兜底 +
+#   三入口自适应（apps/cli/lib → apps/cli/src → node_modules/@deepseek-ai/dsh/lib，
+#   最后者正是 npm 链路的布局，见母版第三个 elif）
+cp "$WS/scripts/dsh" "$APP_ROOT/bin/dsh"
 chmod +x "$APP_ROOT/bin/dsh"
 
 # ── 5. start.sh（我们自己的母版 → FPK 端口段; detect_entry 已兼容 npm 布局） ──
@@ -135,9 +143,14 @@ sed -e "s|__PROXY_PORT__|${FPK_PROXY_PORT}|g" \
     -e "s|__CONTAINER_PORT__|${FPK_CONTAINER_PORT}|g" \
     -e "s|__APP_NAME__|${APP_NAME}|g" \
     -e "s|__APP_ID__|${APP_ID}|g" \
+    -e "s|__BRAND_NAME__|${CFG_BRAND_NAME}|g" \
+    -e "s|__BRAND_VERSION_ORDER__|${CFG_BRAND_VERSION_ORDER}|g" \
+    -e "s|__FPK_VERSION__|${VERSION}|g" \
+    -e "s|__PORTAL_TITLE__|${CFG_TITLE}|g" \
+    -e "s|__PORTAL_DESC__|${CFG_DESC_SHORT}|g" \
     "$WS/scripts/start.sh.example" > "$APP_ROOT/bin/start.sh"
 chmod +x "$APP_ROOT/bin/start.sh"
-if grep -q "__PROXY_PORT__\|__DSH_PORT__\|__CONTAINER_PORT__\|__APP_NAME__\|__APP_ID__" "$APP_ROOT/bin/start.sh"; then
+if grep -qE "__PROXY_PORT__|__DSH_PORT__|__CONTAINER_PORT__|__APP_NAME__|__APP_ID__|__BRAND_NAME__|__BRAND_VERSION_ORDER__|__FPK_VERSION__|__PORTAL_TITLE__|__PORTAL_DESC__" "$APP_ROOT/bin/start.sh"; then
   echo "[!] start.sh 占位符未全部替换" >&2; exit 1
 fi
 

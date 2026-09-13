@@ -16,6 +16,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 
 - 🤖 **多模型支持** — DeepSeek 官方模型 + 自定义 OpenAI 兼容端点
 - 🔌 **反向代理** — 内置透明反向代理（群晖 30800 → 内部 30801，飞牛 3080 → 内部 3081）
+- 🛡️ **局域网限制** — 只放行私网 IP 段（127/10/172.16-31/192.168/169.254/0.x/fe80:/fc/fd），公网 IP 访问一律 403 中文提示页
 - 🔐 **门户免密登录** — 群晖 Web（DSM 桌面/应用中心）打开套件入口时才携带 token（类似 Iventoy 的「打开」）：带过 token 后，浏览器局域网直接访问即免密；反之从未在网页端带过 token 的直接访问，因没有访问凭证而无法进入
 - ⚙️ **Web UI** — 可视化模型管理和配置
 - 🛡️ **安全模式** — DSH 启动失败时可一键禁用所有用户插件
@@ -24,16 +25,49 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 
 ---
 
-## 🚀 编译打包脚本（三脚本分工）
+## 🚀 编译打包脚本
 
-打包拆成三个脚本：**公共预编译只做一次**，SPK / FPK 各自独立打包。
+打包拆成四个脚本：**公共预编译只做一次**，SPK / FPK 各自独立打包，外加**一键构建**入口（本地等效 GitHub Actions）。未来发版走 **GitHub Actions 自动构建**（tag 推送即出 spk+fpk 双产物），本地脚本用于开发调试与手工兜底。
 
-| 脚本 | 职责 | 参数 |
-|------|------|------|
-| `build/build-common.sh` | **公共**：pnpm install + pnpm build + 黑白名单裁剪 → `target` 整树 + `build-meta.env` | `[SRC] [SKIP_BUILD]` |
-| `build/build-npm-app.sh` | **FPK npm 链路（可选）**：npm 装官方包（`--omit=dev`，~100MiB）→ `build/spk-build/npm-app-<版本>/app_root` | `[VERSION]` |
-| `build/build-spk.sh` | 消费 target → 群晖 `.spk`（端口 30800/30801/30802） | 无 |
-| `build/build-fpk.sh` | 消费 target → 飞牛 `.fpk`（端口 3080/3081/3082）；**`--npm` 消费 npm 链路 app_root**（默认源码 target 链路，双链路并存互不影响） | `[--npm]` |
+### 一键构建（本地等效 CI）
+
+```bash
+# 一键：拉官方最新源 → 按需构建 → 打包 SPK+FPK → 汇总体积（默认全部目标）
+./build/build-all.sh
+
+# 常用参数
+./build/build-all.sh --targets spk            # 只打 SPK
+./build/build-all.sh --targets fpk --fpk-mode npm   # 只打 FPK，走 npm 链路（~140MiB）
+./build/build-all.sh --skip-fetch --dry-run   # 跳过拉源 + 预演（不实际构建）
+./build/build-all.sh --help                   # 全部参数说明
+```
+
+### 全部脚本一览
+
+| 脚本 | 作用 | 参数 / 示例 |
+|------|------|-------------|
+| `build/build-all.sh` | **一键构建入口**：拉源 → 构建 → 打包 → bc 体积汇总（等效 GitHub Actions 本地版） | `--targets spk,fpk` / `--fpk-mode npm|src` / `--tag` / `--skip-fetch` / `--dry-run` |
+| `build/build-common.sh` | **公共预编译**：pnpm install + pnpm build + 黑白名单裁剪 → `target` 整树 + `build-meta.env` | `[SRC] [SKIP_BUILD]`；`./build/build-common.sh "" 1` = 复用已有 target 秒级重打包 |
+| `build/build-npm-app.sh` | **FPK npm 链路（可选）**：npm 装官方包（`--omit=dev`）→ `build/spk-build/npm-app-<版本>/app_root`（免源码编译） | `[VERSION]`；`./build/build-npm-app.sh 0.1.5-rc.2`（幂等，重跑秒级） |
+| `build/build-spk.sh` | 消费 target → 群晖 `.spk`（端口 30800/30801/30802） | 无参数；`./build/build-spk.sh` → `build/staging/<APP_NAME>_x86_64-<版本>.spk` |
+| `build/build-fpk.sh` | 消费 target → 飞牛 `.fpk`（端口 3080/3081/3082）；`--npm` 消费 npm 链路 app_root（双链路并存） | `[--npm]`；`./build/build-fpk.sh --npm` → `build/staging/<APP_NAME>_x86-<版本>.fpk` |
+| `build/build-test-fpk.sh` | 构建**测试版** FPK（调试用，含版本标记） | 无参数 |
+| `fetch-dsh-latest.sh` | 一键拉取 **DSH 官方最新版源码**到 `src/deepseek-ai/<tag>`（自动识别 tag） | `./fetch-dsh-latest.sh` |
+| `scripts/promote-release.sh` | **发布提升**：验证通过的 `build/staging/` 产物 → `release/` | `D_REL=<dir>` 覆盖输出目录 |
+| `scripts/install-remote-spk.sh` | **远程安装工具（群晖 DSM 专用）**：网页/SSH 远端装 spk（install/uninstall/check 三合一，root 补建软链） | 读 `install-config.json`（host/user/password/spk 路径） |
+| `scripts/install-remote-fpk.sh` | **远程安装工具（飞牛 fnOS 专用）**：独立副本只做 fpk——install/uninstall/check + 安装后 root 补建 dsh/pnpm 软链（fnOS 生命周期钩子以应用用户执行，写不了系统 PATH，实测 uid=964） | 读 `install-config.json`（host/user/password/fpk 路径） |
+| `scripts/install-server.py` | **网页安装服务端**：配置保存 + 系统探测 + 远程执行 | 端口 8765，配 `install.html` 前端 |
+| `scripts/install-server-ctl.sh` | 8765 安装工具服务端启停脚本 | `start/stop/restart/status` |
+| `scripts/clean-dsm-residue.sh` | DSM 卸载残留清理（包数据库/目录/systemd 缓存） | 远程执行 |
+| `scripts/set-dsh-cpu-quota.sh` | 设置 DSH CPU 配额（cgroup 限制） | `./scripts/set-dsh-cpu-quota.sh` |
+| `scripts/verify-dsh-cpu-quota.sh` | 验证 DSH CPU 配额是否生效 | 无参数 |
+| `scripts/fix-dsh-settings-namespace.sh` | 修复 DSH alpha 版插件加载失败（`settingsNamespace` 缺失） | 幂等，含备份 |
+| `scripts/generate-diff-report.sh` | 差分报告：对比正式版 / 测试版 FPK 差异 | 无参数 |
+| `scripts/first-build-logic.sh` | 「首启构建」逻辑留档（从 start.sh 抽离，实际打包不再使用） | 仅文档 |
+| `scripts/dsh` | **dsh CLI 包装器**：SSH 敲 `dsh` 直接用 DSH CLI（readlink 软链解析，多入口自适应） | 打进包 `bin/dsh` |
+| `scripts/pnpm` | **pnpm 命令包装器**：随包 node 跑 pnpm.mjs（软链解析，路径与包名无关） | 打进包 `bin/pnpm` |
+
+### 手工构建示例（开发调试用）
 
 ```bash
 # ① 公共预编译（只跑一次，产出 target；全量约 15-20 分钟）
@@ -44,12 +78,17 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 ./build/build-spk.sh                           # → build/staging/<APP_NAME>_x86_64-<SPK版本>.spk
 ./build/build-fpk.sh                           # → build/staging/<APP_NAME>_x86-<FPK版本>.fpk
 
-# ②' FPK npm 链路（可选）：npm 装官方包，无需源码编译，~100MiB
-./build/build-npm-app.sh 0.1.5-rc.2            # 下载 node 24.4.0 + npm install 官方包（幂等，重跑秒级）
-./build/build-fpk.sh --npm                     # 消费 npm app_root → 同路径 fpk（默认源码链路不受影响）
+# ②' FPK npm 链路（可选）：npm 装官方包，无需源码编译
+./build/build-npm-app.sh 0.1.5-rc.2            # 下载 node + npm install 官方包（幂等）
+./build/build-fpk.sh --npm                     # 消费 npm app_root → 同路径 fpk
 ```
 
 **参数与配置来源**（已精简，去掉「套件类型 / 套件说明 / 品牌名」三个参数）：
+
+> 🎯 **FPK 双链路实测结论（2026-09-13 dsh 0.1.5-rc.2）**：**只推荐 npm 链路发版**。
+> - **npm 链路**（`--npm`，官方 npm 包）：fpk **94M**，应用体解压 387M，`node_modules` 扁平无嵌套、`dsh-tools` 单副本（运行时 Symbol 唯一，无 `reading 'prepare'` 崩溃）、软链仅 10 条 → **实机安装 running，三端口在听**。
+> - **源码编译链路**（默认，build-common.sh target）：fpk 173M，应用体解压 807M，`node_modules` 为 pnpm workspace 布局 → 软链 **6703 条** → **实机安装即 fail `10234`**（app.tgz 含软链，fnOS 后端 ACL `acl_get_file` 失败；每次全新态复位验证均为同一结果）。要源码化必须重写打包排除软链并验证运行时依赖完整，当前不做。
+> - 体积基线：npm 链路 94M ≈ 100MiB 目标 ✅；源码链路 173M 超出 100MiB（未裁剪）。
 
 - `SRC` 源码目录：缺省通配扫描 `src/deepseek-ai/*`（不硬编码版本目录名），其次 `build/spk-build/master-build`
 - `SKIP_BUILD`：`1` = 复用已有 target（快速重打包），缺省 `0` = 全量构建
@@ -61,7 +100,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 > **打包模式**：唯一模式 = 预构建产物包（装完即用，无首启构建）。
 > 原「精简包首启构建」逻辑（`ensure_built` + 构建进度占位页）已抽离留档，见 `scripts/first-build-logic.sh`（实际打包不再使用）。
 
-产物统一输出到 `build/staging/`（验证后 `promote-release.sh` 提升到 `release/`，可用 `D_REL=<dir>` 覆盖）。
+产物统一输出到 `build/staging/`（验证后 `promote-release.sh` 提升到 `release/`，可用 `D_REL=<dir>` 覆盖）。**历史发布版已清理，今后发版统一走 GitHub Actions 自动构建**（见下文「自动构建」）。
 
 脚本自动完成（★ 标注执行脚本）：
 
@@ -69,6 +108,17 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 - **小字完整版本号** ★`build-common.sh`：构建注入 `DSH_CLIENT_VERSION` / `DSH_CLIENT_COMMIT_HASH` / `DSH_CLIENT_TITLE`，界面显示 `<官方版本>-<commit>[-dirty]`（与官方版本同步）
 - **SPK 版本号** ★`build-spk.sh` = 官方版本前三位（`0.1.5-alpha.1` → `0.1.5`），无 build 后缀，同版本安装直接覆盖
 - **门户资源** ★`build-spk.sh` / `build-fpk.sh`：`ui/` + `spk-templates/ui-config.json` 打进 package.tgz，DSM 安装时自动建 `webman/3rdparty/deepseek-harness-nas` 链接，桌面出现套件图标
+
+### GitHub Actions 自动构建（发版走这里）
+
+```yaml
+# .github/workflows/build.yml —— tag 推送即触发
+# jobs: build-spk（源码链路）→ build-fpk（npm 链路）→ release（合并双产物发版）
+# 产物命名: <APP_NAME>_<平台>-<版本>.<spk|fpk>，release 附件即 dist/ 全部文件
+```
+
+- 触发：推送 tag（`v0.1.5` 等）→ 自动拉官方最新源 → 并行构建 SPK（源码）与 FPK（npm）→ 合并产物 → 创建 GitHub Release
+- 本地等效：`./build/build-all.sh`（同一套 fetch → build → 打包 流程）
 
 ### 打包模式：预构建产物包（唯一模式）
 
@@ -96,6 +146,99 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | 产物 | 说明 |
 |------|------|
 | `DeepSeekHarness-x86_64-0.1.5.spk` | 群晖 DSM 套件包（内嵌 node + dsh 0.1.5-alpha.1 全量编译） |
+
+---
+
+## 🔌 三端口说明（一套应用、三个入口）
+
+每个平台都用 **1 个反代端口 + 1 个 DSH 原生端口 + 1 个容器页面端口**。DSH 原生服务只监听 `127.0.0.1`，对外一律走反代端口（带门户认证 / 局域网白名单）。
+
+| 端口 | 监听 | 作用 | 访问方式 |
+|------|------|------|----------|
+| **3080**（fpk）/ **30800**（spk） | `0.0.0.0` | **反代端口**：用户唯一入口。套件门户打开自动带 token 免密；局域网直连 403；认证后免密；公网 IP 一律 403 | 浏览器 `http://<NAS-IP>:3080` |
+| **3081**（fpk）/ **30801**（spk） | `127.0.0.1` | **DSH 原生端口**：dsh web 服务本体，仅本机可访问（安全边界） | 本机 `curl 127.0.0.1:3081` |
+| **3082**（fpk）/ **30802**（spk） | `0.0.0.0` | **容器页面端口**：dsh-repair 守护的容器管理页，同反代策略（局域网放行 / 公网 403） | 浏览器 `http://<NAS-IP>:3082` |
+
+```
+ 浏览器/门户
+     │ 3080 (0.0.0.0)
+     ▼
+ 反代 (Node http.createServer)
+     ├─ ⓪ 局域网硬闸 isLoopbackOrLan(ip) —— 公网 IP → 403 中文提示页
+     ├─ ① 门户来源（无 cookie）→ 302 ?token= 免密认证
+     ├─ ② 已持 dsh-auth cookie → 透明放行（带过 token 即免密）
+     └─ ③ 直连（Sec-Fetch-Site:none / 异主机 Referer）→ 403「请从套件图标打开」
+        │
+        ▼ 127.0.0.1:3081
+     DSH web（dsh web 原生端口，仅本机）
+```
+
+- **端口不写死**：脚本/代码一律调 `read_ports <system>` 读 `build/build-config.yaml`（`defaults` / `spk:` / `fpk:` 三段），禁止出现端口字面量
+- **双平台并存**：spk 用 30800 段、fpk 用 3080 段，互不冲突，可同机共存
+- **命令行自定义**：`./start.sh --proxy-port N --dsh-port N --container-port N start`
+
+---
+
+## ⚙️ start.sh 功能详解
+
+`scripts/start.sh.example` 是 SPK/FPK 运行脚本的**唯一母版**（调 `__PROXY_PORT__` / `__DSH_PORT__` / `__CONTAINER_PORT__` 等占位符，打包脚本按平台替换为最终 `bin/start.sh`，一个母版双平台复用）。功能清单：
+
+### 1. 服务生命周期（start/stop/restart/status）
+
+```bash
+./start.sh start          # 启动：找 DSH → 起 dsh web → 起反代 → 起容器守护 → 校验三端口
+./start.sh stop           # 停止：PID 精确终止（先 TERM 后 KILL），清端口
+./start.sh restart        # 重启：stop + start（未启动时相当于 start）
+./start.sh status         # 状态：DSH 进程存活 + 三端口监听检查，退出码 0/3（供外部判活）
+```
+
+- **cmd_status 返回退出码**（0=运行中 / 3=未运行），供 fnOS/DSM 判活；运行检测 `pgrep -f "<绝对路径>/bin/start.sh"` 精确匹配，避免宽松匹配误判
+- **PID 文件禁放 /tmp**（fnOS `/tmp` 无 sticky 位，应用用户无权限）→ 移入 `$DSH_HOME_PARENT/DeepSeekHarness-NAS.pid`
+
+### 2. 实例定位（多布局自适应）
+
+`find_dsh_dir()` + `detect_entry()` 按顺序探测实例入口：
+
+```
+① node_modules/@deepseek-ai/dsh/lib/bin.js   ← npm 链路（build-npm-app.sh 产物）
+② apps/cli/lib/bin.js                        ← 官方源码编译产物（build-common.sh 产物）
+③ lib/bin.js                                 ← 兜底
+```
+
+- `find_node()` 依次找 `bin/node`（随包）→ `/usr/local/bin/node` → `/usr/bin/node` → PATH（不硬编码第三方套件路径）
+- `resolve_pkg_version()` 版本优先级：dsh 包 version → npm 产物 localBuildVersion → 顶层 package.json（打包期也注入兜底值）
+
+### 3. 品牌与版本名牌（网页左上角）
+
+- `BRAND_NAME` = `DeepSeekHarness-NAS`（侧栏 + 浏览器标题 + 网页左上角）
+- 小字版本号显示 `<官方版本>-<commit>[-dirty]`，与官方版本同步（`DSH_CLIENT_VERSION` / `DSH_CLIENT_COMMIT_HASH` / `DSH_CLIENT_TITLE` 注入）
+
+### 4. 反代：门户免密 + 局域网硬闸 + 直连 403
+
+请求处理顺序（`proxyServer` 回调）：
+
+```
+⓪ 局域网硬闸  isLoopbackOrLan(req.socket.remoteAddress)
+     不是 127/10/172.16-31/192.168/169.254/0.x/fe80:/fc::/fd:: 私有段 → 403 中文提示页
+① 已持 dsh-auth cookie → 透明放行（带过 token 即免密，直连也放行）
+② 门户打开（cross-site + 同主机 Referer / iframe / 无 Referer）→ 302 ?token= 自动认证
+③ 地址栏直连（Sec-Fetch-Site: none / 异主机 Referer）→ 403「请从套件图标打开」
+```
+
+- **门户免密原理**：套件桌面图标打开（DSM https:5001 → http:30800 / fnOS 应用 iframe）请求特征 = `cross-site` + 同主机 Referer → 反代 302 无条件带 `?token=`；dsh 认证后 303 收敛干净 URL 并种 `dsh-auth` cookie；此后浏览器直连即免密
+- **直连 403**：地址栏直接访问（`Sec-Fetch-Site: none`）因为从未经过门户带 token、无访问凭证 → 403 提示「请从套件图标打开」，页面内 XHR/WS 一律放行（只对文档级导航设卡）
+- **局域网限制（2026-09-13 新增）**：只放行私网 IP 段，公网/外网 IP 访问 → 403 中文提示页（`LAN_ONLY_PAGE`）——「只能局域网访问」的最终防线，先于一切认证逻辑
+- **SameSite=Strict → Lax 改写**：跨 scheme（DSM https→http）cookie 不被丢弃，防 ERR_TOO_MANY_REDIRECTS
+- **代理日志**：每次请求 REQ/RESP 记到 `$DSH_HOME_PARENT/dsh-proxy.log`（含 cookie 前缀，可确认 token 跳转链路）
+
+### 5. 容器页面（3082）
+
+`containerServer` 与反代同策略：局域网放行 + 公网 IP 403 + 门户免密。DSH 内部容器/子服务管理页（dsh-repair 守护，端口 `DSH_REPAIR_CONTAINER_PORT`）。
+
+### 6. 端口与 token
+
+- 启动时自动生成 token：`http://<NAS-IP>:<反代端口>/?token=...`（token 仅短暂出现在 URL，认证后自动收敛）
+- 运行检测通过才报启动成功（rc=0），三端口校验（DSH=3081 / 反代=3080 / 容器=3082）
 
 ---
 
@@ -264,9 +407,12 @@ DeepSeekHarness-NAS/
 │   └── deepseek-ai/             #   官方源码快照（打包源）
 ├── assets/                      # 【临时素材】pnpm-store/cache 等
 ├── build/                       # 【构建物 + 复用素材】
+│   ├── build-all.sh             #   一键构建入口（本地等效 GitHub Actions）
 │   ├── build-common.sh          #   公共预编译（唯一模式 = 预构建产物包）
+│   ├── build-npm-app.sh         #   FPK npm 链路应用体构建（免源码编译）
 │   ├── build-spk.sh             #   SPK 打包
-│   ├── build-fpk.sh             #   FPK 打包
+│   ├── build-fpk.sh             #   FPK 打包（--npm 消费 npm 链路）
+│   ├── build-test-fpk.sh        #   测试版 FPK 构建
 │   ├── build-config.yaml        #   打包与端口权威配置（defaults/spk/fpk 三段）
 │   ├── build-excludes.json      #   tar 排除规则（dist 模式）
 │   ├── conf/                    #   权限/资源声明（privilege/resource）
@@ -276,17 +422,20 @@ DeepSeekHarness-NAS/
 │   └── spk-build/               #   SPK 构建中间树（git 黑名单）
 ├── scripts/                     # 【脚本】
 │   ├── start.sh.example         #   SPK/FPK 运行模板母版（唯一权威，打包脚本注入端口生成最终 start.sh）
-│   ├── dsh                      #   dsh CLI 包装器（软链解析）
+│   ├── dsh                      #   dsh CLI 包装器（readlink 软链解析）
 │   ├── pnpm                     #   pnpm 命令包装器（随包 pnpm 软链目标）
 │   ├── install-remote-spk.sh    #   远程套件工具（install/uninstall/check 三合一，root 补建软链）
 │   ├── install-server.py / -ctl.sh  # 网页安装服务（配置保存+系统探测+远程执行）
 │   ├── install.html              #   网页前端（自动判定 SPK/FPK 并直调脚本）
 │   ├── clean-dsm-residue.sh     #   DSM 卸载残留清理（远程执行）
+│   ├── promote-release.sh       #   发布提升（staging → release/）
+│   ├── set-dsh-cpu-quota.sh / verify-dsh-cpu-quota.sh  # CPU 配额设置/验证
+│   ├── fix-dsh-settings-namespace.sh  # alpha 版插件加载失败修复
+│   ├── generate-diff-report.sh  #   正式/测试 FPK 差分报告
 │   └── dsh-repair.cjs           #   独立守护
 ├── docs/                        # 【文档】SPK-FPK 验收清单、打包开发文档
 ├── tools/pnpm                   #   项目自带 pnpm（构建/随包分发用，不用系统 pnpm）
-├── release/                     # 【发布物】只放实测通过的 .spk/.fpk
-│   └── DeepSeekHarness-NAS_x86_64-0.1.5.spk / *.fpk
+├── release/                     # 【发布物】（历史发布版已清理，发版走 GitHub Actions）
 ├── tools/                       # 【工具】
 │   ├── pnpm/                    #   pnpm 11.7.0（随包分发用）
 │   ├── pnpm-bridge.py           #   pnpm 11 配置桥接器
@@ -400,12 +549,8 @@ sudo synopkg stop deepseek-harness-nas
 | 版本 | 内嵌 dsh | 说明 |
 |------|----------|------|
 | 0.1.5 (2026-09-13) | 0.1.5-rc.2 | **入口收敛（门户 token 免密权威实现，实测通过）**：start.sh 反代区分「套件门户打开」与「局域网直连」——套件图标打开（DSM 桌面 https:5001→http:30800 / fnOS 应用 iframe）302 无条件带 token 免密；地址栏直连（`Sec-Fetch-Site: none` / 无 Referer）403 提示「请从套件图标打开」；外站链接跳入（异主机 Referer）403；已持 dsh-auth cookie 直连放行（带过 token 即免密）。SameSite=Strict→Lax 改写保跨 scheme cookie。**产物命名改 `<APP_NAME>_<平台>-<版本>.<spk|fpk>`（去 -dist）**；**GitHub Actions 自动构建**（复用 fetch-dsh-latest.sh 拉官方源，SPK 构建，FPK 分支注释）；**脚本执行位修正**（git 索引 100755）。实测：193 VirtualDSM 卸载重装 0.1.5，7 场景全过（直连 403 / 门户 302 带 token / 认证后直连免密 200） |
-| 0.1.5 (2026-09-12) | 0.1.5-rc.2 | **dsh 软链三通道**（installer 三 hook + 远程 root 补建 + start.sh 运行时自愈；实测 DSM 7.4.1 安装不执行 installer hooks，root 补建为可靠通道）；start.sh.spk 母版动态生成（build.sh gen_start_sh 替换端口占位符，含端口等配置）；群晖无 `ss` 改用 `netstat`；installer 补 prereplace/postreplace（替换安装也建软链+版本目录）；网页 repair 远程真清理（传 host/user）；**pnpm 随附 + `/usr/bin/pnpm` 软链**（bin/pnpm 包装器，三通道同 dsh）；**废弃精简/源码包模式，唯一预构建产物包**（删 SLIM 参数；裁剪=平台变体+devDeps 动态清单+claude/codex+src/docs，副本实测 dsh+web 正常，压缩 ~274MB） |
-| 0.1.5 (2026-09-11) | 0.1.5-rc.2 | 升级到官方 dsh-v0.1.5-rc.2；门户修复（dsmappname 键名一致 + ui/config 用官方 url 字段）；平台裁剪（自动删除非 linux-x64 原生二进制 ~1.4GB）；pnpm store 只读分区修复（HOME 绕过）；build-excludes.json 外置排除规则；大小门禁 500MB |
-| 0.1.5 (2026-09-10) | 0.1.5-alpha.1 | 工作区五类归置（src/assets/scripts/build/docs/release）；分类目录路径参数化（环境变量+config+默认三级）；精简包随附 pnpm + pnpm-bridge；精简包 native 预置跳过编译；首启构建免 git（DSH_CLIENT_COMMIT_HASH 兜底）；四种打包方式矩阵（后废弃精简/源码包模式） |
-| 0.1.5 | 0.1.5-alpha.1 | 品牌 DeepSeekHarness-NAS；SPK 版本取官方前三位；DSM 门户免密（自动带 token + SameSite=Lax 修复）；代理日志保留 |
-| 0.1.1-2 | 0.1.1-rc.2 | 独立包名 deepseek-harness-nas，局域网解锁补丁 |
-| 0.1.0-rc.7 | 0.1.0-rc.7 | 飞牛 fpk rc.7 修复版（DSH_HOME 锁定） |
+
+> 历史发布版已清理，今后发版统一走 GitHub Actions 自动构建（tag 推送即出 spk+fpk 双产物）。仓库历史已 squash 重建。
 
 > **关于 `tools/pnpm`**：内置 pnpm 11.7.0（含 `dist/pnpm.mjs` 约 9.7MB）为**有意随仓库分发**的构建工具——构建与随包分发**一律用项目自带 pnpm**（build-common.sh `PNPM_BIN` 固定指向它，PATH 前置），不用系统 pnpm。预构建包把它打进套件 `pnpm/` 并建 `/usr/bin/pnpm` 软链（`bin/pnpm` 包装器用包内 node 跑 pnpm.mjs），SSH 登录 NAS 直接 `pnpm` 可用。
 
@@ -417,4 +562,4 @@ MIT License - Copyright (c) 2026 DeepSeek AI
 
 ---
 
-*最后更新: 2026-09-12（唯一预构建产物包模式 + dsh/pnpm 软链三通道 + build-config 权威迁移 build/）*
+*最后更新: 2026-09-13（所有脚本作用一览 + 一键构建 build-all.sh + 三端口说明 + start.sh 功能详解 + 局域网限制 + 历史发布版清理/发版走 GitHub Actions + 仓库 squash 重建）*

@@ -8,6 +8,36 @@ defaults:
   # 应用名（用于 INFO package / manifest appname / applaunchname / config/resource 等）
   appname: DeepSeekHarness-NAS
 
+  # ── 品牌与元数据（打包清单 / 门户 / 名牌统一取值，禁止在各脚本内写死） ──
+  #   名牌（网页左上角）：brand_name + 版本号；brand_name 留空 = 用 appname
+  brand_name: DeepSeekHarness-NAS
+  display_name: DeepSeek Harness          # 门户与清单展示名
+  title: DeepSeek Harness                 # 门户 title / 页面标题
+  desc: DeepSeek AI 官方开源的 Agent Harness（智能体框架），飞牛 fnOS 原生应用。门户打开自动携带 token 免密登录。
+  desc_short: DeepSeek Harness Web UI
+  maintainer: DeepSeek AI
+  maintainer_url: https://github.com/deepseek-ai/deepseek-harness
+  distributor: EIGHTfs
+  distributor_url: https://github.com/EIGHTfs/DeepSeekHarness-NAS
+  source: thirdparty
+  # 平台最低版本（各平台段可覆盖；SPK 用 os_min_ver 格式，FPK 用 os_min_version）
+  os_min_version: 1.1.0
+  os_min_ver: 7.0-40851
+  # 名牌版本号优先级链：dsh 包（@deepseek-ai/dsh/package.json version）→ npm 包（客户端编译产物 localBuildVersion 串）
+  brand_version_order: dsh,npm
+  # 打包体积门禁（MB；0 = 不检查）。任务① 验收口径 fpk≈100MiB，留余量设 200
+  size_limit_mb: 200
+
+  # ── 共享区（@appshare）目录名（fpk/spk 共用；禁止在脚本里写死路径） ──
+  #   共享区根路径由平台注入的变量自动推导（fpk: TRIM_PKGVAR 的 @appdata → @appshare；
+  #   spk: SYNOPKG_PKGVAR 所在的 @appstore 卷），不写卷号、不写应用名。
+  #   ⚠ 两个字段默认都留空 = 不创建任何共享目录（零副作用）。
+  #     需要时填目录名即可，例如：
+  #       share_workspace_dir: 工作区   → <共享区>/工作区（777，用户可见，放项目文件）
+  #       share_data_dir: data          → <共享区>/data（TRIM_PKGVAR/data 软链到此）
+  share_workspace_dir: ""
+  share_data_dir: ""
+
   # ── 工作区分类目录（相对脚本所在目录；亦可环境变量覆盖，优先级更高） ──
   #   优先级：命令行参数 > 环境变量(D_SRC=...) > config 此处 > 默认<工作区>/<名>
   src_dir:     ./src        # 源码（deepseek-ai 官方快照）

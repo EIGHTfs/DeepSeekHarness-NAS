@@ -38,7 +38,8 @@ D_STAGING="${D_STAGING:-$D_BUILD/staging}"
 D_SCRIPTS="${D_SCRIPTS:-$WS/scripts}"
 
 # ----------------------------------------------------------------------------
-# build-config.yaml 解析（SPK 段覆盖 defaults：端口 + appname）
+# build-config.yaml 解析（SPK 段覆盖 defaults：端口 + appname + 品牌元数据）
+#   全部字段一律来自配置，脚本内不写死任何可变值（no-hardcode-config）
 # ----------------------------------------------------------------------------
 eval "$(python3 -c "
 import yaml, sys
@@ -47,11 +48,27 @@ with open('$CONFIG_FILE') as f:
 defaults = cfg.get('defaults') or {}
 spk = cfg.get('spk') or {}
 for k, v in {**defaults, **spk}.items():
+    if v is None:
+        continue
     print(f'CFG_{k.upper()}=\"{v}\"')
 " 2>/dev/null || true)"
 SPK_PROXY_PORT="${CFG_PROXY_PORT:-30800}"
 SPK_DSH_PORT="${CFG_DSH_PORT:-30801}"
 SPK_CONTAINER_PORT="${CFG_CONTAINER_PORT:-30802}"
+
+# ── 品牌 / 元数据（配置驱动；缺省值仅作最后兜底，正常一律命中配置） ──
+CFG_APPNAME="${CFG_APPNAME:-DeepSeekHarness-NAS}"
+CFG_BRAND_NAME="${CFG_BRAND_NAME:-$CFG_APPNAME}"
+CFG_DISPLAY_NAME="${CFG_DISPLAY_NAME:-DeepSeek Harness}"
+CFG_TITLE="${CFG_TITLE:-$CFG_DISPLAY_NAME}"
+CFG_DESC="${CFG_DESC:-}"
+CFG_DESC_SHORT="${CFG_DESC_SHORT:-$CFG_DISPLAY_NAME Web UI}"
+CFG_MAINTAINER="${CFG_MAINTAINER:-DeepSeek AI}"
+CFG_MAINTAINER_URL="${CFG_MAINTAINER_URL:-}"
+CFG_DISTRIBUTOR="${CFG_DISTRIBUTOR:-}"
+CFG_DISTRIBUTOR_URL="${CFG_DISTRIBUTOR_URL:-}"
+CFG_OS_MIN_VER="${CFG_OS_MIN_VER:-7.0-40851}"
+CFG_BRAND_VERSION_ORDER="${CFG_BRAND_VERSION_ORDER:-dsh,npm}"
 
 # ----------------------------------------------------------------------------
 # target 与元数据（build-common.sh 产物）
@@ -89,9 +106,14 @@ gen_start_sh() {
       -e "s|__CONTAINER_PORT__|${cont}|g" \
       -e "s|__APP_NAME__|${APP_NAME}|g" \
       -e "s|__APP_ID__|${APP_ID}|g" \
+      -e "s|__BRAND_NAME__|${CFG_BRAND_NAME}|g" \
+      -e "s|__BRAND_VERSION_ORDER__|${CFG_BRAND_VERSION_ORDER}|g" \
+      -e "s|__FPK_VERSION__|${FPK_VERSION}|g" \
+      -e "s|__PORTAL_TITLE__|${CFG_TITLE}|g" \
+      -e "s|__PORTAL_DESC__|${CFG_DESC_SHORT}|g" \
       "$D_SCRIPTS/start.sh.example" > "$out"
   chmod +x "$out"
-  if grep -q "__PROXY_PORT__\|__DSH_PORT__\|__CONTAINER_PORT__\|__APP_NAME__\|__APP_ID__" "$out"; then
+  if grep -qE "__PROXY_PORT__|__DSH_PORT__|__CONTAINER_PORT__|__APP_NAME__|__APP_ID__|__BRAND_NAME__|__BRAND_VERSION_ORDER__|__FPK_VERSION__|__PORTAL_TITLE__|__PORTAL_DESC__" "$out"; then
     echo "[!] start.sh 占位符未全部替换: $out" >&2; exit 1
   fi
 }
@@ -113,23 +135,24 @@ mkdir -p "$ASSEMBLE"
 # 由 start.sh 自带 gen-portal 生成（端口/appname 同一份构建配置，无静态模板）
 "$TARGET/start.sh" gen-portal --type url --key-prefix "SYNO.SDS." --all-users false > "$TARGET/ui/config"
 
-# INFO（版本 = SPK 前三位；desc 来自 build-meta.env）
+# INFO（版本 = SPK 前三位；desc/displayname/maintainer 等一律来自 build-config.yaml，
+#   仅 DESC 在配置留空时回退 build-meta.env 的 README 摘要）
 cat > "$ASSEMBLE/INFO" <<EOF
 package="${APP_NAME}"
 version="${SPK_VERSION}"
-description="${DESC}"
+description="${CFG_DESC:-$DESC}"
 arch="x86_64"
-maintainer="DeepSeek AI / EIGHTfs"
-maintainer_url="https://github.com/deepseek-ai/deepseek-harness"
-distributor="EIGHTfs"
-distributor_url="https://github.com/EIGHTfs/DeepSeekHarness-NAS"
-os_min_ver="7.0-40851"
+maintainer="${CFG_MAINTAINER}${CFG_DISTRIBUTOR:+ / $CFG_DISTRIBUTOR}"
+maintainer_url="${CFG_MAINTAINER_URL}"
+distributor="${CFG_DISTRIBUTOR}"
+distributor_url="${CFG_DISTRIBUTOR_URL}"
+os_min_ver="${CFG_OS_MIN_VER}"
 reloadui="yes"
-displayname="DeepSeek Harness NAS"
+displayname="${CFG_DISPLAY_NAME} NAS"
 dsmuidir="ui"
 dsmappname="SYNO.SDS.${APP_ID}.Application"
 checksum=""
-changelog="[独立包名 ${APP_NAME}] dsh ${PKG_VER} 全源码编译; 品牌 DeepSeekHarness-NAS; 版本号自动取官方前三位"
+changelog="[独立包名 ${APP_NAME}] dsh ${PKG_VER} 全源码编译; 品牌 ${CFG_BRAND_NAME}; 版本号自动取官方前三位"
 EOF
 
 # conf: privilege（应用用户名按 APP_NAME 替换）+ resource（脚本管理时必须 {}，
@@ -147,17 +170,45 @@ PACKAGE_BASE="/var/packages/${PACKAGE_NAME}/target"
 PACKAGE_SSS="/var/packages/${PACKAGE_NAME}/scripts/start-stop-status"
 PKG_VAR_DIR="/var/packages/${PACKAGE_NAME}/var"
 
-# 读取打包内嵌 dsh 版本号（数据目录按版本隔离：<var>/<version>/）
+# 读取打包内嵌版本号（数据目录按版本隔离：<var>/<version>/）
+# 来源优先级与 bin/start.sh 的 resolve_pkg_version 一致（dsh 包 → npm 产物 → 顶层），
+# 顺序来自 build-config.yaml brand_version_order（打包期替换 __BRAND_VERSION_ORDER_COMMA__）
 pkg_version() {
-  local v=""
-  v="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${PACKAGE_BASE}/package.json" 2>/dev/null | head -1)"
-  [ -z "$v" ] && v="0.1.5-alpha.1"
-  echo "$v"
+  local src="$1" f v
+  case "$src" in
+    dsh)
+      for f in "${PACKAGE_BASE}/node_modules/@deepseek-ai/dsh/package.json" \
+               "${PACKAGE_BASE}/node_modules/node_modules/@deepseek-ai/dsh/package.json" \
+               "${PACKAGE_BASE}/apps/cli/package.json"; do
+        [ -f "$f" ] || continue
+        v="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" 2>/dev/null | head -1)"
+        [ -n "$v" ] && { echo "$v"; return 0; }
+      done ;;
+    npm)
+      for f in "${PACKAGE_BASE}/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js" \
+               "${PACKAGE_BASE}/node_modules/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js"; do
+        [ -f "$f" ] || continue
+        v="$(sed -n 's/.*function localBuildVersion()[^{]*{[[:space:]]*return[[:space:]]*`\([^`]*\)`.*/\1/p' "$f" 2>/dev/null | head -1)"
+        [ -n "$v" ] && { echo "$v"; return 0; }
+      done ;;
+    top)
+      f="${PACKAGE_BASE}/package.json"
+      [ -f "$f" ] && sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" 2>/dev/null | head -1 ;;
+  esac
+  return 0
+}
+pkg_version_resolved() {
+  local s v
+  for s in __BRAND_VERSION_ORDER_COMMA__ top; do
+    v="$(pkg_version "$s")"
+    [ -n "$v" ] && { echo "$v"; return 0; }
+  done
+  echo "__FPK_VERSION__"
 }
 
 # 安装后初始化：版本隔离数据目录 + 权限修复 + dsh 命令软链
 setup_pkg_env() {
-  local VER="$(pkg_version)"
+  local VER="$(pkg_version_resolved)"
   mkdir -p "${PKG_VAR_DIR}/${VER}"
   chown -R "${PACKAGE_NAME}:system" "${PKG_VAR_DIR}/${VER}" 2>/dev/null || true
   fix_ownership
@@ -194,7 +245,7 @@ postreplace() {
 
 # 卸载清理（群晖 CLI 卸载只执行 preuninst；postuninst 双保险）
 cleanup_uninstall() {
-  local VER="$(pkg_version)"
+  local VER="$(pkg_version_resolved)"
   if [ -n "$VER" ] && [ -d "${PKG_VAR_DIR}/${VER}" ]; then
     rm -rf "${PKG_VAR_DIR}/${VER}" 2>/dev/null
   fi
@@ -317,6 +368,11 @@ case "$1" in
 esac
 SSS_EOF
 chmod +x "$ASSEMBLE/scripts/"*
+# scripts 内占位符统一替换（品牌版本优先级链 / 版本兜底；不替换 → 装完数据目录名会带占位符）
+sed -i "s/__BRAND_VERSION_ORDER_COMMA__/${CFG_BRAND_VERSION_ORDER//,/ }/g; s/__FPK_VERSION__/${FPK_VERSION}/g; s/__APP_NAME__/${APP_NAME}/g" "$ASSEMBLE/scripts/"* 2>/dev/null || true
+if grep -rlE "__BRAND_VERSION_ORDER_COMMA__|__FPK_VERSION__|__APP_NAME__" "$ASSEMBLE/scripts/" 2>/dev/null | grep -q .; then
+  echo "[!] scripts 占位符未全部替换" >&2; exit 1
+fi
 
 # 门户图标 + 外层 ui/config（与 target 同源）
 mkdir -p "$ASSEMBLE/ui/images"

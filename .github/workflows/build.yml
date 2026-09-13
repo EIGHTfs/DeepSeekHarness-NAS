@@ -1,4 +1,4 @@
-name: Build SPK (DeepSeekHarness-NAS)
+name: Build SPK + FPK (DeepSeekHarness-NAS)
 
 on:
   workflow_dispatch:          # 手动触发（Actions 页点按钮）
@@ -6,6 +6,7 @@ on:
     tags: ['v*']              # 打 v* tag 自动触发
 
 jobs:
+  # ── 群晖 SPK：源码链路（需完整 pnpm install + build + 裁剪）──
   build-spk:
     runs-on: ubuntu-latest
 
@@ -31,10 +32,6 @@ jobs:
       - name: 打 SPK
         run: ./build/build-spk.sh
 
-      # -- FPK 暂不构建（注释保留，恢复时去掉下面两行 # 即可）--
-      # - name: 打 FPK
-      #   run: ./build/build-fpk.sh
-
       - name: 上传 SPK 产物
         uses: actions/upload-artifact@v4
         with:
@@ -42,8 +39,57 @@ jobs:
           path: |
             build/staging/*.spk
 
-      - name: 打 tag 时发布 Release
-        if: startsWith(github.ref, 'refs/tags/')
+  # ── 飞牛 FPK：npm 链路（npm 装官方 dsh 包，无需 monorepo 编译，快、体积小）──
+  #    与 build-spk 并行；start.sh 母版、build-config.yaml 两边共用，改一处同步。
+  build-fpk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 指定打包用 node 路径
+        run: echo "NODE_SRC=$(command -v node)" >> "$GITHUB_ENV"
+
+      # npm 链路不需要源码编译，但 fetch 仍要跑：build-npm-app.sh 从 npm dist-tags
+      # 解析官方版本号，与本步骤拉到的 tag 对应，保证两个产物版本一致。
+      - name: 拉取官方最新源码（取版本号，供 npm 链路对齐）
+        run: ./fetch-dsh-latest.sh
+
+      - name: 构建 npm 应用体（npm 装官方包 → app_root）
+        run: ./build/build-npm-app.sh
+
+      - name: 打 FPK（--npm 消费 app_root）
+        run: ./build/build-fpk.sh --npm
+
+      - name: 上传 FPK 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: fpk-dist
+          path: |
+            build/staging/*.fpk
+
+  # ── 打 tag 时发布 Release（等两个产物都构建完成再发，避免 Release 缺件）──
+  release:
+    needs: [build-spk, build-fpk]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 下载两个产物
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 列出将发布的文件
+        run: ls -lh dist
+
+      - name: 发布 Release
         uses: softprops/action-gh-release@v2
         with:
-          files: build/staging/*.spk
+          files: dist/*
