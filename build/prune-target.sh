@@ -110,6 +110,35 @@ if candidates:
         print(f"  ⚠ 剥离失败: {e}")
 else:
     print("  ✓ 无非白名单 devDeps 需剥离")
+
+# 排除 tsconfig.host.json 的 scripts/**（校验/维护脚本）：
+# tsc -b tsconfig.host.json 编译 scripts/** 时需要被剥 devDeps 的类型声明
+# （publint/mdast/jsdom/mermaid 等）→ TS2307。这些脚本是官方 CI 质量门，
+# 产物运行完全不需要。排除后 tsc 不检查 scripts/，TS2307 消失。
+import json as _json, re as _re2
+def _load_jsonc(path):
+    """加载 JSONC（去掉 // 行注释）—— 不用 /* */ 块注释正则，因 glob 路径 /**/ 会被误吃"""
+    txt = open(path, encoding='utf-8').read()
+    txt = _re2.sub(r'//.*?$', '', txt, flags=_re2.MULTILINE)   # // 行注释
+    return _json.loads(txt)
+
+for _tsconf_name in ['tsconfig.host.json', 'tsconfig.client.json']:
+    _tsconf = os.path.join(build_src, _tsconf_name)
+    if not os.path.isfile(_tsconf):
+        continue
+    try:
+        _tc = _load_jsonc(_tsconf)
+        _inc = _tc.get('include') or []
+        _new_inc = [e for e in _inc if not e.startswith('scripts/')]
+        if len(_new_inc) < len(_inc):
+            _tc['include'] = _new_inc
+            with open(_tsconf, 'w', encoding='utf-8') as _f:
+                _json.dump(_tc, _f, ensure_ascii=False, indent=2)
+            print(f"  ✓ {_tsconf_name} 排除 scripts/**（{len(_inc)} → {len(_new_inc)} 条 include）")
+        else:
+            print(f"  ✓ {_tsconf_name} 无 scripts/** 需排除")
+    except Exception as _e:
+        print(f"  ⚠ {_tsconf_name} 清理失败: {_e}")
 PYEOF
   exit 0
 fi

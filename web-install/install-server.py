@@ -89,6 +89,101 @@ def record_task(cmd, spk, system, exit_code, status, run_id='', note=''):
 RUNS = {}
 RUNS_LOCK = threading.Lock()
 
+# ── 自动构建任务表（串行队列，同时间只跑一个） ──
+BUILDS = {}
+BUILDS_LOCK = threading.Lock()
+BUILD_LOG_LINES = 200
+
+# 阶段关键词 → (阶段名, 进度百分比)
+_BUILD_STAGES = [
+    ('复制源码到构建副本', 8),
+    ('pnpm install', 15),
+    ('install 结束', 40),
+    ('pnpm build', 45),
+    ('build 结束', 68),
+    ('组装 target', 72),
+    ('裁剪', 78),
+    ('打包 SPK', 88),
+    ('打包 FPK', 90),
+    ('✓ SPK 产物', 98),
+    ('✓ FPK 产物', 98),
+]
+
+# 三个构建脚本
+_BUILD_SCRIPTS = {
+    'common': 'build/build-common.sh',
+    'spk':    'build/build-spk.sh',
+    'fpk':    'build/build-fpk.sh',
+}
+
+
+def start_build(step='common'):
+    """后台执行构建脚本。返回 (build_id, error_msg)。"""
+    script_rel = _BUILD_SCRIPTS.get(step)
+    if not script_rel:
+        return None, 'step 必须是 common|spk|fpk'
+    script_abs = os.path.join(WS_ROOT, script_rel)
+    if not os.path.isfile(script_abs):
+        return None, '脚本不存在: %s' % script_rel
+
+    with BUILDS_LOCK:
+        for bid, info in BUILDS.items():
+            if info['status'] == 'running':
+                return None, '构建 %s 正在进行中，请等待完成' % bid
+
+    build_id = 'build-%d' % int(time.time())
+    with BUILDS_LOCK:
+        BUILDS[build_id] = {
+            'build_id': build_id, 'status': 'running', 'step': step,
+            'script': script_rel, 'stage': '准备中', 'progress': 0,
+            'output': '', 'exit_code': None,
+            'started': time.strftime('%Y-%m-%d %H:%M:%S'), 'finished': '',
+        }
+
+    def _work():
+        env = os.environ.copy()
+        if step == 'common':
+            env['PRUNE_BEFORE_INSTALL'] = '0'  # 本地构建物模式：全量 install
+        cmd = ['bash', script_abs]
+        try:
+            p = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, errors='replace', cwd=WS_ROOT, env=env)
+            out_lines = []
+            for line in p.stdout:
+                out_lines.append(line.rstrip('\n'))
+                with BUILDS_LOCK:
+                    b = BUILDS[build_id]
+                    b['output'] = '\n'.join(out_lines[-BUILD_LOG_LINES:])
+                    for kw, pct in _BUILD_STAGES:
+                        if kw in line:
+                            b['stage'] = kw
+                            b['progress'] = pct
+                            break
+            p.wait()
+            with BUILDS_LOCK:
+                b = BUILDS[build_id]
+                b['output'] = '\n'.join(out_lines[-BUILD_LOG_LINES:])
+                b['exit_code'] = p.returncode
+                b['status'] = 'done' if p.returncode == 0 else 'error'
+                b['progress'] = 100 if p.returncode == 0 else b['progress']
+                b['stage'] = '完成' if p.returncode == 0 else '失败'
+                b['finished'] = time.strftime('%Y-%m-%d %H:%M:%S')
+            log('BUILD done build_id=%s step=%s exit=%d' % (build_id, step, p.returncode))
+        except Exception as e:
+            with BUILDS_LOCK:
+                b = BUILDS[build_id]
+                b['output'] = '执行失败: %s' % e
+                b['status'] = 'error'
+                b['exit_code'] = 1
+                b['finished'] = time.strftime('%Y-%m-%d %H:%M:%S')
+                b['stage'] = '异常'
+            log('BUILD error build_id=%s: %s' % (build_id, e))
+
+    threading.Thread(target=_work, daemon=True).start()
+    log('BUILD start build_id=%s step=%s' % (build_id, step))
+    return build_id, ''
+
 # 系统判别特征（实测固化：群晖 / 飞牛各两条以上，任一命中即判）
 DSM_FEATURES = ['/etc.defaults/VERSION', '/usr/syno/bin/synopkg']
 FNOS_FEATURES = ['/usr/trim', '/usr/local/bin/appcenter-cli', '/usr/local/bin/fnpack']
@@ -345,6 +440,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(200, {'success': True, 'tasks': [], 'total': 0})
             except Exception as e:
                 self._json(500, {'success': False, 'error': str(e)})
+        elif path == '/api/build-status':
+            build_id = parse_qs(parsed.query).get('build_id', [''])[0]
+            with BUILDS_LOCK:
+                info = dict(BUILDS.get(build_id, {}))
+            if not info:
+                self._json(404, {'success': False, 'error': '未找到构建任务 %s' % build_id})
+            else:
+                self._json(200, {'success': True, **info})
+        elif path == '/api/builds':
+            with BUILDS_LOCK:
+                builds = sorted(BUILDS.values(), key=lambda b: b.get('started', ''), reverse=True)
+            self._json(200, {'success': True, 'builds': list(builds)})
         else:
             self._json(404, {'success': False, 'error': f'未知路径: {path}'})
 
@@ -394,6 +501,16 @@ class Handler(BaseHTTPRequestHandler):
             run_id = run_script(cmd, spk, system, note)
             log('RUN cmd=%s spk=%s system=%s note=%s -> run_id=%s' % (cmd, os.path.basename(spk) if spk else '', system, note, run_id))
             self._json(200, {'success': True, 'run_id': run_id, 'cmd': cmd})
+        elif path == '/api/build':
+            step = str(body.get('step', '')).strip()
+            if step not in ('common', 'spk', 'fpk'):
+                self._json(400, {'success': False, 'error': 'step 必须是 common|spk|fpk'})
+                return
+            build_id, err = start_build(step)
+            if err:
+                self._json(409, {'success': False, 'error': err})
+            else:
+                self._json(200, {'success': True, 'build_id': build_id, 'step': step})
         else:
             self._json(404, {'success': False, 'error': f'未知路径: {path}'})
 

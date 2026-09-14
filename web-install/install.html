@@ -186,6 +186,29 @@
             </div>
             <p class="hint">历史记录存于工作区根 <code>install-tasks.jsonl</code>（gitignore 不入库，不含账号设备信息）</p>
         </div>
+
+        <!-- ⑥ 自动构建（本地构建物） -->
+        <div id="buildPanel" style="margin-top:16px;">
+            <hr class="divider">
+            <h3 style="font-size:16px;color:#333;margin-bottom:10px;">🛠 自动构建</h3>
+            <p class="hint" style="margin-bottom:10px;">分步执行本地构建脚本（全量 install，不裁剪 devDeps，tsc 类型检查通过）。产物自动进入安装包列表。</p>
+            <div class="btn-group" style="margin-bottom:12px;">
+                <button type="button" class="btn btn-sm" id="buildCommonBtn" style="background:#667eea;">⚙️ build-common</button>
+                <button type="button" class="btn btn-sm" id="buildSpkBtn" style="background:#1976d2;">📦 build-spk</button>
+                <button type="button" class="btn btn-sm" id="buildFpkBtn" style="background:#43a047;">📦 build-fpk</button>
+            </div>
+            <div id="buildStatus" style="display:none;margin-bottom:10px;">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+                    <span id="buildStage" style="font-size:13px;color:#555;">准备中</span>
+                    <span id="buildPercent" style="font-size:13px;font-weight:bold;color:#667eea;">0%</span>
+                    <span id="buildElapsed" style="font-size:12px;color:#999;margin-left:auto;">00:00</span>
+                </div>
+                <div style="background:#e0e0e0;border-radius:4px;height:8px;overflow:hidden;">
+                    <div id="buildProgressBar" style="height:100%;width:0%;background:linear-gradient(90deg,#667eea,#764ba2);transition:width 0.5s ease;"></div>
+                </div>
+            </div>
+            <div id="buildLog" class="log" style="display:none;max-height:400px;font-size:11px;"></div>
+        </div>
     </div>
 
     <script>
@@ -476,6 +499,108 @@
         }
         tasksBtn.addEventListener('click', () => loadTasks(false));
         // 初始不自动加载（面板收起，点击按钮才拉取；避免无关流量）
+
+        // ── 自动构建 ──
+        const buildCommonBtn = $('buildCommonBtn'), buildSpkBtn = $('buildSpkBtn'), buildFpkBtn = $('buildFpkBtn');
+        const buildStatus = $('buildStatus'), buildStage = $('buildStage'), buildPercent = $('buildPercent');
+        const buildProgressBar = $('buildProgressBar'), buildLog = $('buildLog'), buildElapsed = $('buildElapsed');
+        let currentBuildId = '';
+        let buildPollTimer = null;
+        let buildStartTime = 0;
+        const BUILD_LABELS = { common: '⚙️ build-common（公共预编译）', spk: '📦 build-spk（打 SPK）', fpk: '📦 build-fpk（打 FPK）' };
+
+        function setBuildButtons(enable) {
+            [buildCommonBtn, buildSpkBtn, buildFpkBtn].forEach(b => { b.disabled = !enable; });
+        }
+        function updateElapsed() {
+            if (!buildStartTime) return;
+            const sec = Math.floor((Date.now() - buildStartTime) / 1000);
+            const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+            const ss = String(sec % 60).padStart(2, '0');
+            buildElapsed.textContent = mm + ':' + ss;
+        }
+        async function startBuild(step) {
+            try {
+                const resp = await fetch('/api/build', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ step })
+                });
+                const data = await resp.json();
+                if (!data.success) { alert('❌ ' + data.error); return; }
+                currentBuildId = data.build_id;
+                buildStartTime = Date.now();
+                buildStatus.style.display = 'block';
+                buildLog.style.display = 'block';
+                buildLog.textContent = '⏳ 启动构建: ' + (BUILD_LABELS[step] || step) + ' …\n';
+                buildStage.textContent = '准备中';
+                buildPercent.textContent = '0%';
+                buildProgressBar.style.width = '0%';
+                buildProgressBar.style.background = 'linear-gradient(90deg,#667eea,#764ba2)';
+                setBuildButtons(false);
+                stopBuildPolling();
+                buildPollTimer = setInterval(pollBuild, 1500);
+                setInterval(updateElapsed, 1000);
+            } catch (err) { alert('❌ 服务端不可用: ' + err.message); }
+        }
+        async function pollBuild() {
+            if (!currentBuildId) return;
+            try {
+                const resp = await fetch('/api/build-status?build_id=' + encodeURIComponent(currentBuildId));
+                const data = await resp.json();
+                if (!data.success) return;
+                buildStage.textContent = data.stage || '运行中';
+                buildPercent.textContent = (data.progress || 0) + '%';
+                buildProgressBar.style.width = (data.progress || 0) + '%';
+                if (data.output) {
+                    buildLog.textContent = data.output;
+                    buildLog.scrollTop = buildLog.scrollHeight;
+                }
+                updateElapsed();
+                if (data.status === 'done') {
+                    stopBuildPolling();
+                    buildProgressBar.style.background = 'linear-gradient(90deg,#43a047,#66bb6a)';
+                    buildStage.textContent = '✅ 构建完成（退出码 0）';
+                    buildPercent.textContent = '100%';
+                    buildProgressBar.style.width = '100%';
+                    setBuildButtons(true);
+                    loadPackages();
+                } else if (data.status === 'error') {
+                    stopBuildPolling();
+                    buildProgressBar.style.background = 'linear-gradient(90deg,#c62828,#e53935)';
+                    buildStage.textContent = '❌ 构建失败（退出码 ' + (data.exit_code ?? '?') + '）';
+                    setBuildButtons(true);
+                }
+            } catch (err) { /* 服务端瞬时不可用，下轮再试 */ }
+        }
+        function stopBuildPolling() { if (buildPollTimer) { clearInterval(buildPollTimer); buildPollTimer = null; } }
+        buildCommonBtn.addEventListener('click', () => startBuild('common'));
+        buildSpkBtn.addEventListener('click', () => startBuild('spk'));
+        buildFpkBtn.addEventListener('click', () => startBuild('fpk'));
+
+        // 页面加载时拉一次已有构建状态（恢复刷新后丢失的进度）
+        async function loadLastBuild() {
+            try {
+                const resp = await fetch('/api/builds');
+                const data = await resp.json();
+                if (data.success && data.builds && data.builds.length) {
+                    const last = data.builds[0];
+                    if (last.status === 'running') {
+                        currentBuildId = last.build_id;
+                        buildStartTime = Date.now();
+                        buildStatus.style.display = 'block';
+                        buildLog.style.display = 'block';
+                        buildStage.textContent = last.stage || '运行中';
+                        buildPercent.textContent = (last.progress || 0) + '%';
+                        buildProgressBar.style.width = (last.progress || 0) + '%';
+                        if (last.output) buildLog.textContent = last.output;
+                        setBuildButtons(false);
+                        buildPollTimer = setInterval(pollBuild, 1500);
+                    }
+                }
+            } catch (err) { /* 静默 */ }
+        }
+        loadLastBuild();
     </script>
 </body>
 </html>

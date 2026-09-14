@@ -291,9 +291,13 @@ fi   # 结束准备门控（复制源码+品牌+假git+垫片；stage=prune 时�
 #   构建必需工具（typescript/tsx/tsdown/lightningcss/execa/smol-toml）已手动追加进
 #   白名单 extra（gen-prune-whitelist.sh 自动生成只动 lockfileDeps，不覆盖手动部分），
 #   install 时保留，build 不会缺工具。
-if _STAGE_OK install && [ -x "$SCRIPT_DIR/prune-target.sh" ]; then
+#   PRUNE_BEFORE_INSTALL=0：跳过 install 前裁剪（本地构建物模式——全量 install 后
+#   tsc 类型检查 scripts/** 不再缺包；产物体积由 target 裁剪兜底）。
+if _STAGE_OK install && [ "${PRUNE_BEFORE_INSTALL:-1}" = "1" ] && [ -x "$SCRIPT_DIR/prune-target.sh" ]; then
   echo "▶ install 前裁剪 devDeps（复用黑白名单）:$SCRIPT_DIR/prune-target.sh --before-install $BUILD_SRC"
   "$SCRIPT_DIR/prune-target.sh" --before-install "$BUILD_SRC" || echo "  ⚠ install 前裁剪返回非零，继续（不阻断 install）"
+elif _STAGE_OK install; then
+  echo "▶ install 前裁剪已跳过（PRUNE_BEFORE_INSTALL=${PRUNE_BEFORE_INSTALL:-1}，本地构建物模式：全量 install，tsc 类型检查脚本不再缺包）"
 fi
 
 _ANN "stage=$BUILD_STAGE install 开始"
