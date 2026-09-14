@@ -238,7 +238,7 @@
                 const data = await resp.json();
                 if (data.success) {
                     savedIndicator.classList.add('show');
-                    showStatus('✅ 配置已保存（密码已脱敏，落盘保留供脚本使用）', 'success');
+                    showStatus('✅ 配置已保存', 'success');
                     await loadPackages();
                 } else {
                     showStatus('❌ 保存失败: ' + data.error, 'error');
@@ -312,7 +312,8 @@
                 list.forEach(item => {
                     const opt = document.createElement('option');
                     opt.value = item.path;
-                    opt.textContent = (item.full ? '【全量】' : '【精简】') + ' ' + item.name + ' (' + item.size + ')';
+                    // rel=相对工作区路径（如 release/<tag>/xxx.fpk），区分 release 与 build/staging 同源包
+                    opt.textContent = (item.full ? '【全量】' : '【精简】') + ' ' + (item.rel || item.name) + ' (' + item.size + ')';
                     pkg.appendChild(opt);
                 });
                 pkg.disabled = false;
@@ -402,7 +403,7 @@
                     if (c.host) host.value = c.host;
                     if (c.port) port.value = c.port;
                     if (c.username) username.value = c.username;
-                    if (c.password) { password.value = ''; password.placeholder = '（已保存，留空沿用）'; }
+                    if (c.password) { password.value = c.password; }
                     serverFlag.textContent = '✅ 服务端在线，已恢复上次配置（' + c.host + '）';
                 } else {
                     serverFlag.textContent = '✅ 服务端在线，暂无配置';

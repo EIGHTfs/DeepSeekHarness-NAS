@@ -292,6 +292,22 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 
 ---
 
+## 🖥 网页安装工具（远程探测 + 一键安装）
+
+浏览器访问安装网页（本机局域网地址 + 端口 8765，`web-install/install-server-ctl.sh start` 启动），远程安装 spk/fpk：
+
+| 能力 | 说明 |
+|------|------|
+| 🔍 探测系统 | 填 IP/端口/账号密码 → 一键探测远端是 群晖 DSM 还是 飞牛 fnOS → **自动判定 SPK / FPK** |
+| 📦 安装包匹配 | 扫描 `build/staging/` 与 `release/`（含 `release/<tag>/` 子目录，自动同步落位的包）→ 探测后自动切到对应类型候选，显示来源相对路径 |
+| 📦 安装 / 🔧 修复 / 🔎 检查 / 🗑 卸载 | 网页直接远程执行（走 `install-remote-spk.sh` / `install-remote-fpk.sh`，安装后 root 补建 `/usr/bin/dsh` 软链） |
+| 🕘 安装历史 | 每次执行落盘 `install-tasks.jsonl`（时间/命令/包名/版本/MD5/系统/退出码/结果/备注），页面「安装历史」面板展示 |
+| 💾 配置记忆 | 配置存 `install-config.json`（工作区根，与脚本同源）；再次打开网页自动回填全部字段（含密码），无需重填即可直接探测/安装 |
+
+> 截图（安装网页首页）：
+>
+> ![安装网页](docs/screenshots/http___10.10.10.63_8765_.png)
+
 ## 🗂 配置文件设计（远程安装工具）
 
 > 配置设计逻辑（2026-09-11 确立），约束 `install-server.py` / `install-remote-spk.sh` / `build/build-common.sh`+`build-spk.sh`+`build-fpk.sh` 的配置来源，**禁止在代码中写死任何端口或路径**。
@@ -562,6 +578,7 @@ sudo synopkg stop deepseek-harness-nas
 | 版本 | 内嵌 dsh | 说明 |
 |------|----------|------|
 | 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **SPK CI 磁盘爆盘修复 + release 同步/构建清理脚本**：① **install 前黑白名单裁剪**——`prune-target.sh` 新增 `--before-install` 模式，`pnpm install` 前复用黑白名单剥离根 package.json 非白名单 devDeps（vitest/jsdom/mermaid 等巨大传递依赖），install 不再下载，解决 build-spk 在 install/build 阶段写满 runner 磁盘（`No space left on device` → worker 被杀 → step 永久 in_progress）；构建必需工具（typescript/tsx/tsdown/vite-tsconfig-paths/lightningcss/execa/smol-toml）手动追加进白名单 `extra`，`gen-prune-whitelist.sh` 自动生成只动 `lockfileDeps` 不覆盖手动部分；② **scripts/sync-github-release.sh**——轮询 GitHub Releases 下载 spk/fpk 到 `release/<tag>/`，增量跳过已完整文件、按 tag 分类、日志落盘、支持守护模式（`--start/--stop/--restart/--status` 与 `--loop N`）；③ **scripts/clean-build-artifacts.sh**——清理失败/中间构建回收站（`build/.trash*`），存活窗口可配、`--caches` 清 pnpm-store、`--dry-run` 预览、`--force` 直删（磁盘告急时） |
+| 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **网页安装工具增强**：① **安装包扫描含 `release/`**——`list_packages` 递归扫描 `release/<tag>/` 子目录（sync-github-release.sh 自动同步落位），不再只扫 `build/staging` 顶层，探测后自动匹配含 release 下载包，并显示来源相对路径区分；② **配置记忆回填密码**——页面加载自动回填已保存的密码（原脱敏设计不回填导致探测按钮强制要求手动填密码），打开网页即可直接探测/安装 |
 | 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **网页安装工具整理 + 安装历史**：① 网页安装/卸载/检查/修复整套（install-server.py / install.html / install-server-ctl.sh / install-remote-spk.sh / install-remote-fpk.sh / clean-dsm-residue.sh）从 `scripts/` 迁出到独立 `web-install/` 目录（脚本内路径全相对定位，迁移即生效）；② **安装历史**：每次 install/uninstall/check/repair 后自动落盘 `install-tasks.jsonl`（时间/命令/包名/版本/MD5/系统/退出码/结果/备注），网页新增「🕘 安装历史」面板展示（`/api/tasks` 读取，最新在前）；③ **备注功能**：执行前可填备注（≤200 字），随历史记录；④ 账号设备信息不入库：`install-config.json` / `install-tasks.jsonl` / `server-install.log` 均在 .gitignore，历史记录不含任何密码凭据；移除误入库的 `scripts/__pycache__/*.pyc` |
 | 0.1.5 (2026-09-13) | 0.1.5-rc.2 | **CI 自动构建 + 自动发布打通**：① **自动发布**——定时/手动/tag 三种触发都建/更新 Release，tag 与官方同名（`dsh-v0.1.5-rc.2`），已存在则覆盖资产、rc 自动标 prerelease、spk 缺失仍发布 fpk 并标注（实测 run #6 发布成功，含 FPK 93MB）；`fetch-dsh-latest.sh --print-tag` 新增（只解析 tag 不下载）。② **首跑四处 CI 全新态 bug 修复**：pnpm 垫片缺失（`sh: 1: pnpm: not found`，本机靠系统 pnpm 兜住）、6 个脚本 git 索引丢执行位（`Permission denied` exit 126）、`build-npm-app.sh` 两处 `cd` 到 gitignore 目录（`spk-build`/`dsh-web`）、组装阶段 staging 目录不存在致 `tar` exit 2（stderr 被吞）。③ **可诊断性**：pnpm build 完整日志落盘（失败打尾 80 行，原 `tail -20` 会截掉真实报错）、失败上传 `build-spk-debug-log` artifact（GitHub 偶尔不归档该 job 日志）。④ 源码链路裁剪白名单改为从 npm 锁文件自动生成（`gen-prune-whitelist.sh`，489 个），裁剪逻辑独立成 `prune-target.sh` |
 | 0.1.5 (2026-09-13) | 0.1.5-rc.2 | **CI 自动构建打通（GitHub Actions 首跑三 bug 修复）**：① `tools/pnpm/bin/` 缺名为 `pnpm` 的可执行入口 → 上游 `scripts/build.ts` 子进程 `sh -c pnpm` 报 `not found`（本机靠系统 pnpm 兜住）→ build-common.sh 自动生成 pnpm 垫片；② 6 个构建脚本 git 索引 100644 无执行位 → CI `Permission denied`（exit 126）→ `git add --chmod=+x` 修正；③ `build-npm-app.sh` 两处 `cd` 到 gitignore 掉的目录（`build/spk-build`、`dsh-web`）在干净 checkout 下不存在 → 补 `mkdir -p`。定时打包新增（每日 04:00 UTC 自动构建 SPK+FPK 上传 artifact） |

@@ -111,34 +111,42 @@ def write_config(cfg):
 
 
 def list_packages():
-    """扫描工作区候选包：SPK（build/staging、release）与 FPK（release、build/staging）。"""
+    """扫描工作区候选包：SPK（build/staging、release）与 FPK（release、build/staging）。
+    release/ 下按 tag 分目录存放（release/<tag>/*.spk|fpk，sync-github-release.sh 落位），
+    故对每个扫描根递归遍历子目录，避免漏掉 release/<tag>/ 里的包。"""
     pkgs = {'spk': [], 'fpk': []}
     roots = [os.path.join(WS_ROOT, 'build', 'staging'), os.path.join(WS_ROOT, 'release')]
     seen = set()
     for root in roots:
         if not os.path.isdir(root):
             continue
-        for fn in sorted(os.listdir(root), reverse=True):
-            path = os.path.join(root, fn)
-            if not os.path.isfile(path):
-                continue
-            low = fn.lower()
-            kind = None
-            if low.endswith('.spk'):
-                kind = 'spk'
-            elif low.endswith('.fpk'):
-                kind = 'fpk'
-            if not kind:
-                continue
-            if path in seen:
-                continue
-            seen.add(path)
-            size = os.path.getsize(path)
-            pkgs[kind].append({
-                'path': path, 'name': fn, 'kind': kind,
-                'size': '%.1f MB' % (size / 1048576.0),
-                'full': size > 200 * 1048576,
-            })
+        for dirpath, dirnames, filenames in os.walk(root):
+            # 跳过回收站/临时目录（.trash* 等），避免把可恢复的旧包当候选
+            dirnames[:] = [d for d in dirnames if not d.startswith('.')]
+            for fn in sorted(filenames, reverse=True):
+                path = os.path.join(dirpath, fn)
+                if not os.path.isfile(path):
+                    continue
+                low = fn.lower()
+                kind = None
+                if low.endswith('.spk'):
+                    kind = 'spk'
+                elif low.endswith('.fpk'):
+                    kind = 'fpk'
+                if not kind:
+                    continue
+                if path in seen:
+                    continue
+                seen.add(path)
+                size = os.path.getsize(path)
+                # 目录相对工作区显示（如 release/dsh-v0.1.5-rc.2/xxx.fpk），便于区分来源
+                rel = os.path.relpath(path, WS_ROOT)
+                pkgs[kind].append({
+                    'path': path, 'name': fn, 'kind': kind,
+                    'rel': rel,
+                    'size': '%.1f MB' % (size / 1048576.0),
+                    'full': size > 200 * 1048576,
+                })
     return pkgs
 
 
