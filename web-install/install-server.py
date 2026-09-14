@@ -95,7 +95,9 @@ BUILDS_LOCK = threading.Lock()
 BUILD_LOG_LINES = 200
 
 # 阶段关键词 → (阶段名, 进度百分比)
+# 含 build-common / build-spk / build-fpk 三个脚本的输出关键词
 _BUILD_STAGES = [
+    # build-common 阶段
     ('复制源码到构建副本', 8),
     ('pnpm install', 15),
     ('install 结束', 40),
@@ -103,10 +105,20 @@ _BUILD_STAGES = [
     ('build 结束', 68),
     ('组装 target', 72),
     ('裁剪', 78),
-    ('打包 SPK', 88),
-    ('打包 FPK', 90),
-    ('✓ SPK 产物', 98),
-    ('✓ FPK 产物', 98),
+    ('target 预编译完成', 100),
+    # build-spk 阶段
+    ('SPK 打包', 10),
+    ('SPK 端口', 15),
+    ('打包 package.tgz', 30),
+    ('组装外层 SPK', 60),
+    ('✅ SPK:', 85),
+    ('SPK 构建完成', 100),
+    # build-fpk 阶段
+    ('FPK 打包', 10),
+    ('打包 app.tgz', 30),
+    ('组装外层 FPK', 60),
+    ('✅ FPK:', 85),
+    ('FPK 构建完成', 100),
 ]
 
 # 三个构建脚本

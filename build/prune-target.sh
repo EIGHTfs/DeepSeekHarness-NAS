@@ -126,9 +126,14 @@ black = json.load(open(black_file, encoding='utf-8'))
 white = json.load(open(white_file, encoding='utf-8'))
 pnpm = os.path.join(target, 'node_modules', '.pnpm')
 
-# 白名单集合：workspace 运行时依赖（动态收集）+ lockfileDeps（npm 锁文件自动生成）+ extra
-whitelist = set(white.get('extra', []))
-whitelist.update(white.get('lockfileDeps', []))
+# ── 白名单集合（纯白名单模式：只保留这些，其余全删） ──
+# 模式 B 只用运行时依赖（lockfileDeps + workspaceRuntimeDeps），不用 extra
+#（extra 里的类型检查包只在模式 A 保护 tsc，不需要进最终 target）
+whitelist = set(white.get('lockfileDeps', []))
+
+# 强制排除（即使在白名单里也不保留：体积大 / disabled preset / 非目标平台）
+force_exclude = {'@openai/codex', 'claude-agent-sdk', '@anthropic-ai/claude',
+                 '@img/sharp-libvips-linuxmusl-x64'}
 if white.get('workspaceRuntimeDeps'):
     pkgs_root = os.path.join(target, 'packages')
     for dirpath, dirnames, filenames in os.walk(pkgs_root):
@@ -145,44 +150,24 @@ def pkg_name(pnpm_dir):
     m = re.match(r'(@[^@]+|[^@]+)@', base)
     return m.group(1).replace('+', '/') if m else base
 
-# 黑名单收集候选删除（.pnpm 目录）
-candidates = set()
+# ── 纯白名单裁剪：.pnpm 里不在白名单的一律删 ──
+deleted = 0
+kept = 0
 if os.path.isdir(pnpm):
-    all_dirs = [os.path.join(pnpm, d) for d in os.listdir(pnpm) if os.path.isdir(os.path.join(pnpm, d))]
-    # ① 平台变体（排除 linux-x64）
-    plat_re = re.compile('|'.join(re.escape(p) for p in black.get('pnpmPlatform', [])), re.I)
-    candidates.update(d for d in all_dirs if plat_re.search(os.path.basename(d)) and 'linux-x64' not in os.path.basename(d))
-    # ② musl
-    musl_re = re.compile('|'.join(re.escape(p) for p in black.get('pnpmMusl', [])), re.I)
-    candidates.update(d for d in all_dirs if musl_re.search(os.path.basename(d)))
-    # ③ claude/codex
-    app_re = re.compile('|'.join(re.escape(p) for p in black.get('pnpmApps', [])), re.I)
-    candidates.update(d for d in all_dirs if app_re.search(os.path.basename(d)))
-    # ④ devDeps（动态读根 package.json，精确匹配包名 esc@ 前缀）
-    if black.get('devDeps'):
-        try:
-            root_deps = json.load(open(os.path.join(target, 'package.json'), encoding='utf-8')).get('devDependencies') or {}
-            for dep in root_deps:
-                esc = dep.replace('/', '+')
-                candidates.update(d for d in all_dirs if os.path.basename(d).startswith(esc + '@'))
-        except Exception:
-            pass
+    for d in sorted(os.listdir(pnpm)):
+        full = os.path.join(pnpm, d)
+        if not os.path.isdir(full):
+            continue
+        name = pkg_name(full)
+        if name in whitelist and name not in force_exclude:
+            kept += 1
+        else:
+            shutil.rmtree(full, ignore_errors=True)
+            deleted += 1
 
-# 白名单过滤：候选包名命中白名单 → 保留（白大于黑）
-before = len(candidates)
-protected = sorted({d for d in candidates if pkg_name(d) in whitelist})
-to_delete = sorted(d for d in candidates if pkg_name(d) not in whitelist)
+print('  ✓ 纯白名单裁剪: 保留 %d 个, 删除 %d 个 .pnpm 目录（白名单共 %d 项）' % (kept, deleted, len(whitelist)))
 
-if protected:
-    print('  (白名单保护 %d 个: %s)' % (len(protected), ', '.join(pkg_name(d) for d in protected[:8]) + ('...' if len(protected) > 8 else '')))
-if to_delete:
-    for d in to_delete:
-        shutil.rmtree(d, ignore_errors=True)
-    print('  ✓ 依赖裁剪: 删除 %d 个 .pnpm 目录（黑名单 %d - 白名单 %d）' % (len(to_delete), before, len(protected)))
-else:
-    print('  ✓ 依赖裁剪: 黑名单 %d 个候选全被白名单保护，无需删除' % before)
-
-# ⑤ 源码/文档裁剪（sourceDirs；native/ 不在列表 → 保留）
+# 源码/文档裁剪（sourceDirs；native/ 不在列表 → 保留）
 for pat in black.get('sourceDirs', []):
     for p in glob.glob(os.path.join(target, pat)):
         if os.path.isdir(p) and not os.path.islink(p):
