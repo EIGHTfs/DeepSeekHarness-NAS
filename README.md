@@ -56,11 +56,11 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | `build/build-test-fpk.sh` | 构建**测试版** FPK（调试用，含版本标记） | 无参数 |
 | `fetch-dsh-latest.sh` | 一键拉取 **DSH 官方最新版源码**到 `src/deepseek-ai/<tag>`（自动识别 tag） | `./fetch-dsh-latest.sh` |
 | `scripts/promote-release.sh` | **发布提升**：验证通过的 `build/staging/` 产物 → `release/` | `D_REL=<dir>` 覆盖输出目录 |
-| `scripts/install-remote-spk.sh` | **远程安装工具（群晖 DSM 专用）**：网页/SSH 远端装 spk（install/uninstall/check 三合一，root 补建软链） | 读 `install-config.json`（host/user/password/spk 路径） |
-| `scripts/install-remote-fpk.sh` | **远程安装工具（飞牛 fnOS 专用）**：独立副本只做 fpk——install/uninstall/check + 安装后 root 补建 dsh/pnpm 软链（fnOS 生命周期钩子以应用用户执行，写不了系统 PATH，实测 uid=964） | 读 `install-config.json`（host/user/password/fpk 路径） |
-| `scripts/install-server.py` | **网页安装服务端**：配置保存 + 系统探测 + 远程执行 | 端口 8765，配 `install.html` 前端 |
-| `scripts/install-server-ctl.sh` | 8765 安装工具服务端启停脚本 | `start/stop/restart/status` |
-| `scripts/clean-dsm-residue.sh` | DSM 卸载残留清理（包数据库/目录/systemd 缓存） | 远程执行 |
+| `web-install/install-remote-spk.sh` | **远程安装工具（群晖 DSM 专用）**：网页/SSH 远端装 spk（install/uninstall/check 三合一，root 补建软链） | 读 `install-config.json`（host/user/password/spk 路径） |
+| `web-install/install-remote-fpk.sh` | **远程安装工具（飞牛 fnOS 专用）**：独立副本只做 fpk——install/uninstall/check + 安装后 root 补建 dsh/pnpm 软链（fnOS 生命周期钩子以应用用户执行，写不了系统 PATH，实测 uid=964） | 读 `install-config.json`（host/user/password/fpk 路径） |
+| `web-install/install-server.py` | **网页安装服务端**：配置保存 + 系统探测 + 远程执行 + **安装历史**（版本+MD5+时间+结果+备注） | 端口 8765，配 `install.html` 前端；历史落盘 `install-tasks.jsonl`（gitignore 不入库） |
+| `web-install/install-server-ctl.sh` | 8765 安装工具服务端启停脚本 | `start/stop/restart/status` |
+| `web-install/clean-dsm-residue.sh` | DSM 卸载残留清理（包数据库/目录/systemd 缓存） | 远程执行 |
 | `scripts/set-dsh-cpu-quota.sh` | 设置 DSH CPU 配额（cgroup 限制） | `./scripts/set-dsh-cpu-quota.sh` |
 | `scripts/verify-dsh-cpu-quota.sh` | 验证 DSH CPU 配额是否生效 | 无参数 |
 | `scripts/fix-dsh-settings-namespace.sh` | 修复 DSH alpha 版插件加载失败（`settingsNamespace` 缺失） | 幂等，含备份 |
@@ -432,15 +432,18 @@ DeepSeekHarness-NAS/
 │   ├── start.sh.example         #   SPK/FPK 运行模板母版（唯一权威，打包脚本注入端口生成最终 start.sh）
 │   ├── dsh                      #   dsh CLI 包装器（readlink 软链解析）
 │   ├── pnpm                     #   pnpm 命令包装器（随包 pnpm 软链目标）
-│   ├── install-remote-spk.sh    #   远程套件工具（install/uninstall/check 三合一，root 补建软链）
-│   ├── install-server.py / -ctl.sh  # 网页安装服务（配置保存+系统探测+远程执行）
-│   ├── install.html              #   网页前端（自动判定 SPK/FPK 并直调脚本）
-│   ├── clean-dsm-residue.sh     #   DSM 卸载残留清理（远程执行）
 │   ├── promote-release.sh       #   发布提升（staging → release/）
 │   ├── set-dsh-cpu-quota.sh / verify-dsh-cpu-quota.sh  # CPU 配额设置/验证
 │   ├── fix-dsh-settings-namespace.sh  # alpha 版插件加载失败修复
 │   ├── generate-diff-report.sh  #   正式/测试 FPK 差分报告
 │   └── dsh-repair.cjs           #   独立守护
+├── web-install/                 # 【网页安装工具】远程探测系统 + 网页安装/卸载/检查/修复（2026-09-14 从 scripts/ 迁出）
+│   ├── install-server.py        #   网页安装服务端（配置保存 + 系统探测 + 远程执行 + 安装历史）
+│   ├── install-server-ctl.sh    #   8765 服务端启停（start/stop/restart/status）
+│   ├── install.html             #   网页前端（自动判定 SPK/FPK 并直调脚本；含安装历史面板）
+│   ├── install-remote-spk.sh    #   远程套件工具（群晖 DSM 双分支，install/uninstall/check/repair，root 补建软链）
+│   ├── install-remote-fpk.sh    #   远程套件工具（飞牛 fnOS 专用，install/uninstall/check）
+│   └── clean-dsm-residue.sh     #   DSM 卸载残留清理（远程执行）
 ├── docs/                        # 【文档】SPK-FPK 验收清单、打包开发文档
 ├── tools/pnpm                   #   项目自带 pnpm（构建/随包分发用，不用系统 pnpm）
 ├── release/                     # 【发布物】（历史发布版已清理，发版走 GitHub Actions）
@@ -507,7 +510,7 @@ DSM 门户是 https（5001），套件是 http（30800）——**跨 scheme 携�
 
 ### synopkg error 263 / 313 安装失败
 
-**263 "failed to create temp dir"**：上次卸载不干净，DSM 包数据库（`/var/cache/synopkg/installed/existence`）残留条目 → synopkg 把新安装当 repair → 找不到旧文件就 263。修复：`scripts/clean-dsm-residue.sh` 全面清理（目录 + systemd + 缓存 + samba + 用户组）。
+**263 "failed to create temp dir"**：上次卸载不干净，DSM 包数据库（`/var/cache/synopkg/installed/existence`）残留条目 → synopkg 把新安装当 repair → 找不到旧文件就 263。修复：`web-install/clean-dsm-residue.sh` 全面清理（目录 + systemd + 缓存 + samba + 用户组）。
 
 **313 "failed to revise file attributes"**：SPK 内外层文件权限不对。DSM 要求标准 Unix 权限（目录755，文件644，脚本755），`0707` 权限会被拒。build-spk.sh / build-fpk.sh 已在 tar 前自动修正权限。
 
@@ -556,6 +559,7 @@ sudo synopkg stop deepseek-harness-nas
 
 | 版本 | 内嵌 dsh | 说明 |
 |------|----------|------|
+| 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **网页安装工具整理 + 安装历史**：① 网页安装/卸载/检查/修复整套（install-server.py / install.html / install-server-ctl.sh / install-remote-spk.sh / install-remote-fpk.sh / clean-dsm-residue.sh）从 `scripts/` 迁出到独立 `web-install/` 目录（脚本内路径全相对定位，迁移即生效）；② **安装历史**：每次 install/uninstall/check/repair 后自动落盘 `install-tasks.jsonl`（时间/命令/包名/版本/MD5/系统/退出码/结果/备注），网页新增「🕘 安装历史」面板展示（`/api/tasks` 读取，最新在前）；③ **备注功能**：执行前可填备注（≤200 字），随历史记录；④ 账号设备信息不入库：`install-config.json` / `install-tasks.jsonl` / `server-install.log` 均在 .gitignore，历史记录不含任何密码凭据；移除误入库的 `scripts/__pycache__/*.pyc` |
 | 0.1.5 (2026-09-13) | 0.1.5-rc.2 | **CI 自动构建 + 自动发布打通**：① **自动发布**——定时/手动/tag 三种触发都建/更新 Release，tag 与官方同名（`dsh-v0.1.5-rc.2`），已存在则覆盖资产、rc 自动标 prerelease、spk 缺失仍发布 fpk 并标注（实测 run #6 发布成功，含 FPK 93MB）；`fetch-dsh-latest.sh --print-tag` 新增（只解析 tag 不下载）。② **首跑四处 CI 全新态 bug 修复**：pnpm 垫片缺失（`sh: 1: pnpm: not found`，本机靠系统 pnpm 兜住）、6 个脚本 git 索引丢执行位（`Permission denied` exit 126）、`build-npm-app.sh` 两处 `cd` 到 gitignore 目录（`spk-build`/`dsh-web`）、组装阶段 staging 目录不存在致 `tar` exit 2（stderr 被吞）。③ **可诊断性**：pnpm build 完整日志落盘（失败打尾 80 行，原 `tail -20` 会截掉真实报错）、失败上传 `build-spk-debug-log` artifact（GitHub 偶尔不归档该 job 日志）。④ 源码链路裁剪白名单改为从 npm 锁文件自动生成（`gen-prune-whitelist.sh`，489 个），裁剪逻辑独立成 `prune-target.sh` |
 | 0.1.5 (2026-09-13) | 0.1.5-rc.2 | **CI 自动构建打通（GitHub Actions 首跑三 bug 修复）**：① `tools/pnpm/bin/` 缺名为 `pnpm` 的可执行入口 → 上游 `scripts/build.ts` 子进程 `sh -c pnpm` 报 `not found`（本机靠系统 pnpm 兜住）→ build-common.sh 自动生成 pnpm 垫片；② 6 个构建脚本 git 索引 100644 无执行位 → CI `Permission denied`（exit 126）→ `git add --chmod=+x` 修正；③ `build-npm-app.sh` 两处 `cd` 到 gitignore 掉的目录（`build/spk-build`、`dsh-web`）在干净 checkout 下不存在 → 补 `mkdir -p`。定时打包新增（每日 04:00 UTC 自动构建 SPK+FPK 上传 artifact） |
 | 0.1.5 (2026-09-13) | 0.1.5-rc.2 | **入口收敛（门户 token 免密权威实现，实测通过）**：start.sh 反代区分「套件门户打开」与「局域网直连」——套件图标打开（DSM 桌面 https:5001→http:30800 / fnOS 应用 iframe）302 无条件带 token 免密；地址栏直连（`Sec-Fetch-Site: none` / 无 Referer）403 提示「请从套件图标打开」；外站链接跳入（异主机 Referer）403；已持 dsh-auth cookie 直连放行（带过 token 即免密）。SameSite=Strict→Lax 改写保跨 scheme cookie。**产物命名改 `<APP_NAME>_<平台>-<版本>.<spk|fpk>`（去 -dist）**；**GitHub Actions 自动构建**（复用 fetch-dsh-latest.sh 拉官方源，SPK 构建，FPK 分支注释）；**脚本执行位修正**（git 索引 100755）。实测：193 VirtualDSM 卸载重装 0.1.5，7 场景全过（直连 403 / 门户 302 带 token / 认证后直连免密 200） |

@@ -138,6 +138,10 @@
         </div>
 
         <!-- ④ 执行操作 -->
+        <div class="form-group">
+            <label for="note">备注（可选，随安装历史记录）</label>
+            <input type="text" id="note" placeholder="例如：给 10.10.10.63 装 0.1.5-rc.2 测试版" maxlength="200">
+        </div>
         <div class="btn-group">
             <button type="button" class="btn btn-green btn-sm" id="installBtn" disabled>📦 安装</button>
             <button type="button" class="btn btn-sm" id="repairBtn" disabled style="background:linear-gradient(135deg,#ff9800,#e65100);">🔧 修复</button>
@@ -151,13 +155,37 @@
         <div class="server-info">
             <b>🔗 服务端</b><br>
             配置文件：<code>install-config.json</code>（工作区根，网页保存 = 脚本读取，同一份）<br>
-            脚本调用：<code>scripts/install-remote-spk.sh</code>（install / uninstall / check / repair）<br>
+            脚本调用：<code>web-install/install-remote-spk.sh</code>（install / uninstall / check / repair）<br>
             日志文件：<code>install-server.log</code>
             <button type="button" class="btn btn-sm" id="logBtn" style="width:auto;padding:4px 12px;margin-left:8px;display:inline;font-size:12px;background:#667eea;">📜 查看日志</button>
+            <button type="button" class="btn btn-sm" id="tasksBtn" style="width:auto;padding:4px 12px;margin-left:8px;display:inline;font-size:12px;background:#43a047;">🕘 安装历史</button>
             <br>
             <span id="serverFlag">检测服务端…</span>
         </div>
         <div id="serverLog" class="log" style="margin-top:8px;max-height:240px;"></div>
+
+        <!-- ⑤ 安装历史（版本 + MD5 + 时间 + 结果 + 备注；不含任何账号设备信息） -->
+        <div id="tasksPanel" style="display:none;margin-top:16px;">
+            <hr class="divider">
+            <h3 style="font-size:16px;color:#333;margin-bottom:10px;">🕘 安装历史</h3>
+            <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;font-size:12px;" id="tasksTable">
+                    <thead>
+                        <tr style="background:#f5f5f5;color:#555;">
+                            <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">时间</th>
+                            <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">操作</th>
+                            <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">版本</th>
+                            <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">MD5</th>
+                            <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">系统</th>
+                            <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">结果</th>
+                            <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">备注</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <p class="hint">历史记录存于工作区根 <code>install-tasks.jsonl</code>（gitignore 不入库，不含账号设备信息）</p>
+        </div>
     </div>
 
     <script>
@@ -306,7 +334,7 @@
                 const resp = await fetch('/api/run', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ cmd, spk: pkg.value, system: currentSystem })
+                    body: JSON.stringify({ cmd, spk: pkg.value, system: currentSystem, note: $('note').value.trim() })
                 });
                 const data = await resp.json();
                 if (!data.success) { showStatus('❌ ' + data.error, 'error'); appendLog('❌ ' + data.error); setButtons(true); return; }
@@ -405,6 +433,48 @@
                 serverLog.classList.add('show');
             }
         });
+
+        // ── 安装历史（/api/tasks → install-tasks.jsonl，最新在前）──
+        const tasksBtn = $('tasksBtn'), tasksPanel = $('tasksPanel'), tasksTable = $('tasksTable');
+        const CMD_NAMES = { install: '📦 安装', repair: '🔧 修复(重装)', uninstall: '🗑 卸载', check: '🔎 检查' };
+        const RESULT_BADGE = {
+            success: '<span style="color:#2e7d32;">✅ 成功</span>',
+            failed: '<span style="color:#c62828;">❌ 失败</span>'
+        };
+        async function loadTasks(initialLoad) {
+            if (!tasksPanel.classList.contains('show') || initialLoad) {
+                if (!initialLoad) tasksBtn.textContent = '🕘 安装历史…';
+            }
+            try {
+                const resp = await fetch('/api/tasks?limit=100');
+                const data = await resp.json();
+                const tbody = tasksTable.querySelector('tbody');
+                if (!data.success) { tbody.innerHTML = '<tr><td colspan="7">读取失败: ' + data.error + '</td></tr>'; return; }
+                if (!data.tasks.length) { tbody.innerHTML = '<tr><td colspan="7">（暂无历史记录，执行过安装/卸载/检查后出现）</td></tr>'; return; }
+                tbody.innerHTML = data.tasks.map(t => {
+                    const md5 = t.md5 ? '<code style="font-size:11px;">' + t.md5 + '</code>' : '—';
+                    const note = t.note ? '<span title="' + t.note.replace(/"/g, '&quot;') + '">' + t.note + '</span>' : '—';
+                    return '<tr style="border-bottom:1px solid #eee;">' +
+                        '<td style="padding:8px;">' + (t.ts || '—') + '</td>' +
+                        '<td style="padding:8px;">' + (CMD_NAMES[t.cmd] || t.cmd) + '</td>' +
+                        '<td style="padding:8px;">' + (t.version || '—') + '</td>' +
+                        '<td style="padding:8px;">' + md5 + '</td>' +
+                        '<td style="padding:8px;">' + (t.system || '—') + '</td>' +
+                        '<td style="padding:8px;">' + (RESULT_BADGE[t.status] || t.status) + '</td>' +
+                        '<td style="padding:8px;max-width:200px;word-break:break-all;">' + note + '</td>' +
+                        '</tr>';
+                }).join('');
+            } catch (err) {
+                const tbody = tasksTable.querySelector('tbody');
+                tbody.innerHTML = '<tr><td colspan="7">加载失败: ' + err.message + '</td></tr>';
+            } finally {
+                tasksBtn.textContent = '🕘 安装历史';
+                tasksPanel.classList.add('show');
+                tasksPanel.style.display = 'block';
+            }
+        }
+        tasksBtn.addEventListener('click', () => loadTasks(false));
+        // 初始不自动加载（面板收起，点击按钮才拉取；避免无关流量）
     </script>
 </body>
 </html>

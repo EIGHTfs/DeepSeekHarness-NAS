@@ -43,6 +43,48 @@ def log(msg):
     except Exception:
         pass
 
+
+def file_md5(path):
+    """本地计算包文件 MD5（历史记录用；大包流式读，不整载入内存）"""
+    import hashlib
+    h = hashlib.md5()
+    try:
+        with open(path, 'rb') as f:
+            for chunk in iter(lambda: f.read(1048576), b''):
+                h.update(chunk)
+        return h.hexdigest()
+    except Exception:
+        return ''
+
+
+def extract_version(name):
+    """从包文件名提取版本号（如 DeepSeekHarness-NAS_x86-0.1.5-rc.2.fpk → 0.1.5-rc.2）。
+    先去掉包扩展名（.fpk/.spk），避免把后缀并进版本号。"""
+    base = os.path.splitext(name)[0]
+    m = re.search(r'(\d+\.\d+\.\d+(?:[-+][\w.]+)?)', base)
+    return m.group(1) if m else ''
+
+
+def record_task(cmd, spk, system, exit_code, status, run_id='', note=''):
+    """安装历史落盘（install-tasks.jsonl，一行一任务）。
+    内容：时间/命令/包名/版本/MD5/系统/退出码/结果/备注——不包含任何账号设备凭据（密码绝不下落盘）。"""
+    ts = time.strftime('%Y-%m-%d %H:%M:%S')
+    name = os.path.basename(spk) if spk else ''
+    rec = {
+        'ts': ts, 'cmd': cmd, 'package': name,
+        'version': extract_version(name),
+        'md5': file_md5(spk) if spk and os.path.isfile(spk) else '',
+        'system': system, 'exit_code': exit_code,
+        'status': status, 'run_id': run_id, 'note': note or '',
+    }
+    try:
+        with open(TASKS_FILE, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + '\n')
+        return True
+    except Exception as e:
+        log('HISTORY 写入失败: %s' % e)
+        return False
+
 # 后台运行任务表：run_id -> {status, output, exit_code, started, finished}
 RUNS = {}
 RUNS_LOCK = threading.Lock()
@@ -135,17 +177,19 @@ def detect_system(host, port, username, password, timeout=20):
         return 'error', ['%s: %s' % (type(e).__name__, e)]
 
 
-def run_script(cmd, spk='', system=''):
+def run_script(cmd, spk='', system='', note=''):
     """后台执行 install-remote-spk.sh <cmd> [spk] [system]。返回 run_id。
     参数位约定（见 install-remote-spk.sh 解析）:
       install     → bash SCRIPT install <spk> [host] [user] [app] [system]   system=$6
       uninstall/check → bash SCRIPT <cmd> [host] [user] [app] [system]       system=$5
     host/user/app 传空由脚本 ${N:-$(read_cfg)} 兜底；system 传空由脚本推断链兜底。
+    note 为用户在网页填写的备注，随安装历史记录（不做任何远程传递，仅本地落盘）。
     """
     run_id = '%d-%d' % (int(time.time() * 1000), threading.get_ident())
     with RUNS_LOCK:
         RUNS[run_id] = {'status': 'running', 'output': '', 'exit_code': None,
-                        'started': time.strftime('%H:%M:%S'), 'finished': ''}
+                        'started': time.strftime('%H:%M:%S'), 'finished': '',
+                        'note': note}
 
     def _work():
         # repair = 清残留 + 重装（先调 clean-dsm-residue.sh，再 install）
@@ -191,12 +235,18 @@ def run_script(cmd, spk='', system=''):
                 RUNS[run_id]['status'] = 'done' if p.returncode == 0 else 'error'
                 RUNS[run_id]['finished'] = time.strftime('%H:%M:%S')
                 log('DONE run_id=%s cmd=%s exit=%d' % (run_id, cmd, p.returncode))
+            # 安装历史落盘（成败都记；repair 已折算为 install，记录用实际执行的命令）
+            record_task(actual_cmd, spk, system or '', p.returncode,
+                        'success' if p.returncode == 0 else 'failed', run_id,
+                        note or '')
         except Exception as e:
             with RUNS_LOCK:
                 RUNS[run_id]['output'] = '执行失败: %s' % e
                 RUNS[run_id]['status'] = 'error'
                 RUNS[run_id]['exit_code'] = 1
                 RUNS[run_id]['finished'] = time.strftime('%H:%M:%S')
+            record_task(actual_cmd, spk, system or '', 1, 'failed', run_id,
+                        note or '')
 
     threading.Thread(target=_work, daemon=True).start()
     return run_id
@@ -266,6 +316,27 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(404, {'success': False, 'error': f'未找到任务 {run_id}'})
             else:
                 self._json(200, {'success': True, **info})
+        elif path == '/api/tasks':
+            # 安装历史（install-tasks.jsonl，最新在前；纯标准库读尾部）
+            limit = min(int(parse_qs(parsed.query).get('limit', ['50'])[0]), 500)
+            tasks = []
+            try:
+                with open(TASKS_FILE, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                for ln in lines[-limit:]:
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    try:
+                        tasks.append(json.loads(ln))
+                    except Exception:
+                        continue
+                tasks.reverse()
+                self._json(200, {'success': True, 'tasks': tasks, 'total': len(lines)})
+            except FileNotFoundError:
+                self._json(200, {'success': True, 'tasks': [], 'total': 0})
+            except Exception as e:
+                self._json(500, {'success': False, 'error': str(e)})
         else:
             self._json(404, {'success': False, 'error': f'未知路径: {path}'})
 
@@ -308,11 +379,12 @@ class Handler(BaseHTTPRequestHandler):
             cmd = str(body.get('cmd', '')).strip()
             spk = str(body.get('spk', '')).strip()
             system = str(body.get('system', '')).strip()
+            note = str(body.get('note', '')).strip()[:200]   # 备注上限 200 字，仅本地历史落盘
             if cmd not in ('install', 'uninstall', 'check', 'repair'):
                 self._json(400, {'success': False, 'error': 'cmd 必须是 install|uninstall|check|repair'})
                 return
-            run_id = run_script(cmd, spk, system)
-            log('RUN cmd=%s spk=%s system=%s -> run_id=%s' % (cmd, os.path.basename(spk) if spk else '', system, run_id))
+            run_id = run_script(cmd, spk, system, note)
+            log('RUN cmd=%s spk=%s system=%s note=%s -> run_id=%s' % (cmd, os.path.basename(spk) if spk else '', system, note, run_id))
             self._json(200, {'success': True, 'run_id': run_id, 'cmd': cmd})
         else:
             self._json(404, {'success': False, 'error': f'未知路径: {path}'})

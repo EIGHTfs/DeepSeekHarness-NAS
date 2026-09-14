@@ -23,6 +23,7 @@
 
 # ── 敏感/运行时文件（含密码/凭据，严禁入库） ──
 /install-config.json
+/install-tasks.jsonl
 /server-install.log
 /DSHProbe-*.spk
 /__pycache__/
