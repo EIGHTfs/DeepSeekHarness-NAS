@@ -318,14 +318,18 @@ echo "▶ pnpm build (native→lib→web, ~10-20min)"
 echo "   注入: DSH_CLIENT_VERSION=$PKG_VER  COMMIT=$COMMIT_HASH  TITLE=DeepSeekHarness-NAS"
 _BUILD_LOG="$WORK/pnpm-build.log"    # 完整构建日志（失败时打尾部 80 行，便于 CI 排查）
 _BUILD_RC=0
-# OOM 防护：tsc 默认 --max-old-space-size=4096，物理内存+swap < 6G 降档
-_TOTAL_KB=$(LC_ALL=C free -k 2>/dev/null | awk '/Mem:/{print $2} /Swap:/{print $2}' | awk '{s+=$1} END{print s}')
-if [ -n "$_TOTAL_KB" ] && [ "$_TOTAL_KB" -lt 6291456 ]; then
-  _TSX_MEM=$((_TOTAL_KB / 1024 / 2))
+# OOM 防护：tsc 默认 --max-old-space-size=4096
+# 旧逻辑只查总内存（RAM+swap），DSH 主实例占 2G+ 时总内存够但可用内存不够 → OOM。
+# 新逻辑查 available 内存（free -k Mem 行 available 列），取 60% 作为 tsc 堆上限。
+_AVAIL_KB=$(LC_ALL=C free -k 2>/dev/null | awk '/Mem:/{print $7}')
+if [ -n "$_AVAIL_KB" ]; then
+  _TSX_MEM=$((_AVAIL_KB * 60 / 100 / 1024))   # 可用内存的 60% → MB
   [ "$_TSX_MEM" -lt 1024 ] && _TSX_MEM=1024
-  echo "  (低内存: tsc 堆从 4096MB 降为 ${_TSX_MEM}MB)"
-  sed -i "s/--max-old-space-size=[0-9]*/--max-old-space-size=${_TSX_MEM}/" \
-    "$BUILD_SRC/package.json" 2>/dev/null || true
+  if [ "$_TSX_MEM" -lt 4096 ]; then
+    echo "  (可用内存 $((_AVAIL_KB/1024))MB → tsc 堆从 4096MB 降为 ${_TSX_MEM}MB)"
+    sed -i "s/--max-old-space-size=[0-9]*/--max-old-space-size=${_TSX_MEM}/" \
+      "$BUILD_SRC/package.json" 2>/dev/null || true
+  fi
 fi
 ( cd "$BUILD_SRC" && \
   PATH="$PNPM_BIN_DIR:$PATH" HOME="$_HOME_DIR" PNPM_STORE_DIR="$PNPM_STORE" npm_config_cache="$NPM_CACHE" \
