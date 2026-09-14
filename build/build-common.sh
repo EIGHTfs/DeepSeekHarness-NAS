@@ -128,7 +128,6 @@ fi
 # 排除规则（build-excludes.json dist 模式；spk/fpk 打包各自读取自己的条目）
 # ----------------------------------------------------------------------------
 EXCLUDES_FILE="$SCRIPT_DIR/build-excludes.json"
-BLACKLIST_FILE="$SCRIPT_DIR/build-prune-blacklist.json"
 WHITELIST_FILE="$SCRIPT_DIR/build-prune-whitelist.json"
 _MODE="dist"
 if [ -f "$EXCLUDES_FILE" ]; then
@@ -250,13 +249,11 @@ SHIMEOF
 fi
 fi   # 结束准备门控（复制源码+品牌+假git+垫片；stage=prune 时跳过）
 
-# ── install 前应用黑白名单裁剪 devDeps（省 install 磁盘峰值，防 CI 撑爆 runner）──
-# 与 prune 阶段共用同一份黑白名单（build-prune-blacklist/whitelist.json，单一权威）：
-#   prune-target.sh --before-install 会对 BUILD_SRC 根 package.json 的 devDependencies
-#   应用「黑名单 devDeps 候选 → 白名单保护 → 删除」，install 时就不再下载被裁 devDeps
-#   （官方 monorepo 依赖树 ~1.78万包，vitest/jsdom/mermaid 等巨大，install 阶段磁盘峰值
-#   拉满 → worker 被杀：annotation 实测 No space left on device）。
-#   构建必需工具（typescript/tsx/tsdown/lightningcss/execa/smol-toml）已手动追加进
+# ── install 前纯白名单裁剪 devDeps（省 install 磁盘峰值，防 CI 撑爆 runner）──
+# prune-target.sh --before-install 对 BUILD_SRC 根 package.json 的 devDependencies
+# 应用纯白名单：不在白名单（extra + lockfileDeps + workspaceRuntimeDeps）的 devDep
+# 一律删除，install 时就不再下载（vitest/jsdom/mermaid 等巨大）。
+# 构建必需工具（typescript/tsx/tsdown/lightningcss/execa/smol-toml）已手动追加进
 #   白名单 extra（gen-prune-whitelist.sh 自动生成只动 lockfileDeps，不覆盖手动部分），
 #   install 时保留，build 不会缺工具。
 #   PRUNE_BEFORE_INSTALL=0：跳过 install 前裁剪（本地构建物模式——全量 install 后
@@ -368,14 +365,14 @@ _ANN "stage=$BUILD_STAGE build 结束 (target=$(du -sh "$TARGET" 2>/dev/null | c
 fi   # 结束 build 门控（stage=install/prune 时跳过 build+组装）
 
 #===============================================================================
-# 三、预构建包裁剪（黑白名单配置驱动；规则权威 = build-prune-blacklist/whitelist.json）
-#   独立脚本 prune-target.sh 承载（本文件同目录）；此处调用，行为与原内联一致。
-#   执行顺序：黑名单收集候选 → 白名单过滤（命中 = 保留，白大于黑）→ rm -rf
-#   ⚠ native/ 不在黑名单 sourceDirs：node-addon-system-linux-x64 软链真身，删了启动必挂
+# 三、预构建包裁剪（纯白名单；规则权威 = build-prune-whitelist.json）
+#   独立脚本 prune-target.sh 承载（本文件同目录）。
+#   .pnpm 里不在 lockfileDeps + workspaceRuntimeDeps 的一律删除。
+#   ⚠ native/ 保留：node-addon-system-linux-x64 软链真身，删了启动必挂
 #===============================================================================
 if _STAGE_OK prune; then
 _ANN "stage=$BUILD_STAGE prune 开始"
-"$SCRIPT_DIR/prune-target.sh" "$TARGET" "$BLACKLIST_FILE" "$WHITELIST_FILE"
+"$SCRIPT_DIR/prune-target.sh" "$TARGET" "$WHITELIST_FILE"
 _ANN "stage=$BUILD_STAGE prune 结束"
 fi
 
