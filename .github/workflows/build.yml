@@ -13,15 +13,17 @@ on:
 permissions:
   contents: write
 
-# ── 构建开关（改这里即可决定是否构建 fpk / spk；临时关掉某个产物改 false）──
-env:
-  BUILD_FPK: 'false'   # 飞牛 FPK 构建开关（npm 链路；临时关闭排查 spk）
-  BUILD_SPK: 'true'    # 群晖 SPK 构建开关（源码链路）
+# ── 构建开关（仓库变量 vars.BUILD_SPK / vars.BUILD_FPK 控制各产物是否构建）──
+#   job 级 if 只能用 vars 上下文（GitHub Actions 限制：if 里不可用 env）。
+#   设置方式：仓库 Settings → Secrets and variables → Actions → Variables
+#   新增 BUILD_FPK = 'false' 即临时关闭 FPK 构建（不设置或 'true' = 构建）。
+#   也可用 API：PUT /repos/{owner}/{repo}/actions/variables/BUILD_FPK
+#   默认（变量未设置）两个都构建。
 
 jobs:
   # ── 群晖 SPK：源码链路（需完整 pnpm install + build + 裁剪）──
   build-spk:
-    if: env.BUILD_SPK == 'true'
+    if: ${{ vars.BUILD_SPK != 'false' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -94,7 +96,7 @@ jobs:
   # ── 飞牛 FPK：npm 链路（npm 装官方 dsh 包，无需 monorepo 编译，快、体积小）──
   #    与 build-spk 并行；start.sh 母版、build-config.yaml 两边共用，改一处同步。
   build-fpk:
-    if: env.BUILD_FPK == 'true'
+    if: ${{ vars.BUILD_FPK != 'false' }}
     runs-on: ubuntu-latest
 
     steps:
