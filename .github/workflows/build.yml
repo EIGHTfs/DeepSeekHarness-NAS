@@ -2,12 +2,16 @@ name: Build SPK + FPK (DeepSeekHarness-NAS)
 
 on:
   schedule:
-    # 每日自动打包：拉官方最新源码 → 构建 SPK + FPK → 上传 artifact（不发 Release）
+    # 每日自动打包：拉官方最新源码 → 构建 SPK + FPK → 上传 artifact + 自动发布 Release
     # 04:00 UTC = 北京时间 12:00（避开凌晨低谷；artifact 保留 14 天）
     - cron: '0 4 * * *'
   workflow_dispatch:          # 手动触发（Actions 页点按钮）
   push:
     tags: ['v*']              # 打 v* tag 自动触发（并发布 Release）
+
+# 创建/更新 Release 需要写权限
+permissions:
+  contents: write
 
 jobs:
   # ── 群晖 SPK：源码链路（需完整 pnpm install + build + 裁剪）──
@@ -79,23 +83,61 @@ jobs:
             build/staging/*.fpk
           retention-days: 14
 
-  # ── 打 tag 时发布 Release（等两个产物都构建完成再发，避免 Release 缺件）──
+  # ── 自动发布 Release（与官方同 tag；spk 缺失时先发 fpk，修好后再补）──
+  #   任何触发（定时/手动/tag）都走这里：产物构建完成后，解析官方最新 tag
+  #   （fetch-dsh-latest.sh --print-tag，与官方 dsh 版本对齐），同名 tag 的
+  #   Release 已存在则覆盖资产（滚动刷新），不存在则自动创建。
   release:
     needs: [build-spk, build-fpk]
-    if: startsWith(github.ref, 'refs/tags/')
+    # always() 容忍 build-spk 失败：有 fpk 就先发布，Release 说明里标注 spk 缺失
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
-      - name: 下载两个产物
+      - uses: actions/checkout@v4
+
+      - name: 解析官方最新 tag（与官方同 tag 发布）
+        id: reltag
+        run: echo "TAG=$(./fetch-dsh-latest.sh --print-tag)" >> "$GITHUB_OUTPUT"
+
+      - name: 下载产物（spk 可能缺失，容忍失败）
         uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: '*-dist'
           merge-multiple: true
+        continue-on-error: true
 
-      - name: 列出将发布的文件
-        run: ls -lh dist
+      - name: 检查产物 + 记录 spk 状态
+        id: check
+        run: |
+          if ls dist/* >/dev/null 2>&1; then
+            echo "HAS_FILES=yes" >> "$GITHUB_OUTPUT"
+            ls -lh dist
+          else
+            echo "HAS_FILES=no" >> "$GITHUB_OUTPUT"
+            echo "（无任何产物，跳过发布）"
+          fi
+          if [ "${{ needs.build-spk.result }}" = "success" ]; then
+            echo "SPK_STATUS=✅ 有（源码链路构建成功）" >> "$GITHUB_ENV"
+          else
+            echo "SPK_STATUS=❌ 缺失（源码链路 CI 失败，修复中）" >> "$GITHUB_ENV"
+          fi
 
-      - name: 发布 Release
+      - name: 发布 Release（tag=官方 tag；已有同名则覆盖资产）
+        if: steps.check.outputs.HAS_FILES == 'yes'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.reltag.outputs.TAG }}
+          name: "${{ steps.reltag.outputs.TAG }} 自动构建"
+          body: |
+            自动构建产物（触发方式: ${{ github.event_name }}）
+            - 官方版本: ${{ steps.reltag.outputs.TAG }}
+            - FPK: ✅ 有（npm 链路，x86）
+            - SPK: ${{ env.SPK_STATUS }}
+            - 构建时间: ${{ github.event.repository.updated_at }}
           files: dist/*
+          prerelease: ${{ contains(steps.reltag.outputs.TAG, '-') }}
+          fail_on_unmatched_files: false

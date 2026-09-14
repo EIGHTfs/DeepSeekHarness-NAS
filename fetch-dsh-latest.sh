@@ -24,6 +24,7 @@ DEFAULT_REPO="deepseek-ai/deepseek-harness"
 DEFAULT_SRC="$SCRIPT_DIR/src/deepseek-ai"
 TMP_PREFIX=".dsh-fetch-$$"
 TARGET_TAG=""          # 空 = 自动判定最新
+PRINT_TAG=0            # --print-tag: 只打印 tag 不下载（CI 发布用）
 
 usage() {
   sed -n '2,12p' "$0"
@@ -35,6 +36,7 @@ SRC_DIR="$DEFAULT_SRC"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --tag)      TARGET_TAG="${2:?--tag 需要一个值}"; shift 2 ;;
+    --print-tag) PRINT_TAG=1; shift ;;   # 只解析并打印官方 tag（不下载；CI 发布用）
     --repo)     REPO="${2:?--repo 需要一个值}"; shift 2 ;;
     --src-dir)  SRC_DIR="${2:?--src-dir 需要一个值}"; shift 2 ;;
     -h|--help)  usage; exit 0 ;;
@@ -93,8 +95,15 @@ print(m)
 
 # ---------- 判定目标 tag ----------
 if [[ -z "$TARGET_TAG" ]]; then
-  echo "… 正在从 api.github.com 自动判定 $REPO 最新 tag …"
+  echo "… 正在从 api.github.com 自动判定 $REPO 最新 tag …" >&2
   TARGET_TAG="$(pick_latest_tag)"
+fi
+
+# --print-tag: 只输出 tag 到 stdout（其余提示走 stderr），不下载任何东西。
+# CI 发布 job 用它拿「与官方同 tag」的 Release tag 名。
+if [[ "${PRINT_TAG:-0}" == "1" ]]; then
+  echo "$TARGET_TAG"
+  exit 0
 fi
 echo "目标 tag: $TARGET_TAG"
 
