@@ -87,6 +87,25 @@ if candidates:
         with open(root_pkg, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         print(f"  ✓ 剥离 {len(candidates)} 个非白名单 devDeps: {', '.join(candidates[:8])}{'...' if len(candidates)>8 else ''}")
+        # 同步清理 pnpm-workspace.yaml 的 patchedDependencies：被剥离 devDeps 的补丁
+        # 声明会悬空 → pnpm install 报 ERR_PNPM_UNUSED_PATCH（实测 @yao-pkg/pkg@6.21.0）
+        import re as _re
+        ws_yaml = os.path.join(build_src, 'pnpm-workspace.yaml')
+        if os.path.isfile(ws_yaml):
+            try:
+                lines = open(ws_yaml, encoding='utf-8').read().splitlines()
+                pats = [r"^\s*['\"]?" + _re.escape(k) + r"@[^'\":]*(?:['\"]\s*)?:" for k in candidates]
+                out, removed = [], []
+                for ln in lines:
+                    if any(_re.match(p, ln) for p in pats):
+                        removed.append(ln.strip().split(':')[0])
+                        continue
+                    out.append(ln)
+                if removed:
+                    open(ws_yaml, 'w', encoding='utf-8').write('\n'.join(out) + '\n')
+                    print(f"  ✓ 清理 {len(removed)} 个已剥离 devDeps 的补丁声明: {', '.join(removed)}")
+            except Exception as e2:
+                print(f"  ⚠ 补丁声明清理失败: {e2}")
     except Exception as e:
         print(f"  ⚠ 剥离失败: {e}")
 else:
