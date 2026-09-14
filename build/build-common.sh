@@ -259,6 +259,8 @@ fi
 
 echo "▶ pnpm build (native→lib→web, ~10-20min)"
 echo "   注入: DSH_CLIENT_VERSION=$PKG_VER  COMMIT=$COMMIT_HASH  TITLE=DeepSeekHarness-NAS"
+_BUILD_LOG="$WORK/pnpm-build.log"    # 完整构建日志（失败时打尾部 80 行，便于 CI 排查）
+_BUILD_RC=0
 # OOM 防护：tsc 默认 --max-old-space-size=4096，物理内存+swap < 6G 降档
 _TOTAL_KB=$(LC_ALL=C free -k 2>/dev/null | awk '/Mem:/{print $2} /Swap:/{print $2}' | awk '{s+=$1} END{print s}')
 if [ -n "$_TOTAL_KB" ] && [ "$_TOTAL_KB" -lt 6291456 ]; then
@@ -273,7 +275,15 @@ fi
   DSH_CLIENT_VERSION="$PKG_VER" \
   DSH_CLIENT_COMMIT_HASH="$COMMIT_HASH" \
   DSH_CLIENT_TITLE="DeepSeekHarness-NAS" \
-  node "$PNPM_BIN" build 2>&1 | tail -20 )
+  node "$PNPM_BIN" build ) > "$_BUILD_LOG" 2>&1 || _BUILD_RC=$?
+# ⚠ 失败时必须把真实报错打出来：原来 `| tail -20` 会把关键错误行截掉，
+#   CI 日志只剩最后 20 行，排查困难（2026-09-13 实测）。成功时仍只打尾部。
+if [ "${_BUILD_RC:-0}" != "0" ]; then
+  echo "✗ pnpm build 失败（退出码 $_BUILD_RC）完整日志: $_BUILD_LOG"
+  tail -80 "$_BUILD_LOG"
+  exit 1
+fi
+tail -10 "$_BUILD_LOG"
 
 # 构建产物拷到 target（build.ts 输出在构建副本内，按顶层目录分类拷出）
 echo "▶ 组装 target 整树"
