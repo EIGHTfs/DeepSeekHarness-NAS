@@ -256,6 +256,10 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 
 ### 群晖 DSM（.spk）
 
+> 截图（DSM 门户打开套件 → 自动带 token 进入）：
+
+> ![DSM 门户打开套件](docs/screenshots/https___10.10.10.193_5001___sid=&launchApp=.png)
+
 ```bash
 # 前置条件：DSM 7.2+，x86_64 架构（已内置 node，无需额外安装）
 # Package Center → 手动安装 → 选择 .spk
@@ -287,6 +291,10 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 - 数据目录：`/var/packages/DeepSeekHarness-NAS/target/var/data` 与 `.dsh-home/.dsh`
 
 ### 飞牛 fnOS（.fpk)
+
+> 截图（fnOS 应用中心登录页）：
+
+> ![fnOS 应用中心登录](docs/screenshots/http___10.10.10.63_5666_login.png)
 
 > 打包与错误码速查固化在 skill：`fnos-fpk-package-guide`（见技能仓库 `ai-work-archive/skills/execution-执行/`）——官方 fnpack、手动 tar+gzip 兜底、manifest 字段（**禁止 changelog 字段**，实测触发 10111）、CPU 配额/共存部署/污染防再犯均在；`fnos-fpk-error-table` 为安装错误码速查表。fpk 应用体与 spk 同源（官方 dsh 版本），门户打开自动带 token，机制与 spk 相同。
 
@@ -577,6 +585,7 @@ sudo synopkg stop deepseek-harness-nas
 
 | 版本 | 内嵌 dsh | 说明 |
 |------|----------|------|
+| 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **README 配图 + CI 补丁声明裁剪修复**：① **应用商店截图入 README**——「安装与访问」小节补两张实测截图（群晖 DSM 门户打开套件带 token 进入、飞牛 fnOS 应用中心登录页）；② **install 前裁剪同步清理补丁声明**——`prune-target.sh` 模式 A 剥离非白名单 devDeps 后，同步移除 `pnpm-workspace.yaml` 中对应 `patchedDependencies` 条目（实测 `@yao-pkg/pkg@6.21.0` 被剥后补丁悬空 → CI `ERR_PNPM_UNUSED_PATCH`，node-pty 属 workspace 运行时依赖保留不受影响） |
 | 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **SPK CI 磁盘爆盘修复 + release 同步/构建清理脚本**：① **install 前黑白名单裁剪**——`prune-target.sh` 新增 `--before-install` 模式，`pnpm install` 前复用黑白名单剥离根 package.json 非白名单 devDeps（vitest/jsdom/mermaid 等巨大传递依赖），install 不再下载，解决 build-spk 在 install/build 阶段写满 runner 磁盘（`No space left on device` → worker 被杀 → step 永久 in_progress）；构建必需工具（typescript/tsx/tsdown/vite-tsconfig-paths/lightningcss/execa/smol-toml）手动追加进白名单 `extra`，`gen-prune-whitelist.sh` 自动生成只动 `lockfileDeps` 不覆盖手动部分；② **scripts/sync-github-release.sh**——轮询 GitHub Releases 下载 spk/fpk 到 `release/<tag>/`，增量跳过已完整文件、按 tag 分类、日志落盘、支持守护模式（`--start/--stop/--restart/--status` 与 `--loop N`）；③ **scripts/clean-build-artifacts.sh**——清理失败/中间构建回收站（`build/.trash*`），存活窗口可配、`--caches` 清 pnpm-store、`--dry-run` 预览、`--force` 直删（磁盘告急时） |
 | 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **网页安装工具增强**：① **安装包扫描含 `release/`**——`list_packages` 递归扫描 `release/<tag>/` 子目录（sync-github-release.sh 自动同步落位），不再只扫 `build/staging` 顶层，探测后自动匹配含 release 下载包，并显示来源相对路径区分；② **配置记忆回填密码**——页面加载自动回填已保存的密码（原脱敏设计不回填导致探测按钮强制要求手动填密码），打开网页即可直接探测/安装 |
 | 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **网页安装工具整理 + 安装历史**：① 网页安装/卸载/检查/修复整套（install-server.py / install.html / install-server-ctl.sh / install-remote-spk.sh / install-remote-fpk.sh / clean-dsm-residue.sh）从 `scripts/` 迁出到独立 `web-install/` 目录（脚本内路径全相对定位，迁移即生效）；② **安装历史**：每次 install/uninstall/check/repair 后自动落盘 `install-tasks.jsonl`（时间/命令/包名/版本/MD5/系统/退出码/结果/备注），网页新增「🕘 安装历史」面板展示（`/api/tasks` 读取，最新在前）；③ **备注功能**：执行前可填备注（≤200 字），随历史记录；④ 账号设备信息不入库：`install-config.json` / `install-tasks.jsonl` / `server-install.log` 均在 .gitignore，历史记录不含任何密码凭据；移除误入库的 `scripts/__pycache__/*.pyc` |
