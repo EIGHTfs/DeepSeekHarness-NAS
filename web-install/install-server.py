@@ -142,8 +142,8 @@ def start_build(step='common'):
 
     def _work():
         env = os.environ.copy()
-        if step == 'common':
-            env['PRUNE_BEFORE_INSTALL'] = '0'  # 本地构建物模式：全量 install
+        # build-common 默认走 PRUNE_BEFORE_INSTALL=1（白名单已补全类型检查包，
+        # install 前裁剪保留它们，tsc 能过；同时 target 更小，SPK < 600MB）
         cmd = ['bash', script_abs]
         try:
             p = subprocess.Popen(

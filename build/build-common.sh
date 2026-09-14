@@ -13,7 +13,7 @@
 # 参数（均可省略）:
 #   1. SRC         源码目录（缺省=自动扫描 src/deepseek-ai/deepseek-harness-master
 #                  或 spk-build/master-build）
-#   2. SKIP_BUILD  1=复用已有完整 target（不重新构建；缺省=0 全量构建）
+#   2. SKIP_BUILD  1=复用已有完整 target（不重新构建；缺省=1 跳过已存在，=0 强制全量构建）
 #
 # 打包模式：唯一模式 = 预构建产物包（装完即用）
 #   - 本地 pnpm install + pnpm build 生成全部构建产物（apps/cli/lib、apps/web/dist 等）
@@ -89,7 +89,7 @@ if [ -z "$SRC" ] || [ ! -f "$SRC/package.json" ]; then
   exit 1
 fi
 SRC="$(cd "$SRC" && pwd)"
-SKIP_BUILD="${2:-0}"
+SKIP_BUILD="${2:-1}"   # 默认跳过已存在的 target（=0 强制全量重建）
 # 分阶段构建门控：all | install | build | prune（CI 把长步骤拆成 3 个独立 step，
 # 靠 step 结论定位死点；分阶段时复用已有 WORK，不清不删）
 BUILD_STAGE="${BUILD_STAGE:-all}"
@@ -172,44 +172,12 @@ BUILD_SRC="$WORK/source"
 TARGET="$WORK/target"
 ASSEMBLE="$WORK/assemble"
 
-if [ "$SKIP_BUILD" = "1" ] && [ -d "$TARGET" ] && [ -f "$TARGET/package.json" ]; then
-  # 复用旧 target 前校验完整性（按排除/黑名单规则豁免；避免旧副本误打成缺文件包）
-  _exempt_top="$(python3 -c "
-import json, re
-cfg = json.load(open('$EXCLUDES_FILE', encoding='utf-8'))
-black = json.load(open('$BLACKLIST_FILE', encoding='utf-8'))
-exempt = set()
-for x in cfg.get('dist', {}).get('excludes', []):
-    if x.startswith('_comment'):
-        continue
-    m = re.match(r'^--exclude=\./([^/*]+)', x)
-    if m:
-        exempt.add(m.group(1))
-for d in black.get('sourceDirs', []):
-    top = d.split('/')[0]
-    if top and '/' not in d:
-        exempt.add(top)
-print('\n'.join(sorted(exempt)))
-" 2>/dev/null || true)"
-  _src_top="$(ls -1 "$SRC" 2>/dev/null | sort)"
-  _tgt_top="$(ls -1 "$TARGET" 2>/dev/null | sort)"
-  _missing="$(comm -23 <(echo "$_src_top") <(echo "$_tgt_top") \
-    | grep -vxE "$(printf '%s\n' "$_exempt_top" | paste -sd'|' - | sed 's/|/|/g')" \
-    | tr '\n' ' ' || true)"
-  # native/ 是 node-addon-system-linux-x64 软链真身，启动必需，缺了直接报错
-  if [ ! -d "$TARGET/native" ]; then
-    echo "[!] target 缺 native/（node-addon-system-linux-x64 软链真身，DSH 启动必需）" >&2
-    echo "    请全量构建（去掉 SKIP_BUILD=1）后再打包。" >&2
-    exit 1
-  fi
-  if [ -n "${_missing// /}" ]; then
-    echo "[!] 旧 target 缺源码目录（未排除项）: $_missing" >&2
-    echo "    target 是旧编译副本，直接复用会打出缺文件的包。请去掉第 2 参数（SKIP_BUILD=0）全量重建。" >&2
-    exit 1
-  fi
-  echo "▶ 复用已有 target 树（skip-build=1，跳过编译；已按排除规则校验完整性）"
+if [ "$SKIP_BUILD" = "1" ] && [ -f "$WORK/.build-done" ] && [ -d "$TARGET" ] && [ -f "$TARGET/package.json" ]; then
+  # 断点续传：构建已完成（有 .build-done 标记）→ 跳过，直接复用 target
+  echo "▶ 复用已有 target（$WORK/.build-done 存在，跳过编译）"
   rm -rf "$ASSEMBLE"
   mkdir -p "$ASSEMBLE"
+  _BUILD_SKIPPED=1
 elif [ "$BUILD_STAGE" != "all" ] && [ -f "$BUILD_SRC/package.json" ]; then
   # 分阶段模式：WORK 已由前一阶段准备好，直接复用（不清不删）
   echo "▶ 分阶段模式 (stage=$BUILD_STAGE)：复用已有 WORK $WORK"
@@ -220,9 +188,9 @@ else
 fi
 
 #===============================================================================
-# 二、源码副本 + 品牌修改 + 构建（skip-build=1 时跳过）
+# 二、源码副本 + 品牌修改 + 构建（已跳过时跳过）
 #===============================================================================
-if [ "$SKIP_BUILD" != "1" ]; then
+if [ "${_BUILD_SKIPPED:-0}" != "1" ]; then
 if _STAGE_OK install || _STAGE_OK build; then
 # 分阶段 build（stage=build）：BUILD_SRC 已由 install 阶段就绪，跳过复制（否则会覆盖 node_modules）
 if [ "$BUILD_STAGE" = "build" ] && [ -f "$BUILD_SRC/package.json" ]; then
@@ -433,6 +401,7 @@ EOF
 echo ""
 echo "════════════════════════════════════════════════"
 echo "✅ target 预编译完成"
+touch "$WORK/.build-done"   # 断点续传标记：下次 SKIP_BUILD=1 时跳过
 echo "  target   : $TARGET ($(du -sh "$TARGET" 2>/dev/null | cut -f1))"
 echo "  元数据   : $WORK/build-meta.env"
 echo "  APP_NAME : $APP_NAME | dsh $PKG_VER | SPK $SPK_VERSION | FPK $FPK_VERSION"
