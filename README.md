@@ -314,7 +314,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 
 > 截图（安装网页首页）：
 >
-> ![安装网页](docs/screenshots/http___10.10.10.63_8765_.png)
+> ![安装网页](docs/screenshots/web-install.jpeg)
 
 ## 🗂 配置文件设计（远程安装工具）
 
@@ -585,6 +585,7 @@ sudo synopkg stop deepseek-harness-nas
 
 | 版本 | 内嵌 dsh | 说明 |
 |------|----------|------|
+| 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **纯白名单裁剪 + 网页自动构建 + 断点续传**：① **裁剪改纯白名单模式**——`prune-target.sh` 模式 B 从"黑名单匹配→白名单保护"改为"只保留 lockfileDeps 运行时依赖，其余全删"，target 从 1.8G→385MB（SPK <200MB）；额外排除 codex/claude（disabled preset）；② **网页自动构建面板**——`install-server.py` 新增 `/api/build` 接口，网页底部三按钮（build-common/spk/fpk）+ 进度条 + 实时日志；③ **断点续传**——build-common 完成写 `.build-done` 标记，下次跳过已存在的 target（中断/失败无标记→重新构建）；④ **README 截图更新** |
 | 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **README 配图 + CI 补丁声明裁剪修复**：① **应用商店截图入 README**——「安装与访问」小节补两张实测截图（群晖 DSM 门户打开套件带 token 进入、飞牛 fnOS 应用中心登录页）；② **install 前裁剪同步清理补丁声明**——`prune-target.sh` 模式 A 剥离非白名单 devDeps 后，同步移除 `pnpm-workspace.yaml` 中对应 `patchedDependencies` 条目（实测 `@yao-pkg/pkg@6.21.0` 被剥后补丁悬空 → CI `ERR_PNPM_UNUSED_PATCH`，node-pty 属 workspace 运行时依赖保留不受影响） |
 | 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **SPK CI 磁盘爆盘修复 + release 同步/构建清理脚本**：① **install 前黑白名单裁剪**——`prune-target.sh` 新增 `--before-install` 模式，`pnpm install` 前复用黑白名单剥离根 package.json 非白名单 devDeps（vitest/jsdom/mermaid 等巨大传递依赖），install 不再下载，解决 build-spk 在 install/build 阶段写满 runner 磁盘（`No space left on device` → worker 被杀 → step 永久 in_progress）；构建必需工具（typescript/tsx/tsdown/vite-tsconfig-paths/lightningcss/execa/smol-toml）手动追加进白名单 `extra`，`gen-prune-whitelist.sh` 自动生成只动 `lockfileDeps` 不覆盖手动部分；② **scripts/sync-github-release.sh**——轮询 GitHub Releases 下载 spk/fpk 到 `release/<tag>/`，增量跳过已完整文件、按 tag 分类、日志落盘、支持守护模式（`--start/--stop/--restart/--status` 与 `--loop N`）；③ **scripts/clean-build-artifacts.sh**——清理失败/中间构建回收站（`build/.trash*`），存活窗口可配、`--caches` 清 pnpm-store、`--dry-run` 预览、`--force` 直删（磁盘告急时） |
 | 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **网页安装工具增强**：① **安装包扫描含 `release/`**——`list_packages` 递归扫描 `release/<tag>/` 子目录（sync-github-release.sh 自动同步落位），不再只扫 `build/staging` 顶层，探测后自动匹配含 release 下载包，并显示来源相对路径区分；② **配置记忆回填密码**——页面加载自动回填已保存的密码（原脱敏设计不回填导致探测按钮强制要求手动填密码），打开网页即可直接探测/安装 |
