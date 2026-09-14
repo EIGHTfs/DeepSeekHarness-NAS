@@ -44,6 +44,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 清理 runner 磁盘空间（释放 ~20G）
+        run: |
+          echo "清理前:"
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+          sudo docker image prune -af 2>/dev/null || true
+          echo "清理后:"
+          df -h /
+
       - name: 环境诊断（磁盘/内存，CI 排查用）
         run: |
           df -h /
