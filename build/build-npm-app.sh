@@ -65,6 +65,9 @@ fi
 echo "══════ npm 装包构建 dsh@${VERSION} (Node ${NODE_VERSION}) ══════"
 
 # ── 工作目录（版本隔离，永久缓存：node 运行时 / 装好的 node_modules 都不删，git 已忽略） ──
+# 注意：$D_BUILD/spk-build 被 .gitignore 忽略，CI 全新 checkout 时不存在，
+# 必须显式 mkdir（cd 到不存在目录会直接退出，实测 CI build-fpk 即因此失败）。
+mkdir -p "$D_BUILD/spk-build"
 NPM_BUILD="$(cd "$D_BUILD/spk-build" && pwd)/npm-app-${VERSION}"
 APP_ROOT="$NPM_BUILD/app_root"
 NODE_DIR="$NPM_BUILD/node-v${NODE_VERSION}"
