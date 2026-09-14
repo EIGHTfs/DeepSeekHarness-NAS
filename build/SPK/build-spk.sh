@@ -116,7 +116,7 @@ gen_start_sh() {
       -e "s|__FPK_VERSION__|${FPK_VERSION}|g" \
       -e "s|__PORTAL_TITLE__|${CFG_TITLE}|g" \
       -e "s|__PORTAL_DESC__|${CFG_DESC_SHORT}|g" \
-      "$D_SCRIPTS/start.sh.example" > "$out"
+      "$BUILD_ROOT/start.sh.example" > "$out"
   chmod +x "$out"
   if grep -qE "__PROXY_PORT__|__DSH_PORT__|__CONTAINER_PORT__|__APP_NAME__|__APP_ID__|__BRAND_NAME__|__BRAND_VERSION_ORDER__|__FPK_VERSION__|__PORTAL_TITLE__|__PORTAL_DESC__" "$out"; then
     echo "[!] start.sh 占位符未全部替换: $out" >&2; exit 1

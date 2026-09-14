@@ -157,7 +157,7 @@ sed -e "s|__PROXY_PORT__|${FPK_PROXY_PORT}|g" \
     -e "s|__FPK_VERSION__|${VERSION}|g" \
     -e "s|__PORTAL_TITLE__|${CFG_TITLE}|g" \
     -e "s|__PORTAL_DESC__|${CFG_DESC_SHORT}|g" \
-    "$WS/scripts/start.sh.example" > "$APP_ROOT/bin/start.sh"
+    "$BUILD_ROOT/start.sh.example" > "$APP_ROOT/bin/start.sh"
 chmod +x "$APP_ROOT/bin/start.sh"
 if grep -qE "__PROXY_PORT__|__DSH_PORT__|__CONTAINER_PORT__|__APP_NAME__|__APP_ID__|__BRAND_NAME__|__BRAND_VERSION_ORDER__|__FPK_VERSION__|__PORTAL_TITLE__|__PORTAL_DESC__" "$APP_ROOT/bin/start.sh"; then
   echo "[!] start.sh 占位符未全部替换" >&2; exit 1

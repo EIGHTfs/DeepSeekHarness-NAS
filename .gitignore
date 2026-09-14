@@ -22,12 +22,12 @@
 *.bak*
 
 # ── 敏感/运行时文件（含密码/凭据，严禁入库） ──
-/install-config.json
-/install-tasks.jsonl
-/server-install.log
-/install-server.log
-/release-sync.log
+/web-install/install-config.json
+/web-install/install-tasks.jsonl
+/web-install/install-server.log
 /web-install/server-install.log
+/scripts/release-sync.log
+/scripts/server-install.log
 /DSHProbe-*.spk
 /__pycache__/
 *.pyc

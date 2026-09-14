@@ -3,8 +3,8 @@
 """
 DeepSeekHarness-NAS 安装工具服务端（网页直调远程脚本版）
 - GET  /                      前端页面（install.html / install-fpk.html）
-- GET  /api/config            读取已保存的配置（工作区根 install-config.json）
-- POST /api/save              保存配置（工作区根 install-config.json）
+- GET  /api/config            读取已保存的配置（web-install/install-config.json）
+- POST /api/save              保存配置（web-install/install-config.json）
 - POST /api/detect            远程探测系统类型（群晖 DSM / 飞牛 fnOS）→ spk/fpk
 - POST /api/run               后台执行远程脚本（install / uninstall / check）
 - GET  /api/run-status        轮询后台任务状态与输出
@@ -28,9 +28,9 @@ from urllib.parse import urlparse, parse_qs
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WS_ROOT = os.path.dirname(BASE_DIR)
-CONFIG_FILE = os.path.join(WS_ROOT, 'install-config.json')   # 与 install-remote-spk.sh 同源！
-TASKS_FILE = os.path.join(WS_ROOT, 'install-tasks.jsonl')
-LOG_FILE = os.path.join(WS_ROOT, 'install-server.log')
+CONFIG_FILE = os.path.join(BASE_DIR, 'install-config.json')   # 2026-09-15 归位 web-install/（与 install-remote-spk.sh 同源！）
+TASKS_FILE = os.path.join(BASE_DIR, 'install-tasks.jsonl')
+LOG_FILE = os.path.join(BASE_DIR, 'install-server.log')
 HTML_FILE = os.path.join(BASE_DIR, 'install.html')
 HTML_FILE_LEGACY = os.path.join(BASE_DIR, 'install-fpk.html')
 SCRIPT = os.path.join(BASE_DIR, 'install-remote-spk.sh')

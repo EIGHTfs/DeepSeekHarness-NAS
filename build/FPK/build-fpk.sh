@@ -22,7 +22,7 @@
 # 关键设计（注释按本脚本职责重新整理）:
 #   - 端口: proxy/dsh/container 读 build-config.yaml fpk: 段（默认 3080/3081/3082，
 #     与 SPK 的 30800 段隔离）
-#   - start.sh: 本脚本按 FPK 端口段生成（gen_start_sh，母版 scripts/start.sh.example；
+#   - start.sh: 本脚本按 FPK 端口段生成（gen_start_sh，母版 build/start.sh.example；
 #     首启构建逻辑已抽离 scripts/first-build-logic.sh 留档，完整预构建包免构建）
 #   - app.tgz: gzip + --hard-dereference（硬链展开；软链保留，fnpack 官方支持 symlink）
 #     ⚠ 条目无 ./ 前缀（用 find 顶层列表，fnOS 后端把 ./ 当字面路径 → 10111）
@@ -155,7 +155,7 @@ gen_start_sh() {
       -e "s|__FPK_VERSION__|${FPK_VERSION}|g" \
       -e "s|__PORTAL_TITLE__|${CFG_TITLE}|g" \
       -e "s|__PORTAL_DESC__|${CFG_DESC_SHORT:-$CFG_DISPLAY_NAME Web UI}|g" \
-      "$D_SCRIPTS/start.sh.example" > "$out"
+      "$BUILD_ROOT/start.sh.example" > "$out"
   chmod +x "$out"
   if grep -qE "__PROXY_PORT__|__DSH_PORT__|__CONTAINER_PORT__|__APP_NAME__|__APP_ID__|__BRAND_NAME__|__BRAND_VERSION_ORDER__|__FPK_VERSION__|__PORTAL_TITLE__|__PORTAL_DESC__" "$out"; then
     echo "[!] start.sh 占位符未全部替换: $out" >&2; exit 1

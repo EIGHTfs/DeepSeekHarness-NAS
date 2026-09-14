@@ -40,7 +40,7 @@ jobs:
         run: echo "NODE_SRC=$(command -v node)" >> "$GITHUB_ENV"
 
       - name: 拉取官方最新源码到 src/deepseek-ai/{tag}
-        run: ./fetch-dsh-latest.sh
+        run: ./scripts/fetch-dsh-latest.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -108,7 +108,7 @@ jobs:
       # npm 链路不需要源码编译，但 fetch 仍要跑：build-npm-fpk-app.sh 从 npm dist-tags
       # 解析官方版本号，与本步骤拉到的 tag 对应，保证两个产物版本一致。
       - name: 拉取官方最新源码（取版本号，供 npm 链路对齐）
-        run: ./fetch-dsh-latest.sh
+        run: ./scripts/fetch-dsh-latest.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -143,7 +143,7 @@ jobs:
 
       - name: 解析官方最新 tag（与官方同 tag 发布）
         id: reltag
-        run: echo "TAG=$(./fetch-dsh-latest.sh --print-tag)" >> "$GITHUB_OUTPUT"
+        run: echo "TAG=$(./scripts/fetch-dsh-latest.sh --print-tag)" >> "$GITHUB_OUTPUT"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
