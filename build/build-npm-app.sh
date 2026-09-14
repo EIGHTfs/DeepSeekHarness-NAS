@@ -96,6 +96,9 @@ if [ -f "$_DSH_PKG" ] && grep -q "\"version\":\s*\"${VERSION}\"" "$_DSH_PKG"; th
 fi
 if [ "$_NEED_INSTALL" = "1" ]; then
   echo "▶ npm install @deepseek-ai/dsh@${VERSION}（扁平 node_modules，无 workspace 软链；装完永久保留）"
+  # ⚠ dsh-web 是 npm 装包目录，全新环境（CI 干净 checkout）下不存在，须先建，
+  #   否则子 shell 里 cd 失败（实测 CI build-fpk：cd: .../dsh-web: No such file or directory）。
+  mkdir -p "$DSH_WEB"
   (
     cd "$DSH_WEB" && npm init -y >/dev/null 2>&1 || true
     MAX=3; TRY=0; OK=false
