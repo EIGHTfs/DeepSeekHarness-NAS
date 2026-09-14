@@ -19,6 +19,12 @@ permissions:
 #   新增 BUILD_FPK = 'false' 即临时关闭 FPK 构建（不设置或 'true' = 构建）。
 #   也可用 API：PUT /repos/{owner}/{repo}/actions/variables/BUILD_FPK
 #   默认（变量未设置）两个都构建。
+#
+# ── FPK 构建方式选择（vars.FPK_MODE）──
+#   FPK_MODE = 'npm'  → npm 链路（npm 装官方包 → app_root → --npm 打包，免源码编译，体积更小）
+#   FPK_MODE = 未设置/其他 → 源码构建（默认，与 SPK 同源：build-common.sh 编译 target → build-fpk.sh，
+#                            品牌 DeepSeekHarness-NAS，2026-09-15 本地实测 114MB 实机可装）
+#   设置方式同上：Settings → Variables 新增 FPK_MODE = 'npm'
 
 jobs:
   # ── 群晖 SPK：源码链路（需完整 pnpm install + build + 裁剪）──
@@ -97,7 +103,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 Node 22
+      - name: 安装 Node 22（打包与运行均需 >=22.19）
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -105,17 +111,59 @@ jobs:
       - name: 指定打包用 node 路径
         run: echo "NODE_SRC=$(command -v node)" >> "$GITHUB_ENV"
 
-      # npm 链路不需要源码编译，但 fetch 仍要跑：build-npm-fpk-app.sh 从 npm dist-tags
-      # 解析官方版本号，与本步骤拉到的 tag 对应，保证两个产物版本一致。
-      - name: 拉取官方最新源码（取版本号，供 npm 链路对齐）
+      # 源码链路需要完整源码编译；npm 链路只需取版本号对齐（fetch 都跑，保证产物版本一致）
+      - name: 拉取官方最新源码到 src/deepseek-ai/{tag}
         run: ./scripts/fetch-dsh-latest.sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 构建 npm 应用体（npm 装官方包 → app_root）
+      # ── FPK 构建方式：vars.FPK_MODE 选择 ──
+      #   'npm' = npm 链路（npm 装官方包 → app_root → --npm 打包，免源码编译，体积更小）
+      #   其他/未设置 = 源码构建（默认，与 build-spk 同源：build-common.sh 编译 target → build-fpk.sh）
+      - name: 清理 runner 磁盘空间（源码构建需要，释放 ~20G）
+        if: ${{ vars.FPK_MODE != 'npm' }}
+        run: |
+          echo "清理前:"
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+          sudo docker image prune -af 2>/dev/null || true
+          echo "清理后:"
+          df -h /
+
+      - name: 环境诊断（磁盘/内存，CI 排查用）
+        if: ${{ vars.FPK_MODE != 'npm' }}
+        run: |
+          df -h /
+          echo "-----"
+          free -h
+          echo "-----"
+          nproc
+
+      - name: 公共预编译 pnpm install + build + 裁剪（源码链路）
+        if: ${{ vars.FPK_MODE != 'npm' }}
+        run: ./build/build-common.sh
+
+      # 失败时上传完整构建日志（GitHub 日志 blob 经常丢失）
+      - name: 失败时上传构建日志（诊断）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-fpk-debug-log
+          path: |
+            build/master-build/build-*/pnpm-build.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: 构建 npm 应用体（npm 装官方包 → app_root，npm 链路）
+        if: ${{ vars.FPK_MODE == 'npm' }}
         run: ./build/FPK/build-npm-fpk-app.sh
 
-      - name: 打 FPK（--npm 消费 app_root）
+      - name: 打 FPK（源码构建，消费 target）
+        if: ${{ vars.FPK_MODE != 'npm' }}
+        run: ./build/FPK/build-fpk.sh
+
+      - name: 打 FPK（--npm 消费 app_root，npm 链路）
+        if: ${{ vars.FPK_MODE == 'npm' }}
         run: ./build/FPK/build-fpk.sh --npm
 
       - name: 上传 FPK 产物
