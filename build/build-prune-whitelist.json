@@ -5,8 +5,15 @@
   "_wsNote": "动态收集：扫描 target/packages/**/package.json 的 dependencies 全名进白名单（279 个运行时依赖，2026-09-12 实测）",
   "extra": [
     "execa",
+    "fast-check",
+    "jsdom",
     "lefthook",
     "lightningcss",
+    "mdast",
+    "mdast-util-from-markdown",
+    "mdast-util-gfm",
+    "mermaid",
+    "micromark-extension-gfm",
     "native",
     "smol-toml",
     "tsdown",
@@ -14,7 +21,7 @@
     "typescript",
     "vite-tsconfig-paths"
   ],
-  "_extraNote": "native 不是 .pnpm 包，由黑名单 sourceDirs 保护逻辑单独处理；typescript/tsx/tsdown/vite-tsconfig-paths/lightningcss/execa/smol-toml 为 build/run 必需工具（install 前裁剪 devDeps 时保护，否则 build 阶段缺工具失败；2026-09-14 手动追加，gen-prune-whitelist.sh 自动更新只动 lockfileDeps 不覆盖此处）；learn-prune-whitelist.sh 自动并入 1 个构建必需包: lefthook",
+  "_extraNote": "native 不是 .pnpm 包，由黑名单 sourceDirs 保护逻辑单独处理；typescript/tsx/tsdown/vite-tsconfig-paths/lightningcss/execa/smol-toml 为 build/run 必需工具（install 前裁剪 devDeps 时保护，否则 build 阶段缺工具失败；2026-09-14 手动追加，gen-prune-whitelist.sh 自动更新只动 lockfileDeps 不覆盖此处）；learn-prune-whitelist.sh 自动并入 1 个构建必需包: lefthook；learn-prune-whitelist.sh 自动并入 5 个构建必需包: fast-check, mdast, mdast-util-from-markdown, mdast-util-gfm, micromark-extension-gfm",
   "lockfileDeps": [
     "@agentclientprotocol/sdk",
     "@anthropic-ai/sdk",
@@ -508,6 +515,11 @@
   ],
   "_lockNote": "自动生成 489 个（tmp.lu2yV9Brbp 来源的 npm 锁文件 packages 键），2026-09-13 gen-prune-whitelist.sh 写入；与 extra/workspaceRuntimeDeps 取并集",
   "_autoLearned": [
-    "lefthook"
+    "lefthook",
+    "fast-check",
+    "mdast",
+    "mdast-util-from-markdown",
+    "mdast-util-gfm",
+    "micromark-extension-gfm"
   ]
 }
