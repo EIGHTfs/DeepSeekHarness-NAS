@@ -299,9 +299,12 @@ fi
 _ANN "stage=$BUILD_STAGE install 开始"
 if _STAGE_OK install && [ ! -d "$BUILD_SRC/node_modules" ]; then
   echo "▶ pnpm install (~2-5min) [store=$PNPM_STORE]（项目 pnpm: $PNPM_BIN）"
+  # --no-frozen-lockfile：install 前剥离 devDeps 后 package.json 与 lockfile 不一致，
+  # CI 环境 pnpm 默认 frozen-lockfile 会报 ERR_PNPM_OUTDATED_LOCKFILE 拒绝安装
+  # （实测 2026-09-14：裁剪 23 个 devDeps 后 install 失败）。加此参数重算 lockfile。
   ( cd "$BUILD_SRC" && \
     PATH="$PNPM_BIN_DIR:$PATH" HOME="$_HOME_DIR" PNPM_STORE_DIR="$PNPM_STORE" npm_config_cache="$NPM_CACHE" \
-    "$_PNPM_SHIM" install --store-dir="$PNPM_STORE" --force 2>&1 | tail -20 )
+    "$_PNPM_SHIM" install --store-dir="$PNPM_STORE" --force --no-frozen-lockfile 2>&1 | tail -20 )
 fi
 _ANN "stage=$BUILD_STAGE install 结束 (node_modules=$( [ -d "$BUILD_SRC/node_modules" ] && echo 有 || echo 无))"
 
