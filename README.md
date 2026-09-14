@@ -48,6 +48,8 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 |------|------|-------------|
 | `build/build-all.sh` | **一键构建入口**：拉源 → 构建 → 打包 → bc 体积汇总（等效 GitHub Actions 本地版） | `--targets spk,fpk` / `--fpk-mode npm|src` / `--tag` / `--skip-fetch` / `--dry-run` |
 | `build/build-common.sh` | **公共预编译**：pnpm install + pnpm build + 黑白名单裁剪 → `target` 整树 + `build-meta.env` | `[SRC] [SKIP_BUILD]`；`./build/build-common.sh "" 1` = 复用已有 target 秒级重打包 |
+| `build/gen-prune-whitelist.sh` | **白名单自动生成**：从 npm 链路 `package-lock.json` 的 packages 键解析包名全集（排除平台变体/claude/codex），写入白名单 `lockfileDeps` 字段（源码构建裁剪用） | `[锁文件]` / `--dry-run`；`./build/gen-prune-whitelist.sh` = 自动找最新锁文件更新白名单 |
+| `build/prune-target.sh` | **target 黑白名单裁剪（独立可跑）**：黑名单删平台变体/musl/claude/devDeps/src，白名单（extra+lockfileDeps+workspace 运行时依赖）保护强制保留项；build-common.sh 内部调用，也可单独重裁已有 target（白名单更新后免重编译） | `<TARGET> [BLACKLIST] [WHITELIST]`；`./build/prune-target.sh build/spk-build/build-0.1.5/target` |
 | `build/build-npm-app.sh` | **FPK npm 链路（可选）**：npm 装官方包（`--omit=dev`）→ `build/spk-build/npm-app-<版本>/app_root`（免源码编译） | `[VERSION]`；`./build/build-npm-app.sh 0.1.5-rc.2`（幂等，重跑秒级） |
 | `build/build-spk.sh` | 消费 target → 群晖 `.spk`（端口 30800/30801/30802） | 无参数；`./build/build-spk.sh` → `build/staging/<APP_NAME>_x86_64-<版本>.spk` |
 | `build/build-fpk.sh` | 消费 target → 飞牛 `.fpk`（端口 3080/3081/3082）；`--npm` 消费 npm 链路 app_root（双链路并存） | `[--npm]`；`./build/build-fpk.sh --npm` → `build/staging/<APP_NAME>_x86-<版本>.fpk` |
@@ -112,12 +114,12 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 ### GitHub Actions 自动构建（发版走这里）
 
 ```yaml
-# .github/workflows/build.yml —— tag 推送即触发
+# .github/workflows/build.yml —— 触发: 定时(每日04:00 UTC) / workflow_dispatch(手动) / tag推送
 # jobs: build-spk（源码链路）→ build-fpk（npm 链路）→ release（合并双产物发版）
 # 产物命名: <APP_NAME>_<平台>-<版本>.<spk|fpk>，release 附件即 dist/ 全部文件
 ```
 
-- 触发：推送 tag（`v0.1.5` 等）→ 自动拉官方最新源 → 并行构建 SPK（源码）与 FPK（npm）→ 合并产物 → 创建 GitHub Release
+- 触发：①每日 04:00 UTC（北京 12:00）定时自动拉官方最新源并构建（产物上传 artifact，保留 14 天）；②Actions 页手动 `workflow_dispatch`；③推送 tag（`v0.1.5` 等）→ 自动拉官方最新源 → 并行构建 SPK（源码）与 FPK（npm）→ 合并产物 → 创建 GitHub Release
 - 本地等效：`./build/build-all.sh`（同一套 fetch → build → 打包 流程）
 
 ### 打包模式：预构建产物包（唯一模式）
@@ -128,6 +130,8 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | FPK | `build/staging/<APP_NAME>_x86-<FPK版本>.fpk` | 同上（手动 tar+gzip；app.tgz 与外层均无 `./` 前缀） |
 
 > **裁剪（有依据，非盲删）**：①非 linux-x64 平台变体（darwin/win32/arm/musl/ia32…）；②**devDependencies 及其传递依赖**（清单从根 `package.json` 动态读取，不硬编码——已实测删后 `dsh --version` 与 web HTTP 200 正常）；③claude-agent-sdk/codex（体积大头，明确不需要）；④`packages|apps` 的 src（构建产物在 lib/dist）+ docs/benchmarks/native。保留：`bin/node` + `bin/dsh` + `bin/pnpm` + 随包 pnpm + 各包 lib/dist 产物 + 运行时 node_modules。
+>
+> **白名单自动生成（2026-09-13）**：`build/gen-prune-whitelist.sh` 从 npm 链路 `package-lock.json` 的 packages 键解析包名全集（实测磁盘实际包 522 个全部落在锁文件 582 条引用内，0 误删）→ 写入白名单 `lockfileDeps` 字段（排除平台变体/claude/codex 后 489 个）；与 `extra` + `workspaceRuntimeDeps`（动态收集 target/packages 的 dependencies）取并集，黑名单候选命中即保护。裁剪逻辑独立为 `build/prune-target.sh`，可单独对已有 target 重跑（白名单更新后免重编译）。
 >
 > **官方依赖表（裁剪依据，来源 dsh 官方 requirements）**：
 
