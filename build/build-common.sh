@@ -233,6 +233,23 @@ fi
 _HOME_DIR="$WS/assets/tmp-home"
 mkdir -p "$_HOME_DIR"
 
+# ── pnpm 命令垫片（关键） ─────────────────────────────────────────────────
+# tools/pnpm/bin/ 只有 pnpm.mjs / pnpm.cjs，没有名为 `pnpm` 的可执行入口。
+# 上游 scripts/build.ts 用 `sh -c "pnpm run build:lib:*"` 调子脚本（子进程重新查 PATH），
+# 仅 PATH 指向该目录仍找不到 `pnpm` —— CI runner 无系统 pnpm 时报 `sh: 1: pnpm: not found`
+# （本地靠 /usr/bin/pnpm 兜住过，掩盖了该问题）。此处生成垫片，保证子进程可用且
+# 版本与打包进应用的一致（项目自带 pnpm）。
+_PNPM_SHIM="$PNPM_BIN_DIR/pnpm"
+if [ ! -x "$_PNPM_SHIM" ] || ! head -1 "$_PNPM_SHIM" 2>/dev/null | grep -q "build-common pnpm shim"; then
+  cat > "$_PNPM_SHIM" <<SHIMEOF
+#!/bin/sh
+# build-common pnpm shim —— 由 build/build-common.sh 自动生成，勿手改
+exec "$NODE_SRC" "$PNPM_BIN" "\$@"
+SHIMEOF
+  chmod 755 "$_PNPM_SHIM"
+  echo "✓ 已生成 pnpm 垫片: $_PNPM_SHIM → $PNPM_BIN"
+fi
+
 if [ ! -d "$BUILD_SRC/node_modules" ]; then
   echo "▶ pnpm install (~2-5min) [store=$PNPM_STORE]（项目 pnpm: $PNPM_BIN）"
   ( cd "$BUILD_SRC" && \

@@ -28,6 +28,9 @@
 /__pycache__/
 *.pyc
 
+# ── 构建时生成的 pnpm 垫片（含本机绝对路径，由 build-common.sh 自动生成） ──
+/tools/pnpm/bin/pnpm
+
 # ── 本地回收站（安全删除暂存） ──
 /.trash/
 
