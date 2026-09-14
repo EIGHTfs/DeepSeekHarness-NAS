@@ -688,11 +688,16 @@ if grep -rl "__APP_NAME__\|__BRAND_VERSION_ORDER_COMMA__\|__FPK_VERSION__\|__SHA
   echo "[!] cmd 占位符未全部替换" >&2; exit 1
 fi
 OUT_FPK="$D_STAGING/${APP_NAME}_x86-${FPK_VERSION}.fpk"
+# ⚠ staging 是 gitignore 的产物目录，CI 全新 checkout 不存在 → tar 写不进去
+#   报 exit code 2（stderr 被 2>/dev/null 吞掉，只留一句 exit 2，极难定位）。
+mkdir -p "$D_STAGING"
 echo "▶ 组装外层 FPK → $OUT_FPK"
 # ⚠ 条目必须与 fnpack 官方格式一致：无 ./ 前缀、无目录尾斜杠条目
 #   find 只列文件/软链（避开 GNU tar 给目录自动补 `/`）；排除 app/（内容已进 app.tgz）
+# ⚠ 不吞 tar 的 stderr：曾因 2>/dev/null 把「目标目录不存在（tar exit 2）」的真实
+#   报错吞掉，CI 日志只剩一句 "exit code 2"，排查耗时。宁可日志吵一点。
 ( cd "$FPK_SRC" && find . -path ./app -prune -o \( -type f -o -type l \) -printf '%P\n' > /tmp/fpk-outer-list.$$ \
-  && tar -cf "${OUT_FPK}.tar" --files-from=/tmp/fpk-outer-list.$$ 2>/dev/null; rm -f /tmp/fpk-outer-list.$$ \
+  && tar -cf "${OUT_FPK}.tar" --files-from=/tmp/fpk-outer-list.$$; rm -f /tmp/fpk-outer-list.$$ \
   && gzip -9 -f "${OUT_FPK}.tar" && mv "${OUT_FPK}.tar.gz" "$OUT_FPK" )
 
 sync   # CIFS 元数据滞后

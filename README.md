@@ -552,6 +552,7 @@ sudo synopkg stop deepseek-harness-nas
 
 | 版本 | 内嵌 dsh | 说明 |
 |------|----------|------|
+| 0.1.5 (2026-09-13) | 0.1.5-rc.2 | **CI 自动构建打通（GitHub Actions 首跑三 bug 修复）**：① `tools/pnpm/bin/` 缺名为 `pnpm` 的可执行入口 → 上游 `scripts/build.ts` 子进程 `sh -c pnpm` 报 `not found`（本机靠系统 pnpm 兜住）→ build-common.sh 自动生成 pnpm 垫片；② 6 个构建脚本 git 索引 100644 无执行位 → CI `Permission denied`（exit 126）→ `git add --chmod=+x` 修正；③ `build-npm-app.sh` 两处 `cd` 到 gitignore 掉的目录（`build/spk-build`、`dsh-web`）在干净 checkout 下不存在 → 补 `mkdir -p`。定时打包新增（每日 04:00 UTC 自动构建 SPK+FPK 上传 artifact） |
 | 0.1.5 (2026-09-13) | 0.1.5-rc.2 | **入口收敛（门户 token 免密权威实现，实测通过）**：start.sh 反代区分「套件门户打开」与「局域网直连」——套件图标打开（DSM 桌面 https:5001→http:30800 / fnOS 应用 iframe）302 无条件带 token 免密；地址栏直连（`Sec-Fetch-Site: none` / 无 Referer）403 提示「请从套件图标打开」；外站链接跳入（异主机 Referer）403；已持 dsh-auth cookie 直连放行（带过 token 即免密）。SameSite=Strict→Lax 改写保跨 scheme cookie。**产物命名改 `<APP_NAME>_<平台>-<版本>.<spk|fpk>`（去 -dist）**；**GitHub Actions 自动构建**（复用 fetch-dsh-latest.sh 拉官方源，SPK 构建，FPK 分支注释）；**脚本执行位修正**（git 索引 100755）。实测：193 VirtualDSM 卸载重装 0.1.5，7 场景全过（直连 403 / 门户 302 带 token / 认证后直连免密 200） |
 
 > 历史发布版已清理，今后发版统一走 GitHub Actions 自动构建（tag 推送即出 spk+fpk 双产物）。仓库历史已 squash 重建。

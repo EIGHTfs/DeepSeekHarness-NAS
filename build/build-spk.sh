@@ -421,6 +421,9 @@ chmod 755 "$ASSEMBLE/scripts/"* 2>/dev/null || true
 chmod 755 "$ASSEMBLE/scripts/start-stop-status" "$ASSEMBLE/scripts/installer" 2>/dev/null || true
 
 OUT_SPK="$D_STAGING/${APP_NAME}_x86_64-${SPK_VERSION}.spk"
+# ⚠ staging 是 gitignore 的产物目录，CI 全新 checkout 不存在 → tar 因写不进去失败
+#   （exit code 2）。本地长期有该目录，掩盖了此问题。
+mkdir -p "$D_STAGING"
 echo "▶ 组装外层 SPK → $OUT_SPK"
 ( cd "$ASSEMBLE" && tar -cf "$OUT_SPK" INFO PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG conf scripts ui package.tgz )
 
