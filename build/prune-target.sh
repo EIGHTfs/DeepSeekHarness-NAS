@@ -1,30 +1,103 @@
 #!/bin/bash
 #===============================================================================
-# prune-target.sh — 对已构建 target 应用黑白名单裁剪（独立可跑）
+# prune-target.sh — 黑白名单裁剪（install 前 / target 后 双模式，独立可跑）
 #===============================================================================
-# 【用途】从 build-common.sh 提取的「三、预构建包裁剪」段，独立成脚本：
-#   - 构建全流程里由 build-common.sh 调用（行为不变）
-#   - 也可单独对已构建 target 重跑（如白名单 lockfileDeps 更新后，
-#     免去 10-20min 重新 pnpm build，直接重裁 target 再打 fpk）
+# 【用途】从 build-common.sh 提取的「黑白名单裁剪」逻辑，独立成脚本，两种模式：
 #
-# 【用法】
-#   ./build/prune-target.sh <TARGET> [BLACKLIST_FILE] [WHITELIST_FILE]
-#     缺省名单文件 = 本脚本同目录 build-prune-blacklist/whitelist.json
+#  模式 A：install 前（--before-install <BUILD_SRC>）
+#    pnpm install **之前** 对源码副本 BUILD_SRC 各 package.json 的 devDependencies
+#    应用黑白名单：黑名单 devDeps 候选（根 devDependencies 全集）→ 白名单
+#    （extra + lockfileDeps + workspaceRuntimeDeps）保护 → 删除非白名单 devDep。
+#    效果：install 阶段不再下载被裁 devDeps（官方 monorepo ~1.78万包，
+#    vitest/jsdom/mermaid 等巨大），CI runner 磁盘峰值骤降，不再被
+#    "No space left on device" 杀 worker（2026-09-14 annotation 实测根因）。
+#    构建必需工具（typescript/tsx/tsdown/lightningcss/execa/smol-toml）已手动追加进
+#    白名单 extra，install 时保留，build 不会缺工具。
 #
-# 【规则】执行顺序：黑名单收集候选 → 白名单过滤（命中 = 保留，白大于黑）→ rm -rf
-#   白名单 = extra + lockfileDeps（gen-prune-whitelist.sh 从 npm 锁文件自动生成）
-#          + workspaceRuntimeDeps（动态收集 target/packages/*/package.json dependencies）
+#  模式 B：target 后（默认 <TARGET> [BLACKLIST] [WHITELIST]）
+#    对已构建 target 应用黑白名单裁剪（原行为不变）：
+#    黑名单收集 .pnpm 候选（平台变体/musl/claude/codex/devDeps）→ 白名单过滤 → rm -rf
+#    + sourceDirs 源码/文档裁剪。白名单 lockfileDeps 更新后可单独重裁 target 免重编译。
+#
+# 【规则】执行顺序：黑名单收集候选 → 白名单过滤（命中 = 保留，白大于黑）→ 删除
+#   白名单 = extra + lockfileDeps（gen-prune-whitelist.sh 自动生成，不覆盖手动 extra）
+#          + workspaceRuntimeDeps（动态收集 packages/*/package.json dependencies）
 #   ⚠ native/ 不在黑名单 sourceDirs：node-addon-system-linux-x64 软链真身，删了启动必挂
 #===============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TARGET="${1:?用法: $0 <TARGET> [BLACKLIST] [WHITELIST]}"
-BLACKLIST_FILE="${2:-$SCRIPT_DIR/build-prune-blacklist.json}"
-WHITELIST_FILE="${3:-$SCRIPT_DIR/build-prune-whitelist.json}"
+BLACKLIST_FILE="${BLACKLIST_FILE:-$SCRIPT_DIR/build-prune-blacklist.json}"
+WHITELIST_FILE="${WHITELIST_FILE:-$SCRIPT_DIR/build-prune-whitelist.json}"
 
-[ -d "$TARGET" ] || { echo "✗ target 不存在: $TARGET" >&2; exit 1; }
+MODE_BEFORE_INSTALL=0
+if [[ "${1:-}" == "--before-install" ]]; then
+  MODE_BEFORE_INSTALL=1
+  BUILD_SRC="${2:?用法: $0 --before-install <BUILD_SRC>}"
+  [ -d "$BUILD_SRC" ] || { echo "✗ BUILD_SRC 不存在: $BUILD_SRC" >&2; exit 1; }
+else
+  TARGET="${1:?用法: $0 <TARGET> [BLACKLIST] [WHITELIST] 或 $0 --before-install <BUILD_SRC>}"
+  BLACKLIST_FILE="${2:-$BLACKLIST_FILE}"
+  WHITELIST_FILE="${3:-$WHITELIST_FILE}"
+  [ -d "$TARGET" ] || { echo "✗ target 不存在: $TARGET" >&2; exit 1; }
+fi
 
+# ==============================================================================
+# 模式 A：install 前裁剪 devDependencies（复用黑白名单）
+# ==============================================================================
+if [ "$MODE_BEFORE_INSTALL" = "1" ]; then
+  echo "▶ install 前裁剪 devDeps（复用黑白名单）: $BUILD_SRC"
+  python3 - "$BUILD_SRC" "$BLACKLIST_FILE" "$WHITELIST_FILE" <<'PYEOF' 2>/dev/null || true
+import json, os, sys
+build_src, black_file, white_file = sys.argv[1], sys.argv[2], sys.argv[3]
+black = json.load(open(black_file, encoding='utf-8'))
+white = json.load(open(white_file, encoding='utf-8'))
+
+# 白名单集合：extra + lockfileDeps + workspaceRuntimeDeps（动态收集 packages 运行时依赖）
+whitelist = set(white.get('extra', []))
+whitelist.update(white.get('lockfileDeps', []))
+if white.get('workspaceRuntimeDeps'):
+    pkgs_root = os.path.join(build_src, 'packages')
+    for dirpath, dirnames, filenames in os.walk(pkgs_root):
+        if 'package.json' in filenames:
+            try:
+                d = json.load(open(os.path.join(dirpath, 'package.json'), encoding='utf-8'))
+                whitelist.update((d.get('dependencies') or {}).keys())
+            except Exception:
+                pass
+
+# 黑名单 devDeps=true：根 devDependencies 全集为裁剪候选（白名单保护的保留）
+candidates = []
+if black.get('devDeps'):
+    root_pkg = os.path.join(build_src, 'package.json')
+    try:
+        root_dev = json.load(open(root_pkg, encoding='utf-8')).get('devDependencies') or {}
+        candidates = [k for k in root_dev if k not in whitelist]
+    except Exception:
+        pass
+
+if candidates:
+    # 从根 package.json 删除非白名单 devDeps（install 不再下载）
+    try:
+        data = json.load(open(root_pkg, encoding='utf-8'))
+        dev = data.get('devDependencies') or {}
+        for k in candidates:
+            dev.pop(k, None)
+        data['devDependencies'] = dev
+        with open(root_pkg, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"  ✓ 剥离 {len(candidates)} 个非白名单 devDeps: {', '.join(candidates[:8])}{'...' if len(candidates)>8 else ''}")
+    except Exception as e:
+        print(f"  ⚠ 剥离失败: {e}")
+else:
+    print("  ✓ 无非白名单 devDeps 需剥离")
+PYEOF
+  exit 0
+fi
+
+# ==============================================================================
+# 模式 B：target 后裁剪（原行为）
+# ==============================================================================
 echo "▶ 裁剪 target: $TARGET ($(du -sh "$TARGET" 2>/dev/null | cut -f1))"
 
 python3 - "$TARGET" "$BLACKLIST_FILE" "$WHITELIST_FILE" <<'PYEOF' 2>/dev/null || true

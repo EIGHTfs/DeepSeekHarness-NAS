@@ -282,6 +282,20 @@ SHIMEOF
 fi
 fi   # 结束准备门控（复制源码+品牌+假git+垫片；stage=prune 时跳过）
 
+# ── install 前应用黑白名单裁剪 devDeps（省 install 磁盘峰值，防 CI 撑爆 runner）──
+# 与 prune 阶段共用同一份黑白名单（build-prune-blacklist/whitelist.json，单一权威）：
+#   prune-target.sh --before-install 会对 BUILD_SRC 根 package.json 的 devDependencies
+#   应用「黑名单 devDeps 候选 → 白名单保护 → 删除」，install 时就不再下载被裁 devDeps
+#   （官方 monorepo 依赖树 ~1.78万包，vitest/jsdom/mermaid 等巨大，install 阶段磁盘峰值
+#   拉满 → worker 被杀：annotation 实测 No space left on device）。
+#   构建必需工具（typescript/tsx/tsdown/lightningcss/execa/smol-toml）已手动追加进
+#   白名单 extra（gen-prune-whitelist.sh 自动生成只动 lockfileDeps，不覆盖手动部分），
+#   install 时保留，build 不会缺工具。
+if _STAGE_OK install && [ -x "$SCRIPT_DIR/prune-target.sh" ]; then
+  echo "▶ install 前裁剪 devDeps（复用黑白名单）:$SCRIPT_DIR/prune-target.sh --before-install $BUILD_SRC"
+  "$SCRIPT_DIR/prune-target.sh" --before-install "$BUILD_SRC" || echo "  ⚠ install 前裁剪返回非零，继续（不阻断 install）"
+fi
+
 _ANN "stage=$BUILD_STAGE install 开始"
 if _STAGE_OK install && [ ! -d "$BUILD_SRC/node_modules" ]; then
   echo "▶ pnpm install (~2-5min) [store=$PNPM_STORE]（项目 pnpm: $PNPM_BIN）"

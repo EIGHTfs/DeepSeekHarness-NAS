@@ -4,9 +4,16 @@
   "workspaceRuntimeDeps": true,
   "_wsNote": "动态收集：扫描 target/packages/**/package.json 的 dependencies 全名进白名单（279 个运行时依赖，2026-09-12 实测）",
   "extra": [
-    "native"
+    "native",
+    "typescript",
+    "tsx",
+    "tsdown",
+    "vite-tsconfig-paths",
+    "lightningcss",
+    "execa",
+    "smol-toml"
   ],
-  "_extraNote": "native 不是 .pnpm 包，由黑名单 sourceDirs 保护逻辑单独处理；此处保留字段供未来手工白名单包使用",
+  "_extraNote": "native 不是 .pnpm 包，由黑名单 sourceDirs 保护逻辑单独处理；typescript/tsx/tsdown/vite-tsconfig-paths/lightningcss/execa/smol-toml 为 build/run 必需工具（install 前裁剪 devDeps 时保护，否则 build 阶段缺工具失败；2026-09-14 手动追加，gen-prune-whitelist.sh 自动更新只动 lockfileDeps 不覆盖此处）",
   "lockfileDeps": [
     "@agentclientprotocol/sdk",
     "@anthropic-ai/sdk",

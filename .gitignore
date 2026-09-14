@@ -25,6 +25,9 @@
 /install-config.json
 /install-tasks.jsonl
 /server-install.log
+/install-server.log
+/release-sync.log
+/web-install/server-install.log
 /DSHProbe-*.spk
 /__pycache__/
 *.pyc
