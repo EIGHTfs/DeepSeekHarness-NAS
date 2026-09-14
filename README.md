@@ -254,11 +254,15 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 
 ## 🚀 安装与访问
 
+> 截图（DSH 网页主界面——安装后门户打开即进入）：
+
+> ![DSH 网页主界面](docs/screenshots/DeepSeekHarness.png)
+
 ### 群晖 DSM（.spk）
 
 > 截图（DSM 门户打开套件 → 自动带 token 进入）：
 
-> ![DSM 门户打开套件](docs/screenshots/https___10.10.10.193_5001___sid=&launchApp=.png)
+> ![DSM 门户打开套件](docs/screenshots/群晖.png)
 
 ```bash
 # 前置条件：DSM 7.2+，x86_64 架构（已内置 node，无需额外安装）
@@ -294,7 +298,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 
 > 截图（fnOS 应用中心登录页）：
 
-> ![fnOS 应用中心登录](docs/screenshots/http___10.10.10.63_5666_login.png)
+> ![fnOS 应用中心登录](docs/screenshots/飞牛.png)
 
 > 打包与错误码速查固化在 skill：`fnos-fpk-package-guide`（见技能仓库 `ai-work-archive/skills/execution-执行/`）——官方 fnpack、手动 tar+gzip 兜底、manifest 字段（**禁止 changelog 字段**，实测触发 10111）、CPU 配额/共存部署/污染防再犯均在；`fnos-fpk-error-table` 为安装错误码速查表。fpk 应用体与 spk 同源（官方 dsh 版本），门户打开自动带 token，机制与 spk 相同。
 
