@@ -2,7 +2,7 @@
 #===============================================================================
 # gen-prune-whitelist.sh — 从 npm 锁文件自动生成源码构建裁剪白名单
 #===============================================================================
-# 【用途】npm 链路（build-npm-app.sh）的 package-lock.json 是官方依赖的完整
+# 【用途】npm 链路（build-npm-fpk-app.sh）的 package-lock.json 是官方依赖的完整
 #   事实清单：磁盘实际包 522 个全部落在锁文件 582 条引用内（2026-09-13 实测，
 #   0 个磁盘有锁文件无）。因此源码构建（build-common.sh）裁剪时的白名单可直接
 #   由锁文件自动生成，取代手工维护 —— 锁文件有的包一律保留，跑不掉的依赖
@@ -33,23 +33,33 @@ if [ "${1:-}" = "--dry-run" ]; then
   LOCK_FILE=""
 fi
 if [ -z "$LOCK_FILE" ]; then
-  LOCK_FILE="$(ls -1t "$WS"/build/spk-build/npm-app-*/node-v*/dsh-web/package-lock.json 2>/dev/null | head -1 || true)"
+  LOCK_FILE="$(ls -1t "$WS"/build/master-build/npm-app-*/node-v*/dsh-web/package-lock.json 2>/dev/null | head -1 || true)"
 fi
 if [ -z "$LOCK_FILE" ] || [ ! -f "$LOCK_FILE" ]; then
-  echo "✗ 未找到 package-lock.json（先运行 ./build/build-npm-app.sh 或指定路径）" >&2
+  echo "✗ 未找到 package-lock.json（先运行 ./build/FPK/build-npm-fpk-app.sh 或指定路径）" >&2
   exit 1
 fi
 
 # ── 解析锁文件 → 包名全集（写入 stdout: 每行一个包名） ──
 # 排除平台变体：锁文件含全部平台的可选依赖（sharp-darwin/win32-process 等），
-# 若进白名单会保护黑名单该删的平台变体（白大于黑 → 不删 → 体积膨胀）。
-# 排除关键词复用 build-prune-blacklist.json 的 pnpmPlatform + pnpmMusl + pnpmApps。
+# 若进白名单会保护该删的平台变体（白名单模式：不在白名单一律删 → 体积膨胀）。
+# 排除关键词（内联，原 build-prune-blacklist.json 已删除）：
+#   pnpmPlatform（非 linux-x64 平台变体）+ pnpmMusl + pnpmApps（claude/codex disabled）。
 TMP_LIST="$(mktemp)"
-python3 - "$LOCK_FILE" "$SCRIPT_DIR/build-prune-blacklist.json" <<'PYEOF' > "$TMP_LIST"
+python3 - "$LOCK_FILE" <<'PYEOF' > "$TMP_LIST"
 import json, sys
-lock_path, black_path = sys.argv[1], sys.argv[2]
-black = json.load(open(black_path, encoding='utf-8'))
-skip_keys = set(black.get('pnpmPlatform', [])) | set(black.get('pnpmMusl', [])) | set(black.get('pnpmApps', []))
+lock_path = sys.argv[1]
+# 排除关键词（原黑名单 pnpmPlatform + pnpmMusl + pnpmApps，已内联）：
+# 平台变体 —— 只保留 linux-x64；musl 变体（sharp 等）不要；claude/codex 禁用不保护
+skip_keys = {
+    # pnpmPlatform: 非目标平台（只在锁文件出现，装了也用不上）
+    'darwin', 'win32', 'win32-x64', 'linux-arm', 'linux-arm64', 'linux-ppc',
+    'linux-s390', 'linux-riscv', 'freebsd', 'android', 'linuxmusl',
+    # pnpmMusl
+    'musl', 'musllinux',
+    # pnpmApps: 禁用 preset，即使进锁文件也不保护
+    '@openai/codex', 'claude-agent-sdk', '@anthropic-ai/claude',
+}
 d = json.load(open(lock_path, encoding='utf-8'))
 pkgs = d.get('packages', {})
 names = set()

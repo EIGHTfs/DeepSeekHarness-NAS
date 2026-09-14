@@ -9,8 +9,8 @@
 #
 # 【双链路】（2026-09-13 新增；默认行为不变）:
 #   ./build-fpk.sh          默认：消费 build-common.sh 的 target（源码 monorepo 编译产物）
-#   ./build-fpk.sh --npm    新增：消费 build-npm-app.sh 的 app_root（npm 装官方包，~100MiB）
-#                           前置：先运行 ./build-npm-app.sh [VERSION]
+#   ./build-fpk.sh --npm    新增：消费 build-npm-fpk-app.sh 的 app_root（npm 装官方包，~100MiB）
+#                           前置：先运行 ./build/FPK/build-npm-fpk-app.sh [VERSION]
 #                           仅此参数走 npm 链路；SPK 与源码链路完全不受影响
 #
 # 用法:
@@ -34,9 +34,15 @@
 #===============================================================================
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WS="$(cd "$SCRIPT_DIR/.." && pwd)"
-CONFIG_FILE="$SCRIPT_DIR/build-config.yaml"
+# ── 本脚本引用的脚本/目录路径（常量；改路径只改这里，引用点一律用常量） ──
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # build/FPK/
+WS="$(cd "$SCRIPT_DIR/../.." && pwd)"                        # 工作区根（脚本在 build/FPK/ 下）
+BUILD_ROOT="$WS/build"
+CONFIG_FILE="$SCRIPT_DIR/../build-config.yaml"               # 配置在 build/ 根
+BUILD_META_DIR="$BUILD_ROOT/master-build"                    # 源码链路 target 元数据根（原 spk-build → master-build）
+NPM_META_DIR="$BUILD_ROOT/master-build"                      # npm 链路 app 元数据根（同根目录，不同子目录）
+NPM_APP_SCRIPT="$BUILD_ROOT/FPK/build-npm-fpk-app.sh"        # FPK npm 链路脚本（本目录）
+EXCLUDES_FILE="$BUILD_ROOT/build-excludes.json"              # tar 排除规则（通用，build/ 根）
 
 # ── 参数：--npm 走 npm 装包链路（默认源码 target 链路不变） ──
 NPM_MODE=0
@@ -96,9 +102,9 @@ CFG_SHARE_DATA_DIR="${FPKCFG_SHARE_DATA_DIR-}"
 # 元数据（双链路：--npm 读 npm-meta.env，默认读 build-meta.env）
 # ----------------------------------------------------------------------------
 if [ "$NPM_MODE" = "1" ]; then
-  _NPM_META="$(ls -1t "$D_BUILD"/spk-build/npm-app-*/npm-meta.env 2>/dev/null | head -1)"
+  _NPM_META="$(ls -1t "$NPM_META_DIR"/npm-app-*/npm-meta.env 2>/dev/null | head -1)"
   if [ -z "$_NPM_META" ] || [ ! -f "$_NPM_META" ]; then
-    echo "✗ 未找到 npm-meta.env（请先运行 ./build-npm-app.sh [VERSION] 生成 npm 应用体）" >&2
+    echo "✗ 未找到 npm-meta.env（请先运行 ./build/FPK/build-npm-fpk-app.sh [VERSION] 生成 npm 应用体）" >&2
     exit 1
   fi
   . "$_NPM_META"   # APP_NAME/APP_ID/APP_NAME_LOWER/PKG_VER/FPK_VERSION/SPK_VERSION/APP_ROOT
@@ -107,7 +113,7 @@ if [ "$NPM_MODE" = "1" ]; then
   WORK="$(dirname "$_NPM_META")"
   echo "使用 npm 应用体: $APP_ROOT（dsh $PKG_VER | FPK $FPK_VERSION | APP_NAME $APP_NAME）"
 else
-  _META="$(ls -1t "$D_BUILD"/spk-build/build-*/build-meta.env 2>/dev/null | head -1)"
+  _META="$(ls -1t "$BUILD_META_DIR"/build-*/build-meta.env 2>/dev/null | head -1)"
   if [ -z "$_META" ] || [ ! -f "$_META" ]; then
     echo "✗ 未找到 build-meta.env（请先运行 ./build-common.sh 生成 target）" >&2
     exit 1
@@ -121,7 +127,6 @@ else
 fi
 
 # 排除规则（build-excludes.json dist 模式；条目带 ./ 前缀是 SPK 用，FPK 派生去前缀）
-EXCLUDES_FILE="$SCRIPT_DIR/build-excludes.json"
 mapfile -t TAR_EXCLUDES < <(python3 -c "
 import json
 with open('$EXCLUDES_FILE') as f:
@@ -710,7 +715,7 @@ echo "  ✅ FPK: $OUT_FPK ($(du -h --apparent-size "$OUT_FPK" | cut -f1) | MD5 $
 # 体积门禁（阈值来自 build-config.yaml size_limit_mb；0 = 不检查）
 if [ "${CFG_SIZE_LIMIT_MB:-0}" != "0" ] && [ -n "$_FPK_SIZE_MB" ] && [ "$_FPK_SIZE_MB" -gt "$CFG_SIZE_LIMIT_MB" ]; then
   echo "[!] 体积门禁未通过：$_FPK_SIZE_MB MB > ${CFG_SIZE_LIMIT_MB} MB（阈值 size_limit_mb in build-config.yaml）" >&2
-  echo "    产物已生成但未达标，请先裁剪（build-prune-blacklist.json）后再发布。" >&2
+  echo "    产物已生成但未达标，请先裁剪（build/FPK/build-fpk.sh 消费的 target 重新跑 build-common.sh 纯白名单裁剪）后再发布。" >&2
   exit 1
 fi
 

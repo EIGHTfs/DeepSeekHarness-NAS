@@ -12,7 +12,7 @@
 #
 # 参数（均可省略）:
 #   1. SRC         源码目录（缺省=自动扫描 src/deepseek-ai/deepseek-harness-master
-#                  或 spk-build/master-build）
+#                  或 master-build/master-build）
 #   2. SKIP_BUILD  1=复用已有完整 target（不重新构建；缺省=1 跳过已存在，=0 强制全量构建）
 #
 # 打包模式：唯一模式 = 预构建产物包（装完即用）
@@ -24,7 +24,7 @@
 #     start.sh 由 build-spk.sh / build-fpk.sh 各自按端口段生成（本脚本不生成）
 #
 # 产物:
-#   target 整树       build/spk-build/build-<SPK_VERSION>/target（编译+裁剪后装包内容）
+#   target 整树       build/master-build/build-<SPK_VERSION>/target（编译+裁剪后装包内容）
 #   build-meta.env    同级 build-meta.env（APP_NAME/PKG_VER/SPK_VERSION/FPK_VERSION/DESC/COMMIT）
 #                     —— spk/fpk 打包脚本 source 它获取元数据（单一真源）
 #
@@ -75,10 +75,18 @@ for k, v in defaults.items():
 fi
 
 # --- 参数（精简：SRC / SKIP_BUILD）-----------------------------------------
+# ── 本脚本引用的脚本/目录路径（常量；改路径只改这里，引用点一律用常量） ──
+BUILD_ROOT="$SCRIPT_DIR"
+WORK_ROOT="${D_WORK_ROOT:-$BUILD_ROOT/master-build}"         # 构建中间产物根（原 spk-build → master-build）
+PRUNE_SCRIPT="$BUILD_ROOT/prune-target.sh"                   # 裁剪脚本（通用，本目录）
+GEN_WHITELIST_SCRIPT="$BUILD_ROOT/gen-prune-whitelist.sh"    # 白名单生成（通用，本目录）
+SPK_BUILD_SCRIPT="$BUILD_ROOT/SPK/build-spk.sh"              # SPK 打包（build/SPK/）
+FPK_BUILD_SCRIPT="$BUILD_ROOT/FPK/build-fpk.sh"              # FPK 打包（build/FPK/）
+NPM_FPK_SCRIPT="$BUILD_ROOT/FPK/build-npm-fpk-app.sh"        # FPK npm 链路（build/FPK/）
 SRC="${1:-}"
 if [ -z "$SRC" ]; then
-  # 通配扫描 src/deepseek-ai/*（不硬编码版本目录名），其次 spk-build/master-build
-  for cand in "$D_SRC"/deepseek-ai/* "$D_BUILD/spk-build/master-build"; do
+  # 通配扫描 src/deepseek-ai/*（不硬编码版本目录名），其次 master-build
+  for cand in "$D_SRC"/deepseek-ai/* "$WORK_ROOT/master-build"; do
     if [ -f "$cand/package.json" ] && [ -d "$cand/apps/cli" ]; then
       SRC="$cand"; break
     fi
@@ -166,7 +174,7 @@ echo "commit     : $COMMIT_HASH"
 #===============================================================================
 # 一、工作目录 + target 校验/复用
 #===============================================================================
-WORK="$D_BUILD/spk-build/build-${SPK_VERSION}"
+WORK="$WORK_ROOT/build-${SPK_VERSION}"
 BUILD_SRC="$WORK/source"
 TARGET="$WORK/target"
 ASSEMBLE="$WORK/assemble"

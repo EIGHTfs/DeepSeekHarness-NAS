@@ -12,7 +12,7 @@
 #    scripts/promote-release.sh --all               # 提升暂存区全部包
 #    scripts/promote-release.sh --check <文件名>     # 只校验不拷贝
 #
-#  路径可用环境变量覆盖（与 build-common.sh / build-spk.sh / build-fpk.sh 一致）：
+#  路径可用环境变量覆盖（与 build/build-common.sh / build/SPK/build-spk.sh / build/FPK/build-fpk.sh 一致）：
 #    D_STAGING=... D_REL=...
 # ============================================================
 set -uo pipefail
@@ -43,7 +43,7 @@ fi
 
 die(){ echo "✗ $*" >&2; exit 1; }
 
-[ -d "$D_STAGING" ] || die "暂存目录不存在: $D_STAGING（先跑 build-common.sh + build-spk.sh/build-fpk.sh）"
+[ -d "$D_STAGING" ] || die "暂存目录不存在: $D_STAGING（先跑 build/build-common.sh + build/SPK/build-spk.sh 或 build/FPK/build-fpk.sh）"
 mkdir -p "$D_REL"
 
 list_staging(){

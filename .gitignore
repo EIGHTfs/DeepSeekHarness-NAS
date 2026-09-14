@@ -1,6 +1,6 @@
 # ───────────── 跟踪白名单 / 黑名单规则（2026-09-11 用户整理后）─────────────
-# 白名单（跟踪）: docs/  scripts/  tools/  build/（除 spk-build/staging/bin）  + 根 README.md
-# 黑名单（忽略）: src/  assets/  release/  build/spk-build/  build/staging/  build/bin/  + 所有 *.bak*
+# 白名单（跟踪）: docs/  scripts/  tools/  build/（除 master-build/staging/bin）  + 根 README.md
+# 黑名单（忽略）: src/  assets/  release/  build/master-build/  build/staging/  build/bin/  + 所有 *.bak*
 #
 # 注意：gitignore 不支持行内尾随注释（# 与模式同行会被视为模式），
 #       所以注释一律独立成行，不跟在模式后面。
@@ -10,7 +10,7 @@
 /assets/
 /release/
 /build/bin/
-/build/spk-build/
+/build/master-build/
 /build/staging/
 /build/.inspect*/
 /build/.slim-test/

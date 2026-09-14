@@ -1,6 +1,10 @@
 # DeepSeekHarness-NAS
 
-> DeepSeek Harness 的群晖 DSM (.spk) / 飞牛 fnOS (.fpk) 平台适配包
+> DeepSeek Harness 的群晖 DSM (.spk) / 飞牛 fnOS (.fpk) 平台适配包 — NAS 原生运行 DeepSeek Harness，无需 Docker
+
+<p align="center">
+  <img src="docs/screenshots/DeepSeekHarness.png" width="720" alt="DeepSeek Harness NAS Web UI 主界面"/>
+</p>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![DSM](https://img.shields.io/badge/DSM-7.2+-blue)](https://www.synology.com)
@@ -27,32 +31,35 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 
 ## 🚀 编译打包脚本
 
-打包拆成四个脚本：**公共预编译只做一次**，SPK / FPK 各自独立打包，外加**一键构建**入口（本地等效 GitHub Actions）。未来发版走 **GitHub Actions 自动构建**（tag 推送即出 spk+fpk 双产物），本地脚本用于开发调试与手工兜底。
+打包拆成几个脚本：**公共预编译只做一次**（`build/build-common.sh`），SPK / FPK 各自独立打包（`build/SPK/build-spk.sh`、`build/FPK/build-fpk.sh`），FPK 另有 npm 链路脚本（`build/FPK/build-npm-fpk-app.sh`）。发版走 **GitHub Actions 自动构建**（tag 推送即出 spk+fpk 双产物），本地脚本用于开发调试与手工兜底。
 
-### 一键构建（本地等效 CI）
+### 本地构建（等效 CI）
 
 ```bash
-# 一键：拉官方最新源 → 按需构建 → 打包 SPK+FPK → 汇总体积（默认全部目标）
-./build/build-all.sh
+# 公共预编译：拉官方最新源 → pnpm install + build + 裁剪 → target
+./build/build-common.sh
 
-# 常用参数
-./build/build-all.sh --targets spk            # 只打 SPK
-./build/build-all.sh --targets fpk --fpk-mode npm   # 只打 FPK，走 npm 链路（~140MiB）
-./build/build-all.sh --skip-fetch --dry-run   # 跳过拉源 + 预演（不实际构建）
-./build/build-all.sh --help                   # 全部参数说明
+# 打 SPK（消费 target → build/staging/<APP_NAME>_x86_64-<版本>.spk）
+./build/SPK/build-spk.sh
+
+# 打 FPK 源码链路（消费 target → build/staging/<APP_NAME>_x86-<版本>.fpk）
+./build/FPK/build-fpk.sh
+
+# 打 FPK npm 链路（可选：npm 装官方包，免源码编译，体积更小）
+./build/FPK/build-npm-fpk-app.sh        # 先装官方包生成 app_root
+./build/FPK/build-fpk.sh --npm          # 再打 FPK（--npm 消费 app_root）
 ```
 
 ### 全部脚本一览
 
 | 脚本 | 作用 | 参数 / 示例 |
 |------|------|-------------|
-| `build/build-all.sh` | **一键构建入口**：拉源 → 构建 → 打包 → bc 体积汇总（等效 GitHub Actions 本地版） | `--targets spk,fpk` / `--fpk-mode npm|src` / `--tag` / `--skip-fetch` / `--dry-run` |
-| `build/build-common.sh` | **公共预编译**：install 前黑白名单裁剪 devDeps + pnpm install + pnpm build + 黑白名单裁剪 → `target` 整树 + `build-meta.env` | `[SRC] [SKIP_BUILD]`；`./build/build-common.sh "" 1` = 复用已有 target 秒级重打包 |
+| `build/build-common.sh` | **公共预编译**：install 前白名单裁剪 devDeps + pnpm install + pnpm build + 纯白名单裁剪 → `target` 整树 + `build-meta.env`（输出 `build/master-build/build-<版本>/`） | `[SRC] [SKIP_BUILD]`；`./build/build-common.sh "" 1` = 复用已有 target 秒级重打包 |
 | `build/gen-prune-whitelist.sh` | **白名单自动生成**：从 npm 链路 `package-lock.json` 的 packages 键解析包名全集（排除平台变体/claude/codex），写入白名单 `lockfileDeps` 字段（源码构建裁剪用）；只动 `lockfileDeps` 键，**不覆盖手动 `extra`** | `[锁文件]` / `--dry-run`；`./build/gen-prune-whitelist.sh` = 自动找最新锁文件更新白名单 |
-| `build/prune-target.sh` | **黑白名单裁剪（独立可跑，双模式）**：`--before-install <BUILD_SRC>` 在 install 前剥离非白名单 devDeps（省 install 磁盘峰值，防 CI 撑爆 runner；构建必需工具已手动追加白名单 extra）；默认模式对已构建 target 裁剪（黑名单删平台变体/musl/claude/devDeps/src，白名单保护强制保留项），白名单更新后可单独重裁 target 免重编译 | `--before-install <BUILD_SRC>` 或 `<TARGET> [BLACKLIST] [WHITELIST]`；`./build/prune-target.sh --before-install build/spk-build/build-0.1.5/source` |
-| `build/build-npm-app.sh` | **FPK npm 链路（可选）**：npm 装官方包（`--omit=dev`）→ `build/spk-build/npm-app-<版本>/app_root`（免源码编译） | `[VERSION]`；`./build/build-npm-app.sh 0.1.5-rc.2`（幂等，重跑秒级） |
-| `build/build-spk.sh` | 消费 target → 群晖 `.spk`（端口 30800/30801/30802） | 无参数；`./build/build-spk.sh` → `build/staging/<APP_NAME>_x86_64-<版本>.spk` |
-| `build/build-fpk.sh` | 消费 target → 飞牛 `.fpk`（端口 3080/3081/3082）；`--npm` 消费 npm 链路 app_root（双链路并存） | `[--npm]`；`./build/build-fpk.sh --npm` → `build/staging/<APP_NAME>_x86-<版本>.fpk` |
+| `build/prune-target.sh` | **纯白名单裁剪（独立可跑，双模式）**：`--before-install <BUILD_SRC>` 在 install 前剥离非白名单 devDeps（省 install 磁盘峰值，防 CI 撑爆 runner；构建必需工具已手动追加白名单 extra）；默认模式对已构建 target 裁剪（不在 lockfileDeps+workspaceRuntimeDeps 的一律删 + force_exclude codex/claude/linuxmusl），白名单更新后可单独重裁 target 免重编译 | `--before-install <BUILD_SRC>` 或 `<TARGET> [WHITELIST]`；`./build/prune-target.sh --before-install build/master-build/build-0.1.5/source` |
+| `build/FPK/build-npm-fpk-app.sh` | **FPK npm 链路（可选）**：npm 装官方包（`--omit=dev`）→ `build/master-build/npm-app-<版本>/app_root`（免源码编译） | `[VERSION]`；`./build/FPK/build-npm-fpk-app.sh 0.1.5-rc.2`（幂等，重跑秒级） |
+| `build/SPK/build-spk.sh` | 消费 target → 群晖 `.spk`（端口 30800/30801/30802） | 无参数；`./build/SPK/build-spk.sh` → `build/staging/<APP_NAME>_x86_64-<版本>.spk` |
+| `build/FPK/build-fpk.sh` | 消费 target → 飞牛 `.fpk`（端口 3080/3081/3082）；`--npm` 消费 npm 链路 app_root（双链路并存） | `[--npm]`；`./build/FPK/build-fpk.sh --npm` → `build/staging/<APP_NAME>_x86-<版本>.fpk` |
 | `build/build-test-fpk.sh` | 构建**测试版** FPK（调试用，含版本标记） | 无参数 |
 | `fetch-dsh-latest.sh` | 一键拉取 **DSH 官方最新版源码**到 `src/deepseek-ai/<tag>`（自动识别 tag） | `./fetch-dsh-latest.sh` |
 | `scripts/promote-release.sh` | **发布提升**：验证通过的 `build/staging/` 产物 → `release/` | `D_REL=<dir>` 覆盖输出目录 |
@@ -77,12 +84,12 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 ./build/build-common.sh "" 1                   # 复用已有 target（跳过编译，秒级）
 
 # ② 打包（消费 ① 的 target；无参数，配置读 build-config.yaml）
-./build/build-spk.sh                           # → build/staging/<APP_NAME>_x86_64-<SPK版本>.spk
-./build/build-fpk.sh                           # → build/staging/<APP_NAME>_x86-<FPK版本>.fpk
+./build/SPK/build-spk.sh                       # → build/staging/<APP_NAME>_x86_64-<SPK版本>.spk
+./build/FPK/build-fpk.sh                       # → build/staging/<APP_NAME>_x86-<FPK版本>.fpk
 
 # ②' FPK npm 链路（可选）：npm 装官方包，无需源码编译
-./build/build-npm-app.sh 0.1.5-rc.2            # 下载 node + npm install 官方包（幂等）
-./build/build-fpk.sh --npm                     # 消费 npm app_root → 同路径 fpk
+./build/FPK/build-npm-fpk-app.sh 0.1.5-rc.2    # 下载 node + npm install 官方包（幂等）
+./build/FPK/build-fpk.sh --npm                 # 消费 npm app_root → 同路径 fpk
 ```
 
 **参数与配置来源**（已精简，去掉「套件类型 / 套件说明 / 品牌名」三个参数）：
@@ -92,11 +99,11 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 > - **源码编译链路**（默认，build-common.sh target）：fpk 173M，应用体解压 807M，`node_modules` 为 pnpm workspace 布局 → 软链 **6703 条** → **实机安装即 fail `10234`**（app.tgz 含软链，fnOS 后端 ACL `acl_get_file` 失败；每次全新态复位验证均为同一结果）。要源码化必须重写打包排除软链并验证运行时依赖完整，当前不做。
 > - 体积基线：npm 链路 94M ≈ 100MiB 目标 ✅；源码链路 173M 超出 100MiB（未裁剪）。
 
-- `SRC` 源码目录：缺省通配扫描 `src/deepseek-ai/*`（不硬编码版本目录名），其次 `build/spk-build/master-build`
+- `SRC` 源码目录：缺省通配扫描 `src/deepseek-ai/*`（不硬编码版本目录名），其次 `build/master-build/master-build`
 - `SKIP_BUILD`：`1` = 复用已有 target（快速重打包），缺省 `0` = 全量构建
 - **套件说明 / 品牌名 / 端口**：不走命令行参数，统一读 `build/build-config.yaml`（`defaults` + `spk:` / `fpk:` 段），单一真源
 - **版本号**：从源码 `package.json` 自动读取（SPK 取前三位 `0.1.5`，FPK 取完整 `0.1.5-rc.2`）
-- **元数据传递**：`build-common.sh` 写 `build/spk-build/build-<版本>/build-meta.env`，两个打包脚本 `source` 它（避免各脚本重复推导版本/名字/描述）
+- **元数据传递**：`build-common.sh` 写 `build/master-build/build-<版本>/build-meta.env`，两个打包脚本 `source` 它（避免各脚本重复推导版本/名字/描述）
 - **环境变量覆盖**：`APP_NAME` / `D_SRC` / `D_BUILD` / `D_STAGING` / `D_ASSETS` / `D_SCRIPTS` 可临时覆盖（换名实验、目录迁移）
 
 > **打包模式**：唯一模式 = 预构建产物包（装完即用，无首启构建）。
@@ -124,9 +131,9 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 - **自动发布（与官方同 tag）**：三个触发方式都会自动建/更新 Release——tag 名取官方最新 dsh tag（`fetch-dsh-latest.sh --print-tag` 解析，如 `dsh-v0.1.5-rc.2`），同名 Release 已存在则**覆盖资产**（滚动刷新），不存在则自动创建；含 `-`（rc/alpha）的 tag 自动标 prerelease
 - **部分失败容忍**：`release` job 用 `always()`，源码链路 SPK 失败时仍发布 FPK，并在 Release 说明中标注 `SPK: ❌ 缺失`（实测 run #6：`dsh-v0.1.5-rc.2 自动构建` 已发布，含 FPK 93MB）
 - 产物同时上传 artifact（`spk-dist` / `fpk-dist`，保留 14 天）；构建失败时额外上传 `build-spk-debug-log`（完整 `pnpm-build.log`，因 GitHub 偶尔不归档该 job 日志）
-- **公共预编译三段拆分（2026-09-14）**：build-spk 的预编译按 `BUILD_STAGE`（`install` / `build` / `prune`）拆成 3 个独立 CI 步骤——该 job 日志 GitHub 时常不归档（BlobNotFound）且 runner 曾在单步中途被杀（step 呈 in_progress、后续全 pending），拆步后靠 **step 结论**（API 可查，不依赖日志）精确定位死点；build-common.sh 在阶段边界打 `::warning::` annotation（存 check run，日志丢失也能从 API 拿到）；`BUILD_STAGE=all`（默认）保持单步全量行为不变
-- **install 前黑白名单裁剪（2026-09-14，SPK CI 磁盘爆盘修复）**：annotation 实测根因 = `pnpm install/build` 阶段把 runner 磁盘写满（`No space left on device` → worker 被杀 → step 永久 in_progress）。官方 monorepo 依赖树约 1.78 万包，install 阶段下载全部 devDeps（vitest/jsdom/mermaid 等巨大传递依赖）拉满磁盘峰值。修复：`prune-target.sh --before-install` 在 `pnpm install` **前**复用黑白名单（单一权威）剥离根 package.json 中**非白名单 devDeps**，install 不再下载它们；构建必需工具（typescript/tsx/tsdown/lightningcss/execa/smol-toml）手动追加进白名单 `extra`（`gen-prune-whitelist.sh` 自动生成只动 `lockfileDeps`，不覆盖手动部分），install 保留、build 不裂
-- 本地等效：`./build/build-all.sh`（同一套 fetch → build → 打包 流程）
+- **公共预编译单步（2026-09-14 后合并，2026-09-15 定稿）**：最初为定位死点拆过 `BUILD_STAGE`（`install`/`build`/`prune`）三步，但拆步后 step 被 OOM/磁盘杀时结论 `None` 不触发 `if: failure()`，日志 blob 又常丢失 → 排查不出去向。定稿：**CI 单步 `./build/build-common.sh`（默认 `BUILD_STAGE=all`）**，失败时 `failure()` 捕获 + artifact 兜底完整 `pnpm-build.log`
+- **install 前白名单裁剪（2026-09-14，SPK CI 磁盘爆盘修复）**：annotation 实测根因 = `pnpm install/build` 阶段把 runner 磁盘写满（`No space left on device` → worker 被杀 → step 永久 in_progress）。官方 monorepo 依赖树约 1.78 万包，install 阶段下载全部 devDeps（vitest/jsdom/mermaid 等巨大传递依赖）拉满磁盘峰值。修复：`prune-target.sh --before-install` 在 `pnpm install` **前**用纯白名单剥离根 package.json 中**非白名单 devDeps**，install 不再下载它们；构建必需工具（typescript/tsx/tsdown/lightningcss/execa/smol-toml）手动追加进白名单 `extra`（`gen-prune-whitelist.sh` 自动生成只动 `lockfileDeps`，不覆盖手动部分），install 保留、build 不裂
+- 本地等效：按「本地构建」段落逐脚本跑（同一套 fetch → build → 打包 流程）
 
 ### 打包模式：预构建产物包（唯一模式）
 
@@ -210,7 +217,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 `find_dsh_dir()` + `detect_entry()` 按顺序探测实例入口：
 
 ```
-① node_modules/@deepseek-ai/dsh/lib/bin.js   ← npm 链路（build-npm-app.sh 产物）
+① node_modules/@deepseek-ai/dsh/lib/bin.js   ← npm 链路（build-npm-fpk-app.sh 产物）
 ② apps/cli/lib/bin.js                        ← 官方源码编译产物（build-common.sh 产物）
 ③ lib/bin.js                                 ← 兜底
 ```
@@ -436,29 +443,32 @@ API_KEYS:
 
 ```
 DeepSeekHarness-NAS/
-├── build-common.sh              # 公共预编译脚本（黑白名单筛选 + 源码预编译 → target）
-├── build-spk.sh                 # SPK 打包脚本（消费 target → 群晖 .spk）
-├── build-fpk.sh                 # FPK 打包脚本（消费 target → 飞牛 .fpk）
 ├── README.md
-├── build/build-config.yaml      # 打包配置（appname/端口/分类目录）
-├── src/                         # 【源码】
-│   └── deepseek-ai/             #   官方源码快照（打包源）
-├── assets/                      # 【临时素材】pnpm-store/cache 等
-├── build/                       # 【构建物 + 复用素材】
-│   ├── build-all.sh             #   一键构建入口（本地等效 GitHub Actions）
-│   ├── build-common.sh          #   公共预编译（唯一模式 = 预构建产物包）
-│   ├── build-npm-app.sh         #   FPK npm 链路应用体构建（免源码编译）
-│   ├── build-spk.sh             #   SPK 打包
-│   ├── build-fpk.sh             #   FPK 打包（--npm 消费 npm 链路）
-│   ├── build-test-fpk.sh        #   测试版 FPK 构建
-│   ├── build-config.yaml        #   打包与端口权威配置（defaults/spk/fpk 三段）
-│   ├── build-excludes.json      #   tar 排除规则（dist 模式）
-│   ├── conf/                    #   权限/资源声明（privilege/resource）
-│   ├── ui/images/               #   门户图标
-│   ├── PACKAGE_ICON*.PNG        #   套件图标
-│   ├── staging/                 #   打包输出暂存区（.spk/.fpk）
-│   └── spk-build/               #   SPK 构建中间树（git 黑名单）
-├── scripts/                     # 【脚本】
+├── fetch-dsh-latest.sh           # 拉官方最新源码 → src/deepseek-ai/<tag>
+├── build/build-config.yaml       # 打包配置（appname/端口/分类目录）
+├── src/                          # 【源码】
+│   └── deepseek-ai/              #   官方源码快照（打包源）
+├── assets/                       # 【临时素材】pnpm-store/cache 等
+├── build/                        # 【构建物 + 复用素材】
+│   ├── build-common.sh           #   公共预编译（通用，独一：install+build+裁剪 → target）
+│   ├── prune-target.sh           #   纯白名单裁剪（通用，独立可跑）
+│   ├── gen-prune-whitelist.sh    #   白名单自动生成（通用）
+│   ├── simulate-cleanup.py       #   裁剪模拟器（通用，预览不删）
+│   ├── SPK/
+│   │   └── build-spk.sh          #   SPK 打包（消费 target → 群晖 .spk）
+│   ├── FPK/
+│   │   ├── build-fpk.sh          #   FPK 打包（消费 target 或 --npm 消费 app_root）
+│   │   └── build-npm-fpk-app.sh  #   FPK npm 链路应用体构建（免源码编译）
+│   ├── build-test-fpk.sh         #   测试版 FPK 构建
+│   ├── build-config.yaml         #   打包与端口权威配置（defaults/spk/fpk 三段）
+│   ├── build-excludes.json       #   tar 排除规则（dist 模式）
+│   ├── build-prune-whitelist.json#   裁剪白名单（lockfileDeps + extra + workspaceRuntimeDeps）
+│   ├── conf/                     #   权限/资源声明（privilege/resource）
+│   ├── ui/images/                #   门户图标
+│   ├── PACKAGE_ICON*.PNG         #   套件图标
+│   ├── staging/                  #   打包输出暂存区（.spk/.fpk）
+│   └── master-build/             #   构建中间产物根（build-*/ 源码 target + npm-app-*/ npm 链路，git 黑名单）
+├── scripts/                      # 【脚本】
 │   ├── start.sh.example         #   SPK/FPK 运行模板母版（唯一权威，打包脚本注入端口生成最终 start.sh）
 │   ├── dsh                      #   dsh CLI 包装器（readlink 软链解析）
 │   ├── pnpm                     #   pnpm 命令包装器（随包 pnpm 软链目标）
@@ -591,7 +601,7 @@ sudo synopkg stop deepseek-harness-nas
 | 功能 | 说明 |
 |------|------|
 | 内置 pnpm 11 | 随仓库分发构建工具，解决 pnpm 10 OOM 问题；pnpm-bridge.py 自动转换 package.json 的 pnpm 字段到 pnpm-workspace.yaml |
-| 一键构建 | `build-all.sh` 统一入口，支持 build-common / spk / fpk 三种目标 |
+| 一键构建 | `build-common.sh` 公共预编译 + `SPK/build-spk.sh`、`FPK/build-fpk.sh` 分平台打包（来源可 npm / 源码双链路） |
 | 断点续传 | build-common 完成写 `.build-done` 标记，中断/失败无标记→重新构建 |
 | CI 自动构建 | GitHub Actions 定时（每日 04:00 UTC）/ 手动 / tag 推送三种触发，自动构建 SPK+FPK |
 | 自动发布 | 定时/手动/tag 触发都建/更新 Release，rc 自动标 prerelease，spk 缺失仍发布 fpk |
@@ -660,4 +670,4 @@ MIT License - Copyright (c) 2026 DeepSeek AI
 
 ---
 
-*最后更新: 2026-09-13（所有脚本作用一览 + 一键构建 build-all.sh + 三端口说明 + start.sh 功能详解 + 局域网限制 + 历史发布版清理/发版走 GitHub Actions + 仓库 squash 重建）*
+*最后更新: 2026-09-15（build 目录归位：SPK/FPK 子目录 + 通用留根；spk-build → master-build；build-npm-app.sh → build-npm-fpk-app.sh；黑名单删除改纯白名单；README 截图补全；功能列表替换版本记录）*

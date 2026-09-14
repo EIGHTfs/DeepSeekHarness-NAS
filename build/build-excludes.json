@@ -1,5 +1,5 @@
 {
-  "_comment": "SPK/FPK 打包 tar 排除规则（--exclude 模式，仅用于 tar 打包阶段）。实际裁剪（rm -rf .pnpm 平台变体 / devDeps / 源码目录）由 build-prune-blacklist.json + build-prune-whitelist.json 黑白名单驱动，见 build.sh。",
+  "_comment": "SPK/FPK 打包 tar 排除规则（--exclude 模式，仅用于 tar 打包阶段）。实际裁剪（rm -rf .pnpm 非白名单 / devDeps / 源码目录）由 build-prune-whitelist.json 纯白名单驱动（prune-target.sh），见 build.sh。",
   "_note": "NAS 目标 = linux-x64-glibc。native/ 不在排除列表：node-addon-system-linux-x64 软链真身，必须保留（2026-09-12 实装定案）。",
 
   "slim": {

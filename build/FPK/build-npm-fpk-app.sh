@@ -4,7 +4,7 @@
 #===============================================================================
 # 【与本仓库其他脚本的关系】
 #   build-common.sh  源码 monorepo 编译 → target（SPK/FPK 源码链路共用；SPK 已成功，勿动）
-#   build-npm-app.sh 【本脚本】npm 装官方包 → app_root（FPK npm 链路；独立新增，不影响 SPK）
+#   build-npm-fpk-app.sh 【本脚本】npm 装官方包 → app_root（FPK npm 链路；独立新增，不影响 SPK）
 #   build-fpk.sh     消费 target 或 app_root → 飞牛 .fpk（加 --npm 走本脚本产物）
 #
 # 依据:10000ge10000/deepseek-harness-fpk 的 npm 装包方案实测（2026-09-13，
@@ -13,16 +13,19 @@
 #   的 app_root 组装思路，start.sh 一律用我们自己的母版（入口收敛 + token 免密）。
 #
 # 用法:
-#   ./build-npm-app.sh [VERSION] [NODE_VERSION]
+#   ./build-npm-fpk-app.sh [VERSION] [NODE_VERSION]
 #     VERSION      官方 dsh 版本（缺省自动解析 npm dist-tags.next）
 #     NODE_VERSION node 版本（缺省 24.4.0）
-#   产物: build/spk-build/npm-app-VERSION/  app_root/  +  npm-meta.env
+#   产物: build/master-build/npm-app-VERSION/  app_root/  +  npm-meta.env
 #===============================================================================
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WS="$(cd "$SCRIPT_DIR/.." && pwd)"
-CONFIG_FILE="$SCRIPT_DIR/build-config.yaml"
+# ── 本脚本引用的脚本/目录路径（常量；改路径只改这里，引用点一律用常量） ──
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # build/FPK/
+WS="$(cd "$SCRIPT_DIR/../.." && pwd)"                        # 工作区根（脚本在 build/FPK/ 下）
+BUILD_ROOT="$WS/build"
+CONFIG_FILE="$SCRIPT_DIR/../build-config.yaml"               # 配置在 build/ 根
+NPM_BUILD_ROOT="$BUILD_ROOT/master-build"                    # npm 链路产物根（原 spk-build → master-build）
 
 # ── 工作区分类目录（与 build-common.sh 一致） ──
 D_BUILD="${D_BUILD:-$WS/build}"
@@ -59,16 +62,16 @@ if [ -z "$VERSION" ] || [ "$VERSION" = "next" ]; then
 fi
 if [ -z "$VERSION" ]; then
   echo "✗ 无法解析 @deepseek-ai/dsh 版本（网络不可达？）" >&2
-  echo "  可显式传参: ./build-npm-app.sh 0.1.5-rc.2" >&2
+  echo "  可显式传参: ./build/FPK/build-npm-fpk-app.sh 0.1.5-rc.2" >&2
   exit 1
 fi
 echo "══════ npm 装包构建 dsh@${VERSION} (Node ${NODE_VERSION}) ══════"
 
 # ── 工作目录（版本隔离，永久缓存：node 运行时 / 装好的 node_modules 都不删，git 已忽略） ──
-# 注意：$D_BUILD/spk-build 被 .gitignore 忽略，CI 全新 checkout 时不存在，
+# 注意：$NPM_BUILD_ROOT 被 .gitignore 忽略，CI 全新 checkout 时不存在，
 # 必须显式 mkdir（cd 到不存在目录会直接退出，实测 CI build-fpk 即因此失败）。
-mkdir -p "$D_BUILD/spk-build"
-NPM_BUILD="$(cd "$D_BUILD/spk-build" && pwd)/npm-app-${VERSION}"
+mkdir -p "$NPM_BUILD_ROOT"
+NPM_BUILD="$(cd "$NPM_BUILD_ROOT" && pwd)/npm-app-${VERSION}"
 APP_ROOT="$NPM_BUILD/app_root"
 NODE_DIR="$NPM_BUILD/node-v${NODE_VERSION}"
 DSH_WEB="$NODE_DIR/dsh-web"
@@ -114,7 +117,7 @@ if [ "$_NEED_INSTALL" = "1" ]; then
   )
 fi
 # ⚠ 嵌套 bug 修复（2026-09-13 实测根因）：cp -a src dst 在 dst 已存在时，
-#   会把 src 复制成 dst/src 而非覆盖 → 重跑 build-npm-app.sh 产生
+#   会把 src 复制成 dst/src 而非覆盖 → 重跑 build-npm-fpk-app.sh 产生
 #   app_root/node_modules/node_modules 双份物理副本 → @deepseek-ai/dsh-tools 被加载两份
 #   → TOOL_RUNTIME_SCHEDULER Symbol 对不上 → 飞牛 dsh 报
 #   "Cannot read properties of undefined (reading 'prepare')"。
@@ -162,7 +165,7 @@ fi
 
 # ── 6. 元数据（build-fpk.sh --npm source 本文件） ──
 cat > "$NPM_BUILD/npm-meta.env" <<EOF
-# 由 build-npm-app.sh 生成（$(date '+%Y-%m-%d %H:%M:%S')）
+# 由 build-npm-fpk-app.sh 生成（$(date '+%Y-%m-%d %H:%M:%S')）
 APP_NAME='${APP_NAME}'
 APP_ID='${APP_ID}'
 APP_NAME_LOWER='${APP_NAME_LOWER}'

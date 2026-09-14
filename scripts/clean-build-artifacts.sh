@@ -16,7 +16,7 @@
 #
 # 安全说明:
 #   - 默认只对「回收站」内条目（build/.trash、build/.trash-modtest）做清理，
-#     绝不触碰 build/staging（交付物）与 build/spk-build 下的成品/有效构建。
+#     绝不触碰 build/staging（交付物）与 build/master-build 下的成品/有效构建。
 #   - 未加 --force 时用「安全删除即移入项目级 .trash」语义；磁盘告急且对象已在
 #     回收站时可用 --force 直接 rm -rf（用户已确认）。
 #   - 一律先 --dry-run 预览，确认无误再真删。

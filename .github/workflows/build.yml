@@ -61,11 +61,8 @@ jobs:
           echo "-----"
           nproc
 
-      # ⚠ 三段拆分（2026-09-14）：该 job 的日志 GitHub 时常不归档（BlobNotFound），
-      #   且 runner 曾在「公共预编译」单步中途被杀（step 呈 in_progress、后续 pending），
-      #   日志完全拿不到。拆成 install/build/prune 三个独立 step，靠 **step 结论**
-      #   （API 可查，不依赖日志）精确定位死在哪个阶段；build-common.sh 内部
-      #   还会在阶段边界打 ::warning:: annotation（存 check run，日志丢也能拿到）。
+      # ⚠ 该 job 的日志 GitHub 时常不归档（BlobNotFound）。单步构建（BUILD_STAGE=all）
+      #   保证失败时 failure() 能捕获；日志靠 artifact 兜底。
       - name: 公共预编译 pnpm install + build + 裁剪
         run: ./build/build-common.sh
 
@@ -76,12 +73,12 @@ jobs:
         with:
           name: build-spk-debug-log
           path: |
-            build/spk-build/build-*/pnpm-build.log
+            build/master-build/build-*/pnpm-build.log
           retention-days: 7
           if-no-files-found: ignore
 
       - name: 打 SPK
-        run: ./build/build-spk.sh
+        run: ./build/SPK/build-spk.sh
 
       - name: 上传 SPK 产物
         uses: actions/upload-artifact@v4
@@ -108,7 +105,7 @@ jobs:
       - name: 指定打包用 node 路径
         run: echo "NODE_SRC=$(command -v node)" >> "$GITHUB_ENV"
 
-      # npm 链路不需要源码编译，但 fetch 仍要跑：build-npm-app.sh 从 npm dist-tags
+      # npm 链路不需要源码编译，但 fetch 仍要跑：build-npm-fpk-app.sh 从 npm dist-tags
       # 解析官方版本号，与本步骤拉到的 tag 对应，保证两个产物版本一致。
       - name: 拉取官方最新源码（取版本号，供 npm 链路对齐）
         run: ./fetch-dsh-latest.sh
@@ -116,10 +113,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 构建 npm 应用体（npm 装官方包 → app_root）
-        run: ./build/build-npm-app.sh
+        run: ./build/FPK/build-npm-fpk-app.sh
 
       - name: 打 FPK（--npm 消费 app_root）
-        run: ./build/build-fpk.sh --npm
+        run: ./build/FPK/build-fpk.sh --npm
 
       - name: 上传 FPK 产物
         uses: actions/upload-artifact@v4

@@ -27,9 +27,15 @@
 #===============================================================================
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WS="$(cd "$SCRIPT_DIR/.." && pwd)"
-CONFIG_FILE="$SCRIPT_DIR/build-config.yaml"
+# ── 本脚本引用的脚本/目录路径（常量；改路径只改这里，引用点一律用常量） ──
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # build/SPK/
+WS="$(cd "$SCRIPT_DIR/../.." && pwd)"                        # 工作区根（脚本在 build/SPK/ 下）
+BUILD_ROOT="$WS/build"
+CONFIG_FILE="$SCRIPT_DIR/../build-config.yaml"
+BUILD_META_DIR="$BUILD_ROOT/master-build"                    # build-common.sh 产物根（原 spk-build → master-build）
+PRUNE_SCRIPT="$BUILD_ROOT/prune-target.sh"                   # 通用裁剪（留 build/ 根）
+BUILD_COMMON_SCRIPT="$BUILD_ROOT/build-common.sh"            # 公共预编译（通用留根）
+EXCLUDES_FILE="$BUILD_ROOT/build-excludes.json"              # tar 排除规则（通用，build/ 根）
 
 # ── 工作区分类目录（环境变量可覆盖，与 build-common.sh 一致） ──
 D_ASSETS="${D_ASSETS:-$WS/build}"
@@ -73,7 +79,7 @@ CFG_BRAND_VERSION_ORDER="${CFG_BRAND_VERSION_ORDER:-dsh,npm}"
 # ----------------------------------------------------------------------------
 # target 与元数据（build-common.sh 产物）
 # ----------------------------------------------------------------------------
-_META="$(ls -1t "$D_BUILD"/spk-build/build-*/build-meta.env 2>/dev/null | head -1)"
+_META="$(ls -1t "$BUILD_META_DIR"/build-*/build-meta.env 2>/dev/null | head -1)"
 if [ -z "$_META" ] || [ ! -f "$_META" ]; then
   echo "✗ 未找到 build-meta.env（请先运行 ./build-common.sh 生成 target）" >&2
   exit 1
@@ -86,7 +92,6 @@ fi
 echo "使用 target : $TARGET（dsh $PKG_VER | SPK $SPK_VERSION | APP_NAME $APP_NAME）"
 
 # 排除规则（build-excludes.json dist 模式）
-EXCLUDES_FILE="$SCRIPT_DIR/build-excludes.json"
 mapfile -t TAR_EXCLUDES < <(python3 -c "
 import json
 with open('$EXCLUDES_FILE') as f:

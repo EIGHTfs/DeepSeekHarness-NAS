@@ -279,11 +279,11 @@ _BUILD_STAGES = [
     ('FPK 构建完成', 100),
 ]
 
-# 三个构建脚本
+# 三个构建脚本（2026-09-15 目录归位后路径：SPK/FPK 子目录 + 通用留根）
 _BUILD_SCRIPTS = {
     'common': 'build/build-common.sh',
-    'spk':    'build/build-spk.sh',
-    'fpk':    'build/build-fpk.sh',
+    'spk':    'build/SPK/build-spk.sh',
+    'fpk':    'build/FPK/build-fpk.sh',
 }
 
 
