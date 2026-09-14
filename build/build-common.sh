@@ -90,6 +90,12 @@ if [ -z "$SRC" ] || [ ! -f "$SRC/package.json" ]; then
 fi
 SRC="$(cd "$SRC" && pwd)"
 SKIP_BUILD="${2:-0}"
+# 分阶段构建门控：all | install | build | prune（CI 把长步骤拆成 3 个独立 step，
+# 靠 step 结论定位死点；分阶段时复用已有 WORK，不清不删）
+BUILD_STAGE="${BUILD_STAGE:-all}"
+_STAGE_OK() { [ "$BUILD_STAGE" = "all" ] || [ "$BUILD_STAGE" = "$1" ]; }
+# GitHub annotation：存在 check run 里，日志 blob 丢（BlobNotFound）也能从 API 拿
+_ANN() { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::warning::$1" || echo "[stage] $1"; }
 
 # 应用名（build-config.yaml defaults.appname 唯一真源；环境变量 APP_NAME 可覆盖）
 APP_NAME="${APP_NAME:-${_CFG_APPNAME:-DeepSeekHarness-NAS}}"
@@ -204,6 +210,10 @@ print('\n'.join(sorted(exempt)))
   echo "▶ 复用已有 target 树（skip-build=1，跳过编译；已按排除规则校验完整性）"
   rm -rf "$ASSEMBLE"
   mkdir -p "$ASSEMBLE"
+elif [ "$BUILD_STAGE" != "all" ] && [ -f "$BUILD_SRC/package.json" ]; then
+  # 分阶段模式：WORK 已由前一阶段准备好，直接复用（不清不删）
+  echo "▶ 分阶段模式 (stage=$BUILD_STAGE)：复用已有 WORK $WORK"
+  mkdir -p "$WORK" "$TARGET" "$ASSEMBLE"
 else
   rm -rf "$WORK"
   mkdir -p "$WORK" "$TARGET" "$ASSEMBLE"
@@ -213,8 +223,14 @@ fi
 # 二、源码副本 + 品牌修改 + 构建（skip-build=1 时跳过）
 #===============================================================================
 if [ "$SKIP_BUILD" != "1" ]; then
-echo "▶ 复制源码到构建副本 $BUILD_SRC"
-cp -a "$SRC" "$BUILD_SRC"
+if _STAGE_OK install || _STAGE_OK build; then
+# 分阶段 build（stage=build）：BUILD_SRC 已由 install 阶段就绪，跳过复制（否则会覆盖 node_modules）
+if [ "$BUILD_STAGE" = "build" ] && [ -f "$BUILD_SRC/package.json" ]; then
+  echo "▶ (stage=build) 复用已有构建副本 $BUILD_SRC（跳过复制，保留 node_modules）"
+else
+  echo "▶ 复制源码到构建副本 $BUILD_SRC"
+  cp -a "$SRC" "$BUILD_SRC"
+fi
 
 # 品牌: locale 源码（后续 build 会编译进产物）
 for loc in en zh; do
@@ -264,14 +280,19 @@ SHIMEOF
   chmod 755 "$_PNPM_SHIM"
   echo "✓ 已生成 pnpm 包装垫片: $_PNPM_SHIM（版本锁定 + json→yaml 桥接）"
 fi
+fi   # 结束准备门控（复制源码+品牌+假git+垫片；stage=prune 时跳过）
 
-if [ ! -d "$BUILD_SRC/node_modules" ]; then
+_ANN "stage=$BUILD_STAGE install 开始"
+if _STAGE_OK install && [ ! -d "$BUILD_SRC/node_modules" ]; then
   echo "▶ pnpm install (~2-5min) [store=$PNPM_STORE]（项目 pnpm: $PNPM_BIN）"
   ( cd "$BUILD_SRC" && \
     PATH="$PNPM_BIN_DIR:$PATH" HOME="$_HOME_DIR" PNPM_STORE_DIR="$PNPM_STORE" npm_config_cache="$NPM_CACHE" \
     "$_PNPM_SHIM" install --store-dir="$PNPM_STORE" --force 2>&1 | tail -20 )
 fi
+_ANN "stage=$BUILD_STAGE install 结束 (node_modules=$( [ -d "$BUILD_SRC/node_modules" ] && echo 有 || echo 无))"
 
+if _STAGE_OK build; then
+_ANN "stage=$BUILD_STAGE build 开始"
 echo "▶ pnpm build (native→lib→web, ~10-20min)"
 echo "   注入: DSH_CLIENT_VERSION=$PKG_VER  COMMIT=$COMMIT_HASH  TITLE=DeepSeekHarness-NAS"
 _BUILD_LOG="$WORK/pnpm-build.log"    # 完整构建日志（失败时打尾部 80 行，便于 CI 排查）
@@ -350,6 +371,8 @@ mkdir -p "$TARGET/ui/images"
 cp "$D_ASSETS/ui/images/"*.png "$TARGET/ui/images/" 2>/dev/null || true
 
 echo "▶ target 待裁剪: $TARGET ($(du -sh "$TARGET" 2>/dev/null | cut -f1))"
+_ANN "stage=$BUILD_STAGE build 结束 (target=$(du -sh "$TARGET" 2>/dev/null | cut -f1))"
+fi   # 结束 build 门控（stage=install/prune 时跳过 build+组装）
 
 #===============================================================================
 # 三、预构建包裁剪（黑白名单配置驱动；规则权威 = build-prune-blacklist/whitelist.json）
@@ -357,7 +380,11 @@ echo "▶ target 待裁剪: $TARGET ($(du -sh "$TARGET" 2>/dev/null | cut -f1))"
 #   执行顺序：黑名单收集候选 → 白名单过滤（命中 = 保留，白大于黑）→ rm -rf
 #   ⚠ native/ 不在黑名单 sourceDirs：node-addon-system-linux-x64 软链真身，删了启动必挂
 #===============================================================================
+if _STAGE_OK prune; then
+_ANN "stage=$BUILD_STAGE prune 开始"
 "$SCRIPT_DIR/prune-target.sh" "$TARGET" "$BLACKLIST_FILE" "$WHITELIST_FILE"
+_ANN "stage=$BUILD_STAGE prune 结束"
+fi
 
 fi   # 结束「二、源码副本 + 构建 + 三、裁剪」（skip-build=1 复用 target 时整体跳过）
 

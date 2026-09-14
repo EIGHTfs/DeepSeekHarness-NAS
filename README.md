@@ -123,6 +123,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 - **自动发布（与官方同 tag）**：三个触发方式都会自动建/更新 Release——tag 名取官方最新 dsh tag（`fetch-dsh-latest.sh --print-tag` 解析，如 `dsh-v0.1.5-rc.2`），同名 Release 已存在则**覆盖资产**（滚动刷新），不存在则自动创建；含 `-`（rc/alpha）的 tag 自动标 prerelease
 - **部分失败容忍**：`release` job 用 `always()`，源码链路 SPK 失败时仍发布 FPK，并在 Release 说明中标注 `SPK: ❌ 缺失`（实测 run #6：`dsh-v0.1.5-rc.2 自动构建` 已发布，含 FPK 93MB）
 - 产物同时上传 artifact（`spk-dist` / `fpk-dist`，保留 14 天）；构建失败时额外上传 `build-spk-debug-log`（完整 `pnpm-build.log`，因 GitHub 偶尔不归档该 job 日志）
+- **公共预编译三段拆分（2026-09-14）**：build-spk 的预编译按 `BUILD_STAGE`（`install` / `build` / `prune`）拆成 3 个独立 CI 步骤——该 job 日志 GitHub 时常不归档（BlobNotFound）且 runner 曾在单步中途被杀（step 呈 in_progress、后续全 pending），拆步后靠 **step 结论**（API 可查，不依赖日志）精确定位死点；build-common.sh 在阶段边界打 `::warning::` annotation（存 check run，日志丢失也能从 API 拿到）；`BUILD_STAGE=all`（默认）保持单步全量行为不变
 - 本地等效：`./build/build-all.sh`（同一套 fetch → build → 打包 流程）
 
 ### 打包模式：预构建产物包（唯一模式）

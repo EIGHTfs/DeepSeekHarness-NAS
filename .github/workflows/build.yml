@@ -42,8 +42,24 @@ jobs:
           echo "-----"
           nproc
 
-      - name: 公共预编译（pnpm install + build + 裁剪）
-        id: common
+      # ⚠ 三段拆分（2026-09-14）：该 job 的日志 GitHub 时常不归档（BlobNotFound），
+      #   且 runner 曾在「公共预编译」单步中途被杀（step 呈 in_progress、后续 pending），
+      #   日志完全拿不到。拆成 install/build/prune 三个独立 step，靠 **step 结论**
+      #   （API 可查，不依赖日志）精确定位死在哪个阶段；build-common.sh 内部
+      #   还会在阶段边界打 ::warning:: annotation（存 check run，日志丢也能拿到）。
+      - name: 公共预编译① pnpm install（依赖安装）
+        env:
+          BUILD_STAGE: install
+        run: ./build/build-common.sh
+
+      - name: 公共预编译② pnpm build + 组装 target
+        env:
+          BUILD_STAGE: build
+        run: ./build/build-common.sh
+
+      - name: 公共预编译③ 裁剪（黑白名单）
+        env:
+          BUILD_STAGE: prune
         run: ./build/build-common.sh
 
       # ⚠ GitHub 有时不归档该 job 的日志（BlobNotFound），失败时把完整构建日志
