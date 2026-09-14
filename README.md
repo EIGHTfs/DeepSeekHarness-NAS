@@ -581,18 +581,56 @@ sudo synopkg stop deepseek-harness-nas
 
 ---
 
-## 🔄 版本记录
+## 🔄 功能列表
 
-| 版本 | 内嵌 dsh | 说明 |
-|------|----------|------|
-| 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **纯白名单裁剪 + 网页自动构建 + 断点续传**：① **裁剪改纯白名单模式**——`prune-target.sh` 模式 B 从"黑名单匹配→白名单保护"改为"只保留 lockfileDeps 运行时依赖，其余全删"，target 从 1.8G→385MB（SPK <200MB）；额外排除 codex/claude（disabled preset）；② **网页自动构建面板**——`install-server.py` 新增 `/api/build` 接口，网页底部三按钮（build-common/spk/fpk）+ 进度条 + 实时日志；③ **断点续传**——build-common 完成写 `.build-done` 标记，下次跳过已存在的 target（中断/失败无标记→重新构建）；④ **README 截图更新** |
-| 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **README 配图 + CI 补丁声明裁剪修复**：① **应用商店截图入 README**——「安装与访问」小节补两张实测截图（群晖 DSM 门户打开套件带 token 进入、飞牛 fnOS 应用中心登录页）；② **install 前裁剪同步清理补丁声明**——`prune-target.sh` 模式 A 剥离非白名单 devDeps 后，同步移除 `pnpm-workspace.yaml` 中对应 `patchedDependencies` 条目（实测 `@yao-pkg/pkg@6.21.0` 被剥后补丁悬空 → CI `ERR_PNPM_UNUSED_PATCH`，node-pty 属 workspace 运行时依赖保留不受影响） |
-| 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **SPK CI 磁盘爆盘修复 + release 同步/构建清理脚本**：① **install 前黑白名单裁剪**——`prune-target.sh` 新增 `--before-install` 模式，`pnpm install` 前复用黑白名单剥离根 package.json 非白名单 devDeps（vitest/jsdom/mermaid 等巨大传递依赖），install 不再下载，解决 build-spk 在 install/build 阶段写满 runner 磁盘（`No space left on device` → worker 被杀 → step 永久 in_progress）；构建必需工具（typescript/tsx/tsdown/vite-tsconfig-paths/lightningcss/execa/smol-toml）手动追加进白名单 `extra`，`gen-prune-whitelist.sh` 自动生成只动 `lockfileDeps` 不覆盖手动部分；② **scripts/sync-github-release.sh**——轮询 GitHub Releases 下载 spk/fpk 到 `release/<tag>/`，增量跳过已完整文件、按 tag 分类、日志落盘、支持守护模式（`--start/--stop/--restart/--status` 与 `--loop N`）；③ **scripts/clean-build-artifacts.sh**——清理失败/中间构建回收站（`build/.trash*`），存活窗口可配、`--caches` 清 pnpm-store、`--dry-run` 预览、`--force` 直删（磁盘告急时） |
-| 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **网页安装工具增强**：① **安装包扫描含 `release/`**——`list_packages` 递归扫描 `release/<tag>/` 子目录（sync-github-release.sh 自动同步落位），不再只扫 `build/staging` 顶层，探测后自动匹配含 release 下载包，并显示来源相对路径区分；② **配置记忆回填密码**——页面加载自动回填已保存的密码（原脱敏设计不回填导致探测按钮强制要求手动填密码），打开网页即可直接探测/安装 |
-| 0.1.5 (2026-09-14) | 0.1.5-rc.2 | **网页安装工具整理 + 安装历史**：① 网页安装/卸载/检查/修复整套（install-server.py / install.html / install-server-ctl.sh / install-remote-spk.sh / install-remote-fpk.sh / clean-dsm-residue.sh）从 `scripts/` 迁出到独立 `web-install/` 目录（脚本内路径全相对定位，迁移即生效）；② **安装历史**：每次 install/uninstall/check/repair 后自动落盘 `install-tasks.jsonl`（时间/命令/包名/版本/MD5/系统/退出码/结果/备注），网页新增「🕘 安装历史」面板展示（`/api/tasks` 读取，最新在前）；③ **备注功能**：执行前可填备注（≤200 字），随历史记录；④ 账号设备信息不入库：`install-config.json` / `install-tasks.jsonl` / `server-install.log` 均在 .gitignore，历史记录不含任何密码凭据；移除误入库的 `scripts/__pycache__/*.pyc` |
-| 0.1.5 (2026-09-13) | 0.1.5-rc.2 | **CI 自动构建 + 自动发布打通**：① **自动发布**——定时/手动/tag 三种触发都建/更新 Release，tag 与官方同名（`dsh-v0.1.5-rc.2`），已存在则覆盖资产、rc 自动标 prerelease、spk 缺失仍发布 fpk 并标注（实测 run #6 发布成功，含 FPK 93MB）；`fetch-dsh-latest.sh --print-tag` 新增（只解析 tag 不下载）。② **首跑四处 CI 全新态 bug 修复**：pnpm 垫片缺失（`sh: 1: pnpm: not found`，本机靠系统 pnpm 兜住）、6 个脚本 git 索引丢执行位（`Permission denied` exit 126）、`build-npm-app.sh` 两处 `cd` 到 gitignore 目录（`spk-build`/`dsh-web`）、组装阶段 staging 目录不存在致 `tar` exit 2（stderr 被吞）。③ **可诊断性**：pnpm build 完整日志落盘（失败打尾 80 行，原 `tail -20` 会截掉真实报错）、失败上传 `build-spk-debug-log` artifact（GitHub 偶尔不归档该 job 日志）。④ 源码链路裁剪白名单改为从 npm 锁文件自动生成（`gen-prune-whitelist.sh`，489 个），裁剪逻辑独立成 `prune-target.sh` |
-| 0.1.5 (2026-09-13) | 0.1.5-rc.2 | **CI 自动构建打通（GitHub Actions 首跑三 bug 修复）**：① `tools/pnpm/bin/` 缺名为 `pnpm` 的可执行入口 → 上游 `scripts/build.ts` 子进程 `sh -c pnpm` 报 `not found`（本机靠系统 pnpm 兜住）→ build-common.sh 自动生成 pnpm 垫片；② 6 个构建脚本 git 索引 100644 无执行位 → CI `Permission denied`（exit 126）→ `git add --chmod=+x` 修正；③ `build-npm-app.sh` 两处 `cd` 到 gitignore 掉的目录（`build/spk-build`、`dsh-web`）在干净 checkout 下不存在 → 补 `mkdir -p`。定时打包新增（每日 04:00 UTC 自动构建 SPK+FPK 上传 artifact） |
-| 0.1.5 (2026-09-13) | 0.1.5-rc.2 | **入口收敛（门户 token 免密权威实现，实测通过）**：start.sh 反代区分「套件门户打开」与「局域网直连」——套件图标打开（DSM 桌面 https:5001→http:30800 / fnOS 应用 iframe）302 无条件带 token 免密；地址栏直连（`Sec-Fetch-Site: none` / 无 Referer）403 提示「请从套件图标打开」；外站链接跳入（异主机 Referer）403；已持 dsh-auth cookie 直连放行（带过 token 即免密）。SameSite=Strict→Lax 改写保跨 scheme cookie。**产物命名改 `<APP_NAME>_<平台>-<版本>.<spk|fpk>`（去 -dist）**；**GitHub Actions 自动构建**（复用 fetch-dsh-latest.sh 拉官方源，SPK 构建，FPK 分支注释）；**脚本执行位修正**（git 索引 100755）。实测：193 VirtualDSM 卸载重装 0.1.5，7 场景全过（直连 403 / 门户 302 带 token / 认证后直连免密 200） |
+### 构建系统
+| 功能 | 说明 |
+|------|------|
+| 内置 pnpm 11 | 随仓库分发构建工具，解决 pnpm 10 OOM 问题；pnpm-bridge.py 自动转换 package.json 的 pnpm 字段到 pnpm-workspace.yaml |
+| 一键构建 | `build-all.sh` 统一入口，支持 build-common / spk / fpk 三种目标 |
+| 断点续传 | build-common 完成写 `.build-done` 标记，中断/失败无标记→重新构建 |
+| CI 自动构建 | GitHub Actions 定时（每日 04:00 UTC）/ 手动 / tag 推送三种触发，自动构建 SPK+FPK |
+| 自动发布 | 定时/手动/tag 触发都建/更新 Release，rc 自动标 prerelease，spk 缺失仍发布 fpk |
+| pnpm 垫片自动生成 | `build-common.sh` 自动生成 `tools/pnpm/bin/pnpm` 包装垫片，解决 CI 环境 pnpm not found |
+
+### 裁剪优化
+| 功能 | 说明 |
+|------|------|
+| 纯白名单裁剪 | `prune-target.sh` 模式 B：只保留 lockfileDeps 运行时依赖，其余全删，target 从 1.8G→385MB |
+| install 前裁剪 | `prune-target.sh --before-install`：pnpm install 前剥离非白名单 devDeps，解决 CI 磁盘爆盘 |
+| 裁剪白名单自动生成 | `gen-prune-whitelist.sh` 从 npm 锁文件自动生成（489 个），手动追加部分不覆盖 |
+| 补丁声明同步清理 | 裁剪 devDeps 后同步移除 pnpm-workspace.yaml 中悬空的 patchedDependencies 条目 |
+
+### 安装工具
+| 功能 | 说明 |
+|------|------|
+| 网页安装/卸载/检查/修复 | 完整套件管理（install-server.py / install.html / install-server-ctl.sh 等），迁至独立 `web-install/` 目录 |
+| 安装包扫描 | 递归扫描 `build/staging` 和 `release/<tag>/` 子目录，自动匹配 spk/fpk 包 |
+| 安装历史 | 每次操作自动落盘 `install-tasks.jsonl`，网页「🕘 安装历史」面板展示 |
+| 配置记忆 | 页面加载自动回填已保存密码，打开即可探测/安装 |
+| Release 同步 | `sync-github-release.sh` 轮询 GitHub Releases 下载 spk/fpk，增量跳过、支持守护模式 |
+| 构建清理 | `clean-build-artifacts.sh` 清理失败/中间构建，支持 --caches / --dry-run / --force |
+
+### 网页工具
+| 功能 | 说明 |
+|------|------|
+| 自动构建面板 | `/api/build` 接口，网页底部三按钮（build-common/spk/fpk）+ 进度条 + 实时日志 |
+| 安装管理面板 | 安装/卸载/检查/修复操作界面，含备注功能（≤200 字） |
+| 安装历史面板 | `/api/tasks` 读取历史记录，最新在前 |
+
+### 入口与认证
+| 功能 | 说明 |
+|------|------|
+| 门户 token 免密 | 套件图标打开 302 带 token 免密；地址栏直连 403 提示「请从套件图标打开」 |
+| Cookie 认证 | 已持 dsh-auth cookie 直连放行，SameSite=Strict→Lax 保跨 scheme cookie |
+| 产物命名 | `<APP_NAME>_<平台>-<版本>.<spk|fpk>` 格式（去 -dist） |
+
+### 可诊断性
+| 功能 | 说明 |
+|------|------|
+| 完整日志落盘 | pnpm build 失败打尾 80 行（原 tail-20 会截掉真实报错） |
+| Debug artifact | 失败上传 `build-spk-debug-log` artifact（GitHub 偶尔不归档 job 日志） |
+| 脚本执行位修正 | git 索引 100755，解决 CI Permission denied |
 
 > 历史发布版已清理，今后发版统一走 GitHub Actions 自动构建（tag 推送即出 spk+fpk 双产物）。仓库历史已 squash 重建。
 
