@@ -169,7 +169,10 @@ mkdir -p "$FPK_APP"
 
 # 6.1 应用体 = target 整树 + 飞牛门户 config + fpk 端口 start.sh
 echo "▶ 复制 target → fpk 应用体"
-cp -a "$TARGET/." "$FPK_APP/"
+# ⚠ 不能用 cp -a：target/node_modules/.pnpm 是 pnpm 深硬链目录，ZFS/CIFS 下 cp -a
+#   递归复制深目录会报「目录非空/没有那个文件或目录」（实测踩坑）。
+#   用 tar 管道 + --hard-dereference 把硬链接展开成真实文件，规避深目录复制失败。
+( cd "$TARGET" && tar -cf - --hard-dereference . ) | ( cd "$FPK_APP" && tar -xf - )
 
 echo "▶ 生成 fpk start.sh（端口 $FPK_PROXY_PORT/$FPK_DSH_PORT/$FPK_CONTAINER_PORT）"
 gen_start_sh "$FPK_APP/bin/start.sh" "$FPK_PROXY_PORT" "$FPK_DSH_PORT" "$FPK_CONTAINER_PORT"
