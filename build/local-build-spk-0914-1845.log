@@ -1,0 +1,71 @@
+════════════════════════════════════════════════
+  DeepSeek Harness NAS — 一键构建
+  产物    : spk
+  fpk 链路: npm
+  源码 tag: 自动取最新
+  跳过拉源: 是
+  dry-run : 否
+════════════════════════════════════════════════
+① 拉取官方源码 —— 跳过（--skip-fetch）
+② 公共预编译（pnpm install + build + 裁剪 → target）
+  ▶ /vol2/1000/DeepSeek Harness/dsh-v0.1.2-alpha.4/.dsh-home/工作区/DeepSeekHarness-NAS/build/build-common.sh
+▶ 检查 pnpm 11 配置桥接...
+✓ pnpm 配置桥接完成
+排除规则 : /vol2/1000/DeepSeek Harness/dsh-v0.1.2-alpha.4/.dsh-home/工作区/DeepSeekHarness-NAS/build/build-excludes.json → dist 模式（17 条规则）
+官方版本 : 0.1.5-rc.2  |  SPK 版本: 0.1.5（前三位）  |  FPK 版本: 0.1.5-rc.2（完整）
+commit     : 6118bac
+▶ 复制源码到构建副本 /vol2/1000/DeepSeek Harness/dsh-v0.1.2-alpha.4/.dsh-home/工作区/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/source
+✓ locale 品牌已改为 DeepSeekHarness-NAS (en/zh src)
+▶ install 前裁剪 devDeps（复用黑白名单）:/vol2/1000/DeepSeek Harness/dsh-v0.1.2-alpha.4/.dsh-home/工作区/DeepSeekHarness-NAS/build/prune-target.sh --before-install /vol2/1000/DeepSeek Harness/dsh-v0.1.2-alpha.4/.dsh-home/工作区/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/source
+▶ install 前裁剪 devDeps（复用黑白名单）: /vol2/1000/DeepSeek Harness/dsh-v0.1.2-alpha.4/.dsh-home/工作区/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/source
+  ✓ 剥离 22 个非白名单 devDeps: @deepseek-ai/dsh-tool-session-query, @stylistic/eslint-plugin, @types/js-yaml, @types/jsdom, @types/mdast, @types/spdx-expression-parse, @vitest/coverage-v8, @yao-pkg/pkg...
+  ✓ 清理 1 个已剥离 devDeps 的补丁声明: '@yao-pkg/pkg@6.21.0'
+[stage] stage=all install 开始
+▶ pnpm install (~2-5min) [store=/vol2/1000/DeepSeek Harness/dsh-v0.1.2-alpha.4/.dsh-home/工作区/DeepSeekHarness-NAS/assets/pnpm-store]（项目 pnpm: /vol2/1000/DeepSeek Harness/dsh-v0.1.2-alpha.4/.dsh-home/工作区/DeepSeekHarness-NAS/tools/pnpm/bin/pnpm.mjs）
+
+devDependencies:
++ @deepseek-ai/dsh-agent 0.1.5-rc.2 <- packages/core/agent
++ @deepseek-ai/dsh-package-manifest 0.1.5-rc.2 <- packages/util/package-manifest
++ @deepseek-ai/dsh-web-fetch-http 0.1.5-rc.2 <- packages/web/web-fetch-http
++ @testing-library/dom 10.4.1
++ @testing-library/react 16.3.2 (16.3.3 is available)
++ @types/node 22.20.0 (26.5.1 is available)
++ execa 10.0.0 (10.0.1 is available)
++ js-yaml 4.2.0 (5.4.2 is available)
++ lefthook 2.1.9
++ lightningcss 1.32.0 (1.33.0 is available)
++ smol-toml 1.7.1 (1.8.0 is available)
++ tsdown 0.22.2 (0.23.0 is available)
++ tsx 4.22.4 (4.23.13 is available)
++ typescript 6.0.3 (7.0.2 is available)
++ vite-tsconfig-paths 6.1.1
++ vitest 4.1.8 (5.0.0 is available)
+
+Done in 1m 57.5s using pnpm v11.25.0
+[stage] stage=all install 结束 (node_modules=有)
+[stage] stage=all build 开始
+▶ pnpm build (native→lib→web, ~10-20min)
+   注入: DSH_CLIENT_VERSION=0.1.5-rc.2  COMMIT=6118bac  TITLE=DeepSeekHarness-NAS
+✗ pnpm build 失败（退出码 1）完整日志: /vol2/1000/DeepSeek Harness/dsh-v0.1.2-alpha.4/.dsh-home/工作区/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/pnpm-build.log
+$ tsx scripts/build.ts
+$ tsx native/system/scripts/build.ts --host-addon-only
+build: built linux-x64/bin/glibc/system.node
+$ pnpm run build:lib:host && pnpm run build:lib:client
+$ node --max-old-space-size=4096 ./node_modules/typescript/bin/tsc -b tsconfig.host.json && tsdown --env.DSH_BUILD_FACE host
+Killed
+[ELIFECYCLE] Command failed with exit code 137.
+[ELIFECYCLE] Command failed with exit code 137.
+/vol2/1000/DeepSeek Harness/dsh-v0.1.2-alpha.4/.dsh-home/工作区/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/source/scripts/build.ts:27
+    throw new Error(`build: ${script} exited with ${String(result.status ?? result.signal)}`)
+          ^
+
+Error: build: build:lib exited with 137
+    at runScript (/vol2/1000/DeepSeek Harness/dsh-v0.1.2-alpha.4/.dsh-home/工作区/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/source/scripts/build.ts:27:11)
+    at main (/vol2/1000/DeepSeek Harness/dsh-v0.1.2-alpha.4/.dsh-home/工作区/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/source/scripts/build.ts:45:3)
+    at <anonymous> (/vol2/1000/DeepSeek Harness/dsh-v0.1.2-alpha.4/.dsh-home/工作区/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/source/scripts/build.ts:53:23)
+    at ModuleJob.run (node:internal/modules/esm/module_job:439:25)
+    at async node:internal/modules/esm/loader:643:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)
+
+Node.js v24.19.0
+[ELIFECYCLE] Command failed with exit code 1.
