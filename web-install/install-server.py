@@ -9,6 +9,8 @@ DeepSeekHarness-NAS 安装工具服务端（网页直调远程脚本版）
 - POST /api/run               后台执行远程脚本（install / uninstall / check）
 - GET  /api/run-status        轮询后台任务状态与输出
 - GET  /api/tasks             历史任务（兼容旧版）
+- POST /api/build             触发本地构建（common / spk / fpk）
+- POST /api/publish           发布包到 GitHub Release
 纯标准库，无需 pip 依赖。sshpass 需本机已安装。
 """
 import json
@@ -19,6 +21,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
+import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -32,6 +36,14 @@ HTML_FILE_LEGACY = os.path.join(BASE_DIR, 'install-fpk.html')
 SCRIPT = os.path.join(BASE_DIR, 'install-remote-spk.sh')
 PORT = int(os.environ.get('INSTALL_SERVER_PORT', '8765'))
 SSHPASS = os.environ.get('SSHPASS_BIN', 'sshpass')
+
+# GitHub Release 自动发布配置
+GITHUB_TOKEN_PATHS = [
+    os.path.expanduser('~/.dsh/git-push/github-token'),
+    os.path.join(WS_ROOT, '.dsh-home/.dsh/git-push/github-token'),
+]
+GITHUB_REPO = 'EIGHTfs/DeepSeekHarness-NAS'
+GITHUB_API = 'https://api.github.com'
 
 
 def log(msg):
@@ -55,6 +67,152 @@ def file_md5(path):
         return h.hexdigest()
     except Exception:
         return ''
+
+
+def _read_github_token():
+    """读取 GitHub token（优先环境变量，其次 git-push 凭据文件）。"""
+    tok = os.environ.get('GITHUB_TOKEN', '').strip()
+    if tok:
+        return tok
+    for p in GITHUB_TOKEN_PATHS:
+        if os.path.isfile(p):
+            try:
+                with open(p, 'r') as f:
+                    tok = f.read().strip()
+                if tok:
+                    return tok
+            except Exception:
+                pass
+    return ''
+
+
+def _github_api(method, path, token, data=None, headers=None):
+    """调用 GitHub API，返回 (status_code, response_body_dict)。"""
+    url = '%s%s' % (GITHUB_API, path)
+    hdrs = {
+        'Authorization': 'token %s' % token,
+        'Accept': 'application/vnd.github.v3+json',
+        'User-Agent': 'dsh-install-server',
+    }
+    if headers:
+        hdrs.update(headers)
+    body = json.dumps(data).encode('utf-8') if data else None
+    req = urllib.request.Request(url, data=body, headers=hdrs, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.status, json.loads(r.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        try:
+            body = json.loads(body)
+        except Exception:
+            pass
+        return e.code, body
+    except Exception as e:
+        return 0, {'message': str(e)}
+
+
+def _upload_release_asset(upload_url, token, filepath, name):
+    """上传文件到 GitHub Release asset。upload_url 形如 ...{?name,label}。"""
+    url = upload_url.split('{')[0] + '?name=' + urllib.request.quote(name)
+    with open(filepath, 'rb') as f:
+        file_data = f.read()
+    req = urllib.request.Request(url, data=file_data, method='POST', headers={
+        'Authorization': 'token %s' % token,
+        'Content-Type': 'application/octet-stream',
+        'User-Agent': 'dsh-install-server',
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return r.status, json.loads(r.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode('utf-8', errors='replace')
+        return e.code, body
+    except Exception as e:
+        return 0, {'message': str(e)}
+
+
+def publish_package_to_github(file_path, tag):
+    """将指定包文件发布到 GitHub Release。
+    1. 将文件复制到 release/<tag>/ 目录
+    2. 调 GitHub API 创建/更新 Release 并上传资产
+    返回 (success, message)。"""
+    token = _read_github_token()
+    if not token:
+        return False, '未找到 GitHub Token'
+
+    if not os.path.isfile(file_path):
+        return False, '文件不存在: %s' % file_path
+
+    fname = os.path.basename(file_path)
+    release_dir = os.path.join(WS_ROOT, 'release', tag)
+
+    # 复制到 release/<tag>/（如果文件已在该目录则跳过）
+    os.makedirs(release_dir, exist_ok=True)
+    dst = os.path.join(release_dir, fname)
+    if os.path.abspath(file_path) != os.path.abspath(dst):
+        import shutil
+        try:
+            shutil.copy2(file_path, dst)
+            log('RELEASE copy %s -> %s' % (fname, release_dir))
+        except Exception as e:
+            log('RELEASE copy failed: %s' % e)
+            return False, '复制产物失败: %s' % e
+
+    # GitHub API: 获取或创建 Release
+    status, rel = _github_api('GET', '/repos/%s/releases/tags/%s' % (GITHUB_REPO, tag), token)
+    if status == 404:
+        status, rel = _github_api('POST', '/repos/%s/releases' % GITHUB_REPO, token, {
+            'tag_name': tag,
+            'name': 'Release %s' % tag,
+            'body': 'Published via install-server.py\nVersion: %s' % tag.lstrip('v'),
+            'draft': False,
+            'prerelease': '-' in tag,
+        })
+        if status not in (200, 201):
+            return False, '创建 Release 失败: %s' % rel
+        log('RELEASE created %s (id=%s)' % (tag, rel.get('id')))
+    elif status == 200:
+        log('RELEASE found %s (id=%s)' % (tag, rel.get('id')))
+    else:
+        return False, '查询 Release 失败: %s' % rel
+
+    upload_url = rel.get('upload_url', '')
+    if not upload_url:
+        return False, 'Release 缺少 upload_url'
+
+    # 检查同名 asset 是否已存在
+    existing_assets = rel.get('assets', [])
+    for a in existing_assets:
+        if a.get('name') == fname:
+            log('RELEASE asset already exists: %s (id=%s), deleting old' % (fname, a.get('id')))
+            _github_api('DELETE', '/repos/%s/releases/assets/%s' % (GITHUB_REPO, a['id']), token)
+
+    # 上传
+    fsize = os.path.getsize(dst)
+    log('RELEASE upload %s (%.1f MB)' % (fname, fsize / 1048576.0))
+    status, resp = _upload_release_asset(upload_url, token, dst, fname)
+    if status in (200, 201):
+        log('RELEASE upload OK: %s' % fname)
+        return True, '✅ 已发布 %s 到 %s' % (fname, tag)
+    else:
+        log('RELEASE upload FAILED: %s -> %s' % (fname, resp))
+        return False, '上传失败: %s' % resp
+
+
+def _find_package_file(package_name):
+    """在 staging 和 release 目录中查找包文件，返回绝对路径或空字符串。"""
+    # 先查 staging
+    staging = os.path.join(WS_ROOT, 'build', 'staging', package_name)
+    if os.path.isfile(staging):
+        return staging
+    # 再查 release（递归）
+    release_root = os.path.join(WS_ROOT, 'release')
+    if os.path.isdir(release_root):
+        for dirpath, _, filenames in os.walk(release_root):
+            if package_name in filenames:
+                return os.path.join(dirpath, package_name)
+    return ''
 
 
 def extract_version(name):
@@ -523,6 +681,29 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(409, {'success': False, 'error': err})
             else:
                 self._json(200, {'success': True, 'build_id': build_id, 'step': step})
+        elif path == '/api/publish':
+            package = str(body.get('package', '')).strip()
+            if not package:
+                self._json(400, {'success': False, 'error': '缺少 package 参数'})
+                return
+            # 从包名提取版本号，构造 tag
+            version = extract_version(package)
+            if not version:
+                self._json(400, {'success': False, 'error': '无法从包名提取版本号: %s' % package})
+                return
+            tag = 'v%s' % version
+            # 查找文件
+            file_path = _find_package_file(package)
+            if not file_path:
+                self._json(404, {'success': False, 'error': '未找到包文件: %s' % package})
+                return
+            log('PUBLISH package=%s tag=%s file=%s' % (package, tag, file_path))
+            ok, msg = publish_package_to_github(file_path, tag)
+            log('PUBLISH result: ok=%s msg=%s' % (ok, msg))
+            if ok:
+                self._json(200, {'success': True, 'message': msg, 'tag': tag})
+            else:
+                self._json(500, {'success': False, 'error': msg})
         else:
             self._json(404, {'success': False, 'error': f'未知路径: {path}'})
 

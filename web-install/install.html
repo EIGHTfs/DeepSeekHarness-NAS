@@ -179,6 +179,7 @@
                             <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">系统</th>
                             <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">结果</th>
                             <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">备注</th>
+                            <th style="padding:8px;text-align:center;border-bottom:1px solid #ddd;">发布</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -191,7 +192,7 @@
         <div id="buildPanel" style="margin-top:16px;">
             <hr class="divider">
             <h3 style="font-size:16px;color:#333;margin-bottom:10px;">🛠 自动构建</h3>
-            <p class="hint" style="margin-bottom:10px;">分步执行本地构建脚本（全量 install，不裁剪 devDeps，tsc 类型检查通过）。产物自动进入安装包列表。</p>
+            <p class="hint" style="margin-bottom:10px;">分步执行本地构建脚本（全量 install，不裁剪 devDeps，tsc 类型检查通过）。产物自动进入安装包列表。构建成功后可在安装历史中选择发布到 GitHub Release。</p>
             <div class="btn-group" style="margin-bottom:12px;">
                 <button type="button" class="btn btn-sm" id="buildCommonBtn" style="background:#667eea;">⚙️ build-common</button>
                 <button type="button" class="btn btn-sm" id="buildSpkBtn" style="background:#1976d2;">📦 build-spk</button>
@@ -478,6 +479,11 @@
                 tbody.innerHTML = data.tasks.map(t => {
                     const md5 = t.md5 ? '<code style="font-size:11px;">' + t.md5 + '</code>' : '—';
                     const note = t.note ? '<span title="' + t.note.replace(/"/g, '&quot;') + '">' + t.note + '</span>' : '—';
+                    // 只有成功的 install/repair 记录且有包名时显示发布按钮
+                    const canPublish = (t.cmd === 'install' || t.cmd === 'repair') && t.status === 'success' && t.package;
+                    const pubBtn = canPublish
+                        ? '<button onclick="publishPackage(this,\'' + t.package.replace(/'/g, "\\'") + '\')" style="padding:4px 10px;font-size:11px;background:linear-gradient(135deg,#ff9800,#e65100);color:white;border:none;border-radius:4px;cursor:pointer;">🚀 发布</button>'
+                        : '<span style="color:#ccc;">—</span>';
                     return '<tr style="border-bottom:1px solid #eee;">' +
                         '<td style="padding:8px;">' + (t.ts || '—') + '</td>' +
                         '<td style="padding:8px;">' + (CMD_NAMES[t.cmd] || t.cmd) + '</td>' +
@@ -486,6 +492,7 @@
                         '<td style="padding:8px;">' + (t.system || '—') + '</td>' +
                         '<td style="padding:8px;">' + (RESULT_BADGE[t.status] || t.status) + '</td>' +
                         '<td style="padding:8px;max-width:200px;word-break:break-all;">' + note + '</td>' +
+                        '<td style="padding:8px;text-align:center;">' + pubBtn + '</td>' +
                         '</tr>';
                 }).join('');
             } catch (err) {
@@ -499,6 +506,36 @@
         }
         tasksBtn.addEventListener('click', () => loadTasks(false));
         // 初始不自动加载（面板收起，点击按钮才拉取；避免无关流量）
+
+        // ── 发布包到 GitHub Release ──
+        async function publishPackage(btn, packageName) {
+            if (!confirm('确定要将 ' + packageName + ' 发布到 GitHub Release 吗？')) return;
+            btn.disabled = true;
+            btn.textContent = '⏳ 发布中…';
+            try {
+                const resp = await fetch('/api/publish', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ package: packageName })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    btn.textContent = '✅ 已发布';
+                    btn.style.background = 'linear-gradient(135deg,#43a047,#2e7d32)';
+                    showStatus('✅ ' + (data.message || '发布成功'), 'success');
+                } else {
+                    btn.textContent = '❌ 失败';
+                    btn.style.background = '#c62828';
+                    btn.disabled = false;
+                    showStatus('❌ 发布失败: ' + data.error, 'error');
+                }
+            } catch (err) {
+                btn.textContent = '❌ 失败';
+                btn.style.background = '#c62828';
+                btn.disabled = false;
+                showStatus('❌ 服务端不可用: ' + err.message, 'error');
+            }
+        }
 
         // ── 自动构建 ──
         const buildCommonBtn = $('buildCommonBtn'), buildSpkBtn = $('buildSpkBtn'), buildFpkBtn = $('buildFpkBtn');
