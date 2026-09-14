@@ -41,6 +41,8 @@ jobs:
 
       - name: 拉取官方最新源码到 src/deepseek-ai/{tag}
         run: ./fetch-dsh-latest.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 环境诊断（磁盘/内存，CI 排查用）
         run: |
@@ -114,6 +116,8 @@ jobs:
       # 解析官方版本号，与本步骤拉到的 tag 对应，保证两个产物版本一致。
       - name: 拉取官方最新源码（取版本号，供 npm 链路对齐）
         run: ./fetch-dsh-latest.sh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 构建 npm 应用体（npm 装官方包 → app_root）
         run: ./build/build-npm-app.sh
@@ -147,6 +151,8 @@ jobs:
       - name: 解析官方最新 tag（与官方同 tag 发布）
         id: reltag
         run: echo "TAG=$(./fetch-dsh-latest.sh --print-tag)" >> "$GITHUB_OUTPUT"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 下载产物（spk 可能缺失，容忍失败）
         uses: actions/download-artifact@v4

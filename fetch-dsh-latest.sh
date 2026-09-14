@@ -50,7 +50,16 @@ mkdir -p "$SRC_DIR"
 
 # ---------- 利用 python3 做严格 semver 比较并选出最高 tag（含 pre-release） ----------
 pick_latest_tag() {
-  TAGS_JSON="$(curl -s --connect-timeout 8 --max-time 20 \
+  # tags 判定：带 token（CI 用内置 GITHUB_TOKEN，本机用 $GITHUB_TOKEN/凭据）提升限流
+  # 额度；加 --retry 应对抖动。匿名 CI runner 60 次/h 限流是 step 偶发失败根因
+  local _hdr=()
+  local _tok=""
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then _tok="$GITHUB_TOKEN"; fi
+  if [[ -z "$_tok" && -f "$HOME/.dsh/git-push/github-token" ]]; then
+    _tok="$(python3 -c "print(open('$HOME/.dsh/git-push/github-token').read().strip())" 2>/dev/null || true)"
+  fi
+  [[ -n "$_tok" ]] && _hdr=(-H "Authorization: token $_tok")
+  TAGS_JSON="$(curl -s --connect-timeout 8 --max-time 20 --retry 5 --retry-delay 3 "${_hdr[@]}" \
     "https://api.github.com/repos/$REPO/tags?per_page=300" || true)"
   if [[ -z "$TAGS_JSON" || -z "$(echo "$TAGS_JSON" | grep -o '\"name\"')" ]]; then
     echo "✗ 无法从 api.github.com 获取 $REPO 的 tags（网络或限速）。" >&2
