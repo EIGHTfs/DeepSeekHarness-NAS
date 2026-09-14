@@ -233,28 +233,43 @@ fi
 _HOME_DIR="$WS/assets/tmp-home"
 mkdir -p "$_HOME_DIR"
 
-# ── pnpm 命令垫片（关键） ─────────────────────────────────────────────────
-# tools/pnpm/bin/ 只有 pnpm.mjs / pnpm.cjs，没有名为 `pnpm` 的可执行入口。
-# 上游 scripts/build.ts 用 `sh -c "pnpm run build:lib:*"` 调子脚本（子进程重新查 PATH），
-# 仅 PATH 指向该目录仍找不到 `pnpm` —— CI runner 无系统 pnpm 时报 `sh: 1: pnpm: not found`
-# （本地靠 /usr/bin/pnpm 兜住过，掩盖了该问题）。此处生成垫片，保证子进程可用且
-# 版本与打包进应用的一致（项目自带 pnpm）。
+# ── pnpm 命令垫片（包装：版本锁定 + pnpm10 json → pnpm11 yaml 桥接）─────────
+# 为什么必须有这层包装：
+#   ① tools/pnpm/bin/ 只有 pnpm.mjs / pnpm.cjs，没有名为 `pnpm` 的可执行入口。
+#      上游 scripts/build.ts 用 `sh -c "pnpm run build:lib:*"` 调子脚本（子进程重查
+#      PATH），仅把该目录前置到 PATH 仍找不到 `pnpm` → CI 报 `sh: 1: pnpm: not found`
+#      （本机靠 /usr/bin/pnpm 兜住，掩盖了该问题）。
+#   ② pnpm 11 默认 pmOnFail=download：读到 package.json 的 packageManager 字段就
+#      **自动联网下载并切换到那个版本**。官方源码写 `packageManager: pnpm@11.7.0`，
+#      于是构建实际跑的不是我们打包/验证过的 pnpm（每次构建多一次 29MB 下载，且
+#      版本不受控）。实测对照：目录内 packageManager=pnpm@11.7.0 → 进程版本 11.7.0；
+#      改成 11.25.0 或去掉该字段 → 自带版本 11.25.0。`--pm-on-fail=ignore` 可跳过切换
+#      （pnpm 源码提示语原文：Set `pmOnFail` to `ignore` to skip the version switch）。
+#   ③ pnpm 11 不再读 package.json 的 `pnpm` 字段（onlyBuiltDependencies 等），全改读
+#      pnpm-workspace.yaml → 垫片每次调用前自动跑 tools/pnpm-bridge.py 做 json→yaml 转换。
+#   三者合一：所有 pnpm 调用（含上游 sh -c 子进程）都锁我们用自带的 pnpm 11 且配置已桥接。
 _PNPM_SHIM="$PNPM_BIN_DIR/pnpm"
-if [ ! -x "$_PNPM_SHIM" ] || ! head -1 "$_PNPM_SHIM" 2>/dev/null | grep -q "build-common pnpm shim"; then
+if [ ! -x "$_PNPM_SHIM" ] || ! grep -q "build-common pnpm shim v2" "$_PNPM_SHIM" 2>/dev/null; then
   cat > "$_PNPM_SHIM" <<SHIMEOF
 #!/bin/sh
-# build-common pnpm shim —— 由 build/build-common.sh 自动生成，勿手改
-exec "$NODE_SRC" "$PNPM_BIN" "\$@"
+# build-common pnpm shim v2 —— 由 build/build-common.sh 自动生成，勿手改
+# 包装职责：① 版本锁定（--pm-on-fail=ignore，禁用 pnpm 按 packageManager 自动换版本）
+#          ② pnpm10 json → pnpm11 yaml 配置桥接（每次调用前幂等执行）
+#          ③ 固定用项目自带 pnpm（$PNPM_BIN）+ 打包用 node（$NODE_SRC）
+if [ -f "$D_TOOLS/pnpm-bridge.py" ]; then
+  python3 "$D_TOOLS/pnpm-bridge.py" --dir "\$PWD" >/dev/null 2>&1 || true
+fi
+exec "$NODE_SRC" "$PNPM_BIN" --pm-on-fail=ignore "\$@"
 SHIMEOF
   chmod 755 "$_PNPM_SHIM"
-  echo "✓ 已生成 pnpm 垫片: $_PNPM_SHIM → $PNPM_BIN"
+  echo "✓ 已生成 pnpm 包装垫片: $_PNPM_SHIM（版本锁定 + json→yaml 桥接）"
 fi
 
 if [ ! -d "$BUILD_SRC/node_modules" ]; then
   echo "▶ pnpm install (~2-5min) [store=$PNPM_STORE]（项目 pnpm: $PNPM_BIN）"
   ( cd "$BUILD_SRC" && \
     PATH="$PNPM_BIN_DIR:$PATH" HOME="$_HOME_DIR" PNPM_STORE_DIR="$PNPM_STORE" npm_config_cache="$NPM_CACHE" \
-    node "$PNPM_BIN" install --store-dir="$PNPM_STORE" --force 2>&1 | tail -20 )
+    "$_PNPM_SHIM" install --store-dir="$PNPM_STORE" --force 2>&1 | tail -20 )
 fi
 
 echo "▶ pnpm build (native→lib→web, ~10-20min)"
@@ -275,7 +290,7 @@ fi
   DSH_CLIENT_VERSION="$PKG_VER" \
   DSH_CLIENT_COMMIT_HASH="$COMMIT_HASH" \
   DSH_CLIENT_TITLE="DeepSeekHarness-NAS" \
-  node "$PNPM_BIN" build ) > "$_BUILD_LOG" 2>&1 || _BUILD_RC=$?
+  "$_PNPM_SHIM" build ) > "$_BUILD_LOG" 2>&1 || _BUILD_RC=$?
 # ⚠ 失败时必须把真实报错打出来：原来 `| tail -20` 会把关键错误行截掉，
 #   CI 日志只剩最后 20 行，排查困难（2026-09-13 实测）。成功时仍只打尾部。
 if [ "${_BUILD_RC:-0}" != "0" ]; then

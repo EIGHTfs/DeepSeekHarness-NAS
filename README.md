@@ -115,11 +115,14 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 
 ```yaml
 # .github/workflows/build.yml —— 触发: 定时(每日04:00 UTC) / workflow_dispatch(手动) / tag推送
-# jobs: build-spk（源码链路）→ build-fpk（npm 链路）→ release（合并双产物发版）
-# 产物命名: <APP_NAME>_<平台>-<版本>.<spk|fpk>，release 附件即 dist/ 全部文件
+# jobs: build-spk（源码链路）∥ build-fpk（npm 链路）→ release（自动发布，与官方同 tag）
+# 产物命名: <APP_NAME>_<平台>-<版本>.<spk|fpk>
 ```
 
-- 触发：①每日 04:00 UTC（北京 12:00）定时自动拉官方最新源并构建（产物上传 artifact，保留 14 天）；②Actions 页手动 `workflow_dispatch`；③推送 tag（`v0.1.5` 等）→ 自动拉官方最新源 → 并行构建 SPK（源码）与 FPK（npm）→ 合并产物 → 创建 GitHub Release
+- 触发：①每日 04:00 UTC（北京 12:00）定时自动拉官方最新源并构建；②Actions 页手动 `workflow_dispatch`；③推送 tag（`v0.1.5` 等）
+- **自动发布（与官方同 tag）**：三个触发方式都会自动建/更新 Release——tag 名取官方最新 dsh tag（`fetch-dsh-latest.sh --print-tag` 解析，如 `dsh-v0.1.5-rc.2`），同名 Release 已存在则**覆盖资产**（滚动刷新），不存在则自动创建；含 `-`（rc/alpha）的 tag 自动标 prerelease
+- **部分失败容忍**：`release` job 用 `always()`，源码链路 SPK 失败时仍发布 FPK，并在 Release 说明中标注 `SPK: ❌ 缺失`（实测 run #6：`dsh-v0.1.5-rc.2 自动构建` 已发布，含 FPK 93MB）
+- 产物同时上传 artifact（`spk-dist` / `fpk-dist`，保留 14 天）；构建失败时额外上传 `build-spk-debug-log`（完整 `pnpm-build.log`，因 GitHub 偶尔不归档该 job 日志）
 - 本地等效：`./build/build-all.sh`（同一套 fetch → build → 打包 流程）
 
 ### 打包模式：预构建产物包（唯一模式）
@@ -552,14 +555,25 @@ sudo synopkg stop deepseek-harness-nas
 
 | 版本 | 内嵌 dsh | 说明 |
 |------|----------|------|
+| 0.1.5 (2026-09-13) | 0.1.5-rc.2 | **CI 自动构建 + 自动发布打通**：① **自动发布**——定时/手动/tag 三种触发都建/更新 Release，tag 与官方同名（`dsh-v0.1.5-rc.2`），已存在则覆盖资产、rc 自动标 prerelease、spk 缺失仍发布 fpk 并标注（实测 run #6 发布成功，含 FPK 93MB）；`fetch-dsh-latest.sh --print-tag` 新增（只解析 tag 不下载）。② **首跑四处 CI 全新态 bug 修复**：pnpm 垫片缺失（`sh: 1: pnpm: not found`，本机靠系统 pnpm 兜住）、6 个脚本 git 索引丢执行位（`Permission denied` exit 126）、`build-npm-app.sh` 两处 `cd` 到 gitignore 目录（`spk-build`/`dsh-web`）、组装阶段 staging 目录不存在致 `tar` exit 2（stderr 被吞）。③ **可诊断性**：pnpm build 完整日志落盘（失败打尾 80 行，原 `tail -20` 会截掉真实报错）、失败上传 `build-spk-debug-log` artifact（GitHub 偶尔不归档该 job 日志）。④ 源码链路裁剪白名单改为从 npm 锁文件自动生成（`gen-prune-whitelist.sh`，489 个），裁剪逻辑独立成 `prune-target.sh` |
 | 0.1.5 (2026-09-13) | 0.1.5-rc.2 | **CI 自动构建打通（GitHub Actions 首跑三 bug 修复）**：① `tools/pnpm/bin/` 缺名为 `pnpm` 的可执行入口 → 上游 `scripts/build.ts` 子进程 `sh -c pnpm` 报 `not found`（本机靠系统 pnpm 兜住）→ build-common.sh 自动生成 pnpm 垫片；② 6 个构建脚本 git 索引 100644 无执行位 → CI `Permission denied`（exit 126）→ `git add --chmod=+x` 修正；③ `build-npm-app.sh` 两处 `cd` 到 gitignore 掉的目录（`build/spk-build`、`dsh-web`）在干净 checkout 下不存在 → 补 `mkdir -p`。定时打包新增（每日 04:00 UTC 自动构建 SPK+FPK 上传 artifact） |
 | 0.1.5 (2026-09-13) | 0.1.5-rc.2 | **入口收敛（门户 token 免密权威实现，实测通过）**：start.sh 反代区分「套件门户打开」与「局域网直连」——套件图标打开（DSM 桌面 https:5001→http:30800 / fnOS 应用 iframe）302 无条件带 token 免密；地址栏直连（`Sec-Fetch-Site: none` / 无 Referer）403 提示「请从套件图标打开」；外站链接跳入（异主机 Referer）403；已持 dsh-auth cookie 直连放行（带过 token 即免密）。SameSite=Strict→Lax 改写保跨 scheme cookie。**产物命名改 `<APP_NAME>_<平台>-<版本>.<spk|fpk>`（去 -dist）**；**GitHub Actions 自动构建**（复用 fetch-dsh-latest.sh 拉官方源，SPK 构建，FPK 分支注释）；**脚本执行位修正**（git 索引 100755）。实测：193 VirtualDSM 卸载重装 0.1.5，7 场景全过（直连 403 / 门户 302 带 token / 认证后直连免密 200） |
 
 > 历史发布版已清理，今后发版统一走 GitHub Actions 自动构建（tag 推送即出 spk+fpk 双产物）。仓库历史已 squash 重建。
 
-> **关于 `tools/pnpm`**：内置 pnpm 11.7.0（含 `dist/pnpm.mjs` 约 9.7MB）为**有意随仓库分发**的构建工具——构建与随包分发**一律用项目自带 pnpm**（build-common.sh `PNPM_BIN` 固定指向它，PATH 前置），不用系统 pnpm。预构建包把它打进套件 `pnpm/` 并建 `/usr/bin/pnpm` 软链（`bin/pnpm` 包装器用包内 node 跑 pnpm.mjs），SSH 登录 NAS 直接 `pnpm` 可用。
+> **关于 `tools/pnpm`**：内置 pnpm 11（`package.json` 11.25.0，含 `dist/pnpm.mjs`）为**有意随仓库分发**的构建工具——构建与随包分发**一律用项目自带 pnpm**（build-common.sh `PNPM_BIN` 固定指向它，PATH 前置），不用系统 pnpm。预构建包把它打进套件 `pnpm/` 并建 `/usr/bin/pnpm` 软链（`bin/pnpm` 包装器用包内 node 跑 pnpm.mjs），SSH 登录 NAS 直接 `pnpm` 可用。
 >
-> **pnpm 垫片（CI 构建必需，2026-09-13 实测修复）**：`tools/pnpm/bin/` 只有 `pnpm.mjs` / `pnpm.cjs`，**没有名为 `pnpm` 的可执行入口**。上游 `scripts/build.ts` 用 `sh -c "pnpm run build:lib:host"` 调子脚本（子进程重新查 PATH），仅把该目录前置到 PATH 仍找不到 `pnpm` —— 本机因有系统 `/usr/bin/pnpm` 兜住而正常，GitHub Actions runner 无系统 pnpm，实测报 `sh: 1: pnpm: not found` → `build:lib exited with 1`，源码链路 CI 直接失败。修复：`build-common.sh` 在 install/build 前自动生成 `tools/pnpm/bin/pnpm` 垫片（`exec "$NODE_SRC" "$PNPM_BIN" "$@"`，755，含生成标记防重复；文件已被 .gitignore 忽略，因内含本机绝对路径）。
+> **为什么必须 pnpm 11 而不是 10**：pnpm 10 在大型 workspace 上有 OOM 问题，故构建统一用 pnpm 11。
+>
+> **pnpm 11 不读 `package.json` 的 `pnpm` 字段**：11 起 `onlyBuiltDependencies` / `overrides` 等一律只从 `pnpm-workspace.yaml` 读（报 `The pnpm field in package.json is no longer read`）。因此由 `tools/pnpm-bridge.py` 自动把 `package.json` 的 `pnpm.*` 字段转换合并进 `pnpm-workspace.yaml`（`onlyBuiltDependencies` → `allowBuilds`，其余同名透传，幂等、保留已有内容）。
+>
+> **pnpm 包装垫片（CI 构建必需，2026-09-13 实测修复）**：`tools/pnpm/bin/` 只有 `pnpm.mjs` / `pnpm.cjs`，**没有名为 `pnpm` 的可执行入口**。上游 `scripts/build.ts` 用 `sh -c "pnpm run build:lib:host"` 调子脚本（子进程重新查 PATH），仅把该目录前置到 PATH 仍找不到 `pnpm` —— 本机因有系统 `/usr/bin/pnpm` 兜住而正常，GitHub Actions runner 无系统 pnpm，实测报 `sh: 1: pnpm: not found` → `build:lib exited with 1`，源码链路 CI 直接失败。修复：`build-common.sh` 在 install/build 前自动生成 `tools/pnpm/bin/pnpm` **包装垫片**（755，含 `shim v2` 标记防重复；文件被 .gitignore 忽略，因内含本机绝对路径），垫片做三件事：
+>
+> 1. **版本锁定**：带 `--pm-on-fail=ignore` 调用。pnpm 11 默认 `pmOnFail=download`——读到 `package.json` 的 `packageManager` 字段会**联网下载并切换**到该版本（官方源码写 `packageManager: pnpm@11.7.0`，于是构建实际跑的不是我们打包/验证过的 pnpm，且每次多一次约 29MB 下载）。实测对照（决定性）：同目录内 `packageManager: pnpm@11.7.0` → 进程版本 **11.7.0**；改成 `11.25.0` 或删掉该字段 → 自带版本 **11.25.0**；加 `--pm-on-fail=ignore` → 锁死 **11.25.0**。pnpm 源码提示语原文即 `Set \`pmOnFail\` to \`ignore\` to skip the version switch`。
+> 2. **json→yaml 桥接**：每次调用前幂等执行 `tools/pnpm-bridge.py --dir "$PWD"`，让 pnpm 11 拿到 pnpm 10 时代写在 `package.json` 里的构建配置。
+> 3. **固定解释器**：`exec "$NODE_SRC" "$PNPM_BIN"`，用打包用 node（CI 的 setup-node 22）跑自带 pnpm。
+>
+> install 与 build 两处调用都改走该垫片（原来直接 `node "$PNPM_BIN"` 会绕过包装），并前置 `PATH="$PNPM_BIN_DIR:$PATH"`，使上游 `sh -c` 子进程同样命中垫片。
 
 ---
 
