@@ -34,8 +34,29 @@ jobs:
       - name: 拉取官方最新源码到 src/deepseek-ai/{tag}
         run: ./fetch-dsh-latest.sh
 
+      - name: 环境诊断（磁盘/内存，CI 排查用）
+        run: |
+          df -h /
+          echo "-----"
+          free -h
+          echo "-----"
+          nproc
+
       - name: 公共预编译（pnpm install + build + 裁剪）
+        id: common
         run: ./build/build-common.sh
+
+      # ⚠ GitHub 有时不归档该 job 的日志（BlobNotFound），失败时把完整构建日志
+      #   作为 artifact 上传，保证能拿到真实报错（2026-09-13 实测踩坑）。
+      - name: 失败时上传构建日志（诊断）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-spk-debug-log
+          path: |
+            build/spk-build/build-*/pnpm-build.log
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: 打 SPK
         run: ./build/build-spk.sh
