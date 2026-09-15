@@ -203,7 +203,7 @@ jobs:
           merge-multiple: true
         continue-on-error: true
 
-      - name: 检查产物 + 记录 spk/fpk 状态
+      - name: 检查产物 + 记录 spk/fpk 状态 + 计算 SHA256
         id: check
         run: |
           if ls dist/* >/dev/null 2>&1; then
@@ -221,11 +221,27 @@ jobs:
             echo "SPK_STATUS=❌ 缺失（源码链路 CI 失败，修复中）" >> "$GITHUB_ENV"
           fi
           if [ "${{ needs.build-fpk.result }}" = "success" ]; then
-            echo "FPK_STATUS=✅ 有（npm 链路，x86）" >> "$GITHUB_ENV"
+            if [ "${{ vars.FPK_MODE }}" = "npm" ]; then
+              echo "FPK_STATUS=✅ 有（npm 链路，x86）" >> "$GITHUB_ENV"
+            else
+              echo "FPK_STATUS=✅ 有（源码构建，x86）" >> "$GITHUB_ENV"
+            fi
           elif [ "${{ needs.build-fpk.result }}" = "skipped" ]; then
             echo "FPK_STATUS=⏭️ 跳过（BUILD_FPK=false）" >> "$GITHUB_ENV"
           else
-            echo "FPK_STATUS=❌ 缺失（npm 链路 CI 失败）" >> "$GITHUB_ENV"
+            if [ "${{ vars.FPK_MODE }}" = "npm" ]; then
+              echo "FPK_STATUS=❌ 缺失（npm 链路 CI 失败）" >> "$GITHUB_ENV"
+            else
+              echo "FPK_STATUS=❌ 缺失（源码构建 CI 失败）" >> "$GITHUB_ENV"
+            fi
+          fi
+          # 产物 SHA256 校验值（发布描述自带，作验证依据）
+          if ls dist/* >/dev/null 2>&1; then
+            {
+              echo 'RELEASE_SHA<<EOF'
+              (cd dist && sha256sum *) 2>/dev/null
+              echo 'EOF'
+            } >> "$GITHUB_ENV"
           fi
 
       - name: 发布 Release（tag=官方 tag；已有同名则覆盖资产）
@@ -240,6 +256,10 @@ jobs:
             - FPK: ${{ env.FPK_STATUS }}
             - SPK: ${{ env.SPK_STATUS }}
             - 构建时间: ${{ github.event.repository.updated_at }}
+            - SHA256 校验:
+            ```
+            ${{ env.RELEASE_SHA }}
+            ```
           files: dist/*
           prerelease: ${{ contains(steps.reltag.outputs.TAG, '-') }}
           fail_on_unmatched_files: false
