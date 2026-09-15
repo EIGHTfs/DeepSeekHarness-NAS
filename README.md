@@ -94,10 +94,10 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 
 **参数与配置来源**（已精简，去掉「套件类型 / 套件说明 / 品牌名」三个参数）：
 
-> 🎯 **FPK 双链路实测结论（2026-09-13 dsh 0.1.5-rc.2）**：**只推荐 npm 链路发版**。
-> - **npm 链路**（`--npm`，官方 npm 包）：fpk **94M**，应用体解压 387M，`node_modules` 扁平无嵌套、`dsh-tools` 单副本（运行时 Symbol 唯一，无 `reading 'prepare'` 崩溃）、软链仅 10 条 → **实机安装 running，三端口在听**。
-> - **源码编译链路**（默认，build-common.sh target）：fpk 173M，应用体解压 807M，`node_modules` 为 pnpm workspace 布局 → 软链 **6703 条** → **实机安装即 fail `10234`**（app.tgz 含软链，fnOS 后端 ACL `acl_get_file` 失败；每次全新态复位验证均为同一结果）。要源码化必须重写打包排除软链并验证运行时依赖完整，当前不做。
-> - 体积基线：npm 链路 94M ≈ 100MiB 目标 ✅；源码链路 173M 超出 100MiB（未裁剪）。
+> 🎯 **FPK 双链路现状（2026-09-15 更新）**：**默认源码构建（与 SPK 同源），npm 链路保留可选**。
+> - **源码构建**（默认，build-common.sh target → build-fpk.sh）：品牌 **DeepSeekHarness-NAS**，与 SPK 同一套源码/裁剪/白名单；软链问题已修复（`tar --hard-dereference` 复制替代 `cp -a`），本地实测 **114MB 实机可装、三端口在听**；CI 默认走此链路（`vars.FPK_MODE` 未设置 = 源码构建）。
+> - **npm 链路**（`--npm`，官方 npm 包，`build-npm-fpk-app.sh`）：品牌 DeepSeek Harness，体积更小（94M）；CI 设 `vars.FPK_MODE = 'npm'` 时启用，或本地手动跑。
+> - 体积基线：源码 114MB ≈ 120MiB 以内（白名单裁剪后达标）；npm 94M ≈ 100MiB。
 
 - `SRC` 源码目录：缺省通配扫描 `src/deepseek-ai/*`（不硬编码版本目录名），其次 `build/master-build/master-build`
 - `SKIP_BUILD`：`1` = 复用已有 target（快速重打包），缺省 `0` = 全量构建
@@ -122,15 +122,16 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 
 ```yaml
 # .github/workflows/build.yml —— 触发: 定时(每日04:00 UTC) / workflow_dispatch(手动) / tag推送
-# jobs: build-spk（源码链路）∥ build-fpk（npm 链路）→ release（自动发布，与官方同 tag）
+# jobs: build-spk（源码链路）∥ build-fpk（源码构建，vars.FPK_MODE='npm' 时切 npm 链路）→ release（自动发布，与官方同 tag）
 # 产物命名: <APP_NAME>_<平台>-<版本>.<spk|fpk>
 ```
 
 - 触发：①每日 04:00 UTC（北京 12:00）定时自动拉官方最新源并构建；②Actions 页手动 `workflow_dispatch`；③推送 tag（`v0.1.5` 等）
-- **fpk/spk 构建开关（2026-09-14）**：build.yml 顶部 `env.BUILD_FPK` / `env.BUILD_SPK` 分别控制两个产物是否构建（`'true'` 构建 / `'false'` 跳过），临时只测 spk 可把 `BUILD_FPK` 改 `false`；Release 说明会标注 `⏭️ 跳过`
+- **fpk/spk 构建开关（2026-09-14，2026-09-15 FPK 恢复）**：仓库变量 `vars.BUILD_SPK` / `vars.BUILD_FPK` 分别控制两个产物是否构建（`'true'` 构建 / `'false'` 跳过；缺省都构建）；`vars.FPK_MODE` 控制 FPK 构建方式（缺省 = 源码构建，`'npm'` = npm 链路）；设置路径：仓库 Settings → Secrets and variables → Actions → Variables（或 API PATCH）；Release 说明会标注 `⏭️ 跳过`
 - **自动发布（与官方同 tag）**：三个触发方式都会自动建/更新 Release——tag 名取官方最新 dsh tag（`scripts/fetch-dsh-latest.sh --print-tag` 解析，如 `dsh-v0.1.5-rc.2`），同名 Release 已存在则**覆盖资产**（滚动刷新），不存在则自动创建；含 `-`（rc/alpha）的 tag 自动标 prerelease
-- **部分失败容忍**：`release` job 用 `always()`，源码链路 SPK 失败时仍发布 FPK，并在 Release 说明中标注 `SPK: ❌ 缺失`（实测 run #6：`dsh-v0.1.5-rc.2 自动构建` 已发布，含 FPK 93MB）
-- 产物同时上传 artifact（`spk-dist` / `fpk-dist`，保留 14 天）；构建失败时额外上传 `build-spk-debug-log`（完整 `pnpm-build.log`，因 GitHub 偶尔不归档该 job 日志）
+- **部分失败容忍**：`release` job 用 `always()`，源码链路 SPK 失败时仍发布 FPK，并在 Release 说明中标注 `SPK: ❌ 缺失`（实测：`dsh-v0.1.5-rc.2 自动构建` 双产物发布，FPK 119MB 源码构建）
+- 产物同时上传 artifact（`spk-dist` / `fpk-dist`，保留 14 天）；构建失败时额外上传 `build-spk-debug-log` / `build-fpk-debug-log`（完整 `pnpm-build.log`，因 GitHub 偶尔不归档该 job 日志）
+- **Release 自带 SHA256**（2026-09-15）：发布描述含每个产物的 `sha256sum` 校验值，下载后 `sha256sum <文件>` 对照验证完整性
 - **公共预编译单步（2026-09-14 后合并，2026-09-15 定稿）**：最初为定位死点拆过 `BUILD_STAGE`（`install`/`build`/`prune`）三步，但拆步后 step 被 OOM/磁盘杀时结论 `None` 不触发 `if: failure()`，日志 blob 又常丢失 → 排查不出去向。定稿：**CI 单步 `./build/build-common.sh`（默认 `BUILD_STAGE=all`）**，失败时 `failure()` 捕获 + artifact 兜底完整 `pnpm-build.log`
 - **install 前白名单裁剪（2026-09-14，SPK CI 磁盘爆盘修复）**：annotation 实测根因 = `pnpm install/build` 阶段把 runner 磁盘写满（`No space left on device` → worker 被杀 → step 永久 in_progress）。官方 monorepo 依赖树约 1.78 万包，install 阶段下载全部 devDeps（vitest/jsdom/mermaid 等巨大传递依赖）拉满磁盘峰值。修复：`prune-target.sh --before-install` 在 `pnpm install` **前**用纯白名单剥离根 package.json 中**非白名单 devDeps**，install 不再下载它们；构建必需工具（typescript/tsx/tsdown/lightningcss/execa/smol-toml）手动追加进白名单 `extra`（`gen-prune-whitelist.sh` 自动生成只动 `lockfileDeps`，不覆盖手动部分），install 保留、build 不裂
 - 本地等效：按「本地构建」段落逐脚本跑（同一套 fetch → build → 打包 流程）
