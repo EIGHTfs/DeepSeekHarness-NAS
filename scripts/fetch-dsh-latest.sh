@@ -16,12 +16,13 @@
 #
 set -euo pipefail
 
-# ---------- 定位脚本目录（供 src 目录推断，兼容任意 CWD 调用） ----------
+# ---------- 定位脚本目录与仓库根（src 在仓库根，本脚本在 scripts/ 下） ----------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WS="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # ---------- 默认与可配置项（可用命令行参数覆盖，不硬编码场景外路径） ----------
 DEFAULT_REPO="deepseek-ai/deepseek-harness"
-DEFAULT_SRC="$SCRIPT_DIR/src/deepseek-ai"
+DEFAULT_SRC="$WS/src/deepseek-ai"
 TMP_PREFIX=".dsh-fetch-$$"
 TARGET_TAG=""          # 空 = 自动判定最新
 PRINT_TAG=0            # --print-tag: 只打印 tag 不下载（CI 发布用）
@@ -45,7 +46,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---------- 确定存放目录 ----------
-[[ "$SRC_DIR" == "$DEFAULT_SRC" ]] && SRC_DIR="$SCRIPT_DIR/src/deepseek-ai"
+[[ "$SRC_DIR" == "$DEFAULT_SRC" ]] && SRC_DIR="$WS/src/deepseek-ai"
 mkdir -p "$SRC_DIR"
 
 # ---------- 利用 python3 做严格 semver 比较并选出最高 tag（含 pre-release） ----------

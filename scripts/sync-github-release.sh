@@ -24,7 +24,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 DEFAULT_REPO="EIGHTfs/DeepSeekHarness-NAS"
 DEFAULT_OUT="$PROJECT_ROOT/release"
-DEFAULT_LOG="$PROJECT_ROOT/release-sync.log"
+DEFAULT_LOG="$SCRIPT_DIR/release-sync.log"
 DEFAULT_INTERVAL=300
 PID_FILE="$PROJECT_ROOT/DeepSeekHarness-NAS-release-sync.pid"
 

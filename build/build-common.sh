@@ -44,6 +44,35 @@ PNPM_BIN="$WS/tools/pnpm/bin/pnpm.mjs"  # 强制用项目自带 pnpm（tools/pnp
 PNPM_BIN_DIR="$WS/tools/pnpm/bin"
 NODE_SRC="${NODE_SRC:-/usr/bin/node}"          # 打包进应用的 node 二进制
 
+# ── pnpm 引擎自举（2026-09-16：tools/pnpm/dist 不入库，见 .gitignore）──
+#   bin/pnpm.mjs 只是入口（await import('../dist/pnpm.mjs') 引擎在 dist/）；
+#   dist 为 pnpm 官方安装产物（457 文件大 bundle），不入 git。CI / 新 clone 后
+#   bin 在但 dist 缺失 → 此处自动用 npm 下载 pnpm 官方包解压补全，保证构建可用。
+ensure_pnpm_engine() {
+  if [ -f "$PNPM_BIN" ] && [ -f "$WS/tools/pnpm/dist/pnpm.mjs" ]; then
+    return 0  # bin + dist 齐全，直接可用
+  fi
+  echo "▶ pnpm 引擎缺失（tools/pnpm/dist 不入库），自动安装 pnpm…"
+  mkdir -p "$WS/tools/pnpm"
+  local _ver _tmp
+  _ver="$(cat "$WS/tools/pnpm/package.json" 2>/dev/null \
+    | python3 -c "import json,sys;print(json.load(sys.stdin).get('version','11.25.0'))" 2>/dev/null \
+    || echo '11.25.0')"
+  _tmp="$(mktemp -d)"
+  if command -v npm >/dev/null 2>&1; then
+    ( cd "$_tmp" && npm pack "pnpm@$_ver" --silent 2>/dev/null ) \
+      && tar -xzf "$_tmp"/pnpm-*.tgz -C "$WS/tools/pnpm" --strip-components=1 2>/dev/null
+  fi
+  rm -rf "$_tmp"
+  if [ -f "$WS/tools/pnpm/dist/pnpm.mjs" ]; then
+    echo "  ✓ pnpm 引擎就绪 (tools/pnpm/dist/pnpm.mjs, v$_ver)"
+  else
+    echo "  ✗ pnpm 引擎安装失败：npm 不可用或下载失败，请 npm install -g pnpm@$_ver 后重试" >&2
+    return 1
+  fi
+}
+ensure_pnpm_engine
+
 # ── 工作区分类目录（全部可用环境变量覆盖，默认以脚本所在目录为根） ──
 D_SRC="${D_SRC:-$WS/src}"
 D_ASSETS="${D_ASSETS:-$WS/build}"

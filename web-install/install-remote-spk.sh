@@ -19,10 +19,8 @@
 # ===========================================================
 set -u
 WS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# 工作区根 = 脚本目录的上一级（脚本在 scripts/ 里，配置文件在工作区根）
-WS_ROOT="$(cd "$WS/.." && pwd)"
-CFG="$WS_ROOT/install-config.json"
-[ -f "$CFG" ] || CFG="$WS/install-config.json"
+# 2026-09-15 归位：install-config.json 与脚本同目录（web-install/）
+CFG="$WS/install-config.json"
 # --- 读取配置（密码不输出） ---
 read_cfg() {
   local key="$1"

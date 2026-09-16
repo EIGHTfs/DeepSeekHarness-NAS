@@ -501,9 +501,16 @@ async function main() {
   console.log(`[√] 端口: DSH=${dshPort}, 反代=${proxyPort}, 容器=${containerPort}`);
 
   console.log(`[>] 启动 DSH (127.0.0.1:${dshPort})`);
+  // 【修复 2026-09-16】V8 默认堆上限约 2GB，DSH 长时间运行堆涨到上限即
+  // "FATAL ERROR: Ineffective mark-compacts near heap limit ... JavaScript heap out of memory"
+  // → SIGABRT 自杀（系统内存充足时非资源受限）。自适应：物理内存 40% 给 V8 堆，
+  // 下限 2GB 保底、上限 8GB 防过度分配（与正式 start.sh 同款逻辑）。
+  const { totalmem } = require('os');
+  const heapMB = Math.max(2048, Math.min(8192, Math.floor(totalmem() / 1024 / 1024 * 0.4)));
+  const heapArg = '--max-old-space-size=' + heapMB;
   const dshArgs = tsx
-    ? ['--import', 'tsx/esm', entry, 'web', '--host', '127.0.0.1', '--port', String(dshPort), '--no-open']
-    : ['--expose-internals', entry, 'web', '--host', '127.0.0.1', '--port', String(dshPort), '--no-open'];
+    ? [heapArg, '--import', 'tsx/esm', entry, 'web', '--host', '127.0.0.1', '--port', String(dshPort), '--no-open']
+    : [heapArg, '--expose-internals', entry, 'web', '--host', '127.0.0.1', '--port', String(dshPort), '--no-open'];
 
   const dshProcess = spawn(nodeBin, dshArgs, {
     cwd: dshDir,
