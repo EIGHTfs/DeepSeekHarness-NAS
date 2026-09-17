@@ -1,0 +1,33 @@
+{
+  "name": "dsh-session-migrate",
+  "version": "1.0.0",
+  "description": "DSH 会话跨版本迁移——把低版本 generation 投放为目标实例中可被自动迁移的会话，并校验两处格式契约（sessions/ 布局、zstd 首帧）",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./lib/zstd": "./lib/zstd.js",
+    "./lib/layout": "./lib/layout.js",
+    "./lib/import": "./lib/import.js",
+    "./lib/inspect": "./lib/inspect.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "dsh-session-migrate": "./cli.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "cli.mjs",
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
