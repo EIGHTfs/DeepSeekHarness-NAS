@@ -170,6 +170,20 @@ else
   DSH_HOME_PARENT="$DSH_DIR/.dsh-home"
 fi
 
+# ---------- 显式指定 DSH_HOME（2026-09-17）----------
+# dsh 按 $DSH_HOME/profiles/<name> 定位 profile（见 dsh --help）。不导出时 dsh 走默认
+# 规则（$HOME 下）：群晖 SSH 里 root 裸跑会落到 /root/.dsh，与服务实际使用的
+# <PKG_VAR>/<version>/.dsh 不是同一个 home → `dsh plugin add` 装到服务读不到的地方，
+# 表现为「插件装完不生效 / 插件市场报错」。
+#   2026-09-17 实机复现：dsh plugin --profile web list
+#     → "dsh: initialized profile web at /root/.dsh/profiles/web"
+# 【强制覆盖，不继承外部残留值】服务必须使用自己的 home：若此处改成「已有 DSH_HOME
+#   则不覆盖」，当服务进程从父环境继承到陈旧/无关的 DSH_HOME（实测：在已设 DSH_HOME
+#   的 shell 里跑本脚本，会保留那个外来值而非 <PKG_VAR>/<version>/.dsh），数据目录
+#   与 profile 会双双跑偏 —— 那是比原 bug 更隐蔽的错误。用户想指定 home 应走 wrapper
+#   的 CLI 场景（见 install_dsh_wrapper），服务侧不接受外部覆盖。
+export DSH_HOME="$DSH_HOME_DIR"
+
 find_node() {
   # 1) 本实例自带 node（bin/node，与 start.sh 同目录 —— 相对路径，与包名无关，最稳）
   # 2) 系统标准路径（/usr/local/bin /usr/bin）
@@ -870,11 +884,31 @@ cmd_start() {
   # ln -sf 幂等（已存在则覆盖式更新），重复执行无害。
   # 注：DSM 的 synopkg 服务以套件用户（非 root）运行本脚本，/usr/bin、/usr/local/bin
   #   均不可写；此时兜底建到 $HOME/.local/bin（须先 mkdir -p，ln 不自动建父目录）。
+  #
+  # 【2026-09-17 改为 wrapper】原先只做软链，用户 SSH 进去敲 `dsh` 时环境里没有
+  # DSH_HOME，dsh 会按默认规则落到 $HOME/.dsh（群晖 root → /root/.dsh），与服务使用的
+  # home 不一致 → 插件装到服务读不到的地方。改为写一个注入 DSH_HOME 的 wrapper，
+  # 使任何方式调用的 dsh 都指向本实例 home（幂等重写；版本升级后 home 变化自动更新）。
+  # 尊重用户已显式设置的 DSH_HOME（wrapper 内不覆盖）。
+  install_dsh_wrapper() {
+    local target="$1" real="$2"
+    mkdir -p "$(dirname "$target")" 2>/dev/null || return 1
+    cat > "$target" <<DSH_WRAPPER_EOF
+#!/bin/sh
+# DSH CLI wrapper —— 由 start.sh 生成（2026-09-17），请勿手改：
+# 注入本实例的 DSH_HOME，避免 dsh 落到 \$HOME/.dsh 导致插件装错位置。
+if [ -z "\${DSH_HOME:-}" ] && [ -d "$DSH_HOME_DIR" ]; then
+  DSH_HOME="$DSH_HOME_DIR"
+  export DSH_HOME
+fi
+exec "$real" "\$@"
+DSH_WRAPPER_EOF
+    chmod 0755 "$target" 2>/dev/null || true
+  }
   if [ -f "$DSH_DIR/bin/dsh" ]; then
-    if ! ln -sf "$DSH_DIR/bin/dsh" /usr/bin/dsh 2>/dev/null; then
-      if ! ln -sf "$DSH_DIR/bin/dsh" /usr/local/bin/dsh 2>/dev/null; then
-        mkdir -p "$HOME/.local/bin" 2>/dev/null
-        ln -sf "$DSH_DIR/bin/dsh" "$HOME/.local/bin/dsh" 2>/dev/null || true
+    if ! install_dsh_wrapper /usr/bin/dsh "$DSH_DIR/bin/dsh"; then
+      if ! install_dsh_wrapper /usr/local/bin/dsh "$DSH_DIR/bin/dsh"; then
+        install_dsh_wrapper "$HOME/.local/bin/dsh" "$DSH_DIR/bin/dsh" || true
       fi
     fi
   fi
@@ -935,6 +969,9 @@ cmd_start() {
       else
         tail -15 "$LOG_FILE" | grep -E "✅|认证|访问|容器|DSH" || true
       fi
+      # 插件安装位置提示：dsh 已随本脚本导出同一 DSH_HOME，故命令行直接 add 即指向本实例
+      echo "  DSH_HOME: $DSH_HOME_DIR"
+      echo "  插件安装: dsh plugin --profile web add <包名>（已指向上述 home，装后 restart 生效）"
       return 0
     fi
   done
