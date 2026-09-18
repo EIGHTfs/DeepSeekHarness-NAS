@@ -13,7 +13,9 @@ defaults:
   brand_name: DeepSeekHarness-NAS
   display_name: DeepSeek Harness          # 门户与清单展示名
   title: DeepSeek Harness                 # 门户 title / 页面标题
-  desc: DeepSeek AI 官方开源的 Agent Harness（智能体框架），飞牛 fnOS 原生应用。门户打开自动携带 token 免密登录。
+  #   描述统一取官方表述（README.zh.md 首段），平台专属补充放各平台段覆盖
+  #   （spk: / fpk: 下的 desc），避免平台文案串到共用段
+  desc: DeepSeek Harness（dsh）是由 DeepSeek AI 开发的开源 agent harness（智能体框架）。门户打开自动携带 token 免密登录。
   desc_short: DeepSeek Harness Web UI
   maintainer: DeepSeek AI
   maintainer_url: https://github.com/deepseek-ai/deepseek-harness
@@ -70,6 +72,8 @@ spk:
 fpk:
   # 覆盖 defaults 中的配置（留空则沿用通用默认）
   # appname: DeepSeekHarness-NAS
+  # ↓ 描述：官方表述 + 本平台补充（飞牛专属表述只放这里，不进 defaults）
+  desc: DeepSeek Harness（dsh）是由 DeepSeek AI 开发的开源 agent harness（智能体框架），飞牛 fnOS 原生应用。门户打开自动携带 token 免密登录。
   # ↓ FPK 端口段：不填即用通用 3080 段（与 spk 的 30800 段隔离）
   # proxy_port: 3080
   # dsh_port: 3081

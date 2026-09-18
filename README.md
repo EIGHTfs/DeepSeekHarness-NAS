@@ -79,6 +79,8 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | `scripts/pnpm` | **pnpm 命令包装器**：随包 node 跑 pnpm.mjs（软链解析，路径与包名无关） | 打进包 `bin/pnpm` |
 | `scripts/migrate-session.sh` | **会话跨版本迁移**：把低版本 generation（如 0.1.2 的 v0）投放为目标 home 中可被自动迁移的会话，由 DSH 打开时沿 v0→v1→v2→v3 迁移边还原。内置两项格式契约校验：`sessions/` 根下裸目录会引发激活失败（`unsupported flat-file layout`，表现为工作区列表为空 + `directoryPickerController unavailable`）；`session.jsonl.zstd` 首帧必须恰好一行 header，`zstd` 整体重压缩会把帧合并成一帧并触发 `corrupt Zstandard session log`。改 header 只重建首帧、其余字节原样保留 | `--list` / `--check <文件>` / `--fix-layout` / `--cwd <新cwd> --in <源文件> --id <会话id>` / `--rollback [备份名]`，均可加 `--home <DSH_HOME>` |
 | `scripts/migrate-session/` | `migrate-session.sh` 的实现模块（ESM）：`cli.mjs` 命令行入口，`index.mjs` 工具编排，`lib/{zstd,layout,import,inspect,target}.js` 分别负责 zstd 多帧读写、`sessions/` 布局校验、会话投放、日志探查与目标 home 探测；`cordis.patch.yml` 为 DSH 插件 bundle 声明 | 由 `migrate-session.sh` 自动调用，无独立入口 |
+| `scripts/migrate-session/lib/follow.py` | **触发迁移**：`session/follow` 是流式 Remote 方法，必须走 WebSocket（HTTP 调会报 `stream Remote methods must be opened through the stream carrier`）。脚本先用启动日志里的 token 换 cookie，再带进 `ws://127.0.0.1:<port>/api/remote.mux` 握手；实测 HTTP 的 `session/page` 冷读**不触发**迁移，只有 follow 一走 `session.lock` 与 `session.v3.jsonl.zstd` 才落盘 | `python3 follow.py <会话id\|all> <DSH_HOME> [--port 30801] [--wait 90]` |
+| `scripts/migrate-session/lib/wsclient.py` | `follow.py` 的最小 WebSocket 客户端（纯标准库）：握手、掩码帧发送、帧接收（含分片与 ping/pong）。目标机（群晖）无 `ws` / `websockets` 库，故手写 | 由 `follow.py` 导入，无独立入口 |
 
 ### 手工构建示例（开发调试用）
 
