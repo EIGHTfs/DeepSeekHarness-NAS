@@ -72,7 +72,7 @@ def exchange_cookie(port, token, host="127.0.0.1"):
     """用 token 换认证 cookie。返回 'name=value' 或 None。"""
     out = sh(f'curl -s -m 8 -D - -o /dev/null "http://{host}:{port}/?token={token}" 2>/dev/null')
     for line in (out or "").splitlines():
-        if line.lower().startswith("set-cookie:"):  # dsh-skip-residue 仅解析响应头，非构造 Cookie，无 Secure/HttpOnly 可加
+        if line.lower().startswith("set-cookie:"):  # dsh-skip-sensitive 仅解析响应头，非构造 Cookie，无 Secure/HttpOnly 可加
             ck = line.split(":", 1)[1].strip().split(";")[0].strip()
             if ck:
                 return ck

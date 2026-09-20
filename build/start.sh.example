@@ -271,6 +271,13 @@ LOG_FILE="${PID_DIR}/${APP_NAME}.log"
 # node 的临时文件走 TMPDIR；fnOS /tmp 不可写会让 mkdtemp EACCES → 启动崩溃
 export TMPDIR="${PID_DIR}/tmp" TMP="${PID_DIR}/tmp" TEMP="${PID_DIR}/tmp"
 mkdir -p "$TMPDIR" 2>/dev/null || true
+# fnOS/Synology 把包用户的登录 shell 记成 /sbin/nologin，但该文件在本机并不存在
+# （/sbin -> usr/sbin，/usr/sbin/nologin 缺失）。DSH 的 subprocess-local 用
+# process.env.SHELL || os.userInfo().shell 解析侧边栏终端默认 shell；不设 SHELL 时
+# 读 /etc/passwd 得到悬空的 /sbin/nologin，resolveExecutable 抛
+# 'subprocess-local: command "/sbin/nologin" is not an executable file'。
+# process.env.SHELL 优先级高于 passwd，继承值不可执行时回退到真实存在的 bash。
+[ -x "${SHELL:-}" ] || export SHELL=/bin/bash
 
 LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 [ -n "$LAN_IP" ] || LAN_IP="<NAS-IP>"

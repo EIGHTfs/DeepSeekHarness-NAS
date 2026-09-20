@@ -288,6 +288,23 @@ synopkg restart DeepSeekHarness-NAS       # DSM：装完必须重启才加载（
 
 > 注意：插件安装属**运行时数据**，落在 `PKG_VAR/<版本>/.dsh`，不随包升级覆盖（数据按版本隔离）。
 
+### 8. 登录 shell 兜底（侧边栏终端可用）
+
+fnOS / Synology 把包服务用户的登录 shell 记成 `/sbin/nologin`，但该文件在系统里并不存在
+（`/sbin -> usr/sbin`，`/usr/sbin/nologin` 缺失）。DSH 的 `subprocess-local` 用
+`process.env.SHELL || os.userInfo().shell` 解析侧边栏终端默认 shell；不设 `SHELL` 时读
+`/etc/passwd` 得到悬空的 `/sbin/nologin`，终端创建直接失败：
+`subprocess-local: command "/sbin/nologin" is not an executable file`。
+
+start.sh 已自动处理，**无需手工设置**：
+
+```bash
+[ -x "${SHELL:-}" ] || export SHELL=/bin/bash
+```
+
+继承值本身可执行就保留（尊重用户已配置的 shell），不可执行或未设置才回退到真实存在的 bash。
+只做运行时环境修正——不改 `/etc/passwd`，不给服务账号可交互登录 shell。
+
 ---
 
 ## 🚀 安装与访问
