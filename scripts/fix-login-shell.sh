@@ -171,12 +171,12 @@ reproduce_dsh() {
     const os = require("os"), fs = require("fs");
     const usr = os.userInfo();
     const def = process.env.SHELL || usr.shell || undefined;
-    let res;
-    try { fs.statSync(def); res = "EXISTS"; } catch (e) { res = "THROWS " + e.code; }
+    let statRes;
+    try { fs.statSync(def); statRes = "EXISTS"; } catch (e) { statRes = "THROWS " + e.code; }
     console.log("    process.env.SHELL     = " + JSON.stringify(process.env.SHELL));
     console.log("    os.userInfo().shell   = " + JSON.stringify(usr.shell));
     console.log("    -> defaultShell       = " + JSON.stringify(def));
-    console.log("    stat(" + JSON.stringify(def) + ")   = " + res);
+    console.log("    stat(" + JSON.stringify(def) + ")   = " + statRes);
   ' 2>/dev/null || dim "    (node 复现失败，可忽略)"
 }
 
