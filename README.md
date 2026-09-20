@@ -73,6 +73,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | `scripts/set-dsh-cpu-quota.sh` | 设置 DSH CPU 配额（cgroup 限制） | `./scripts/set-dsh-cpu-quota.sh` |
 | `scripts/verify-dsh-cpu-quota.sh` | 验证 DSH CPU 配额是否生效 | 无参数 |
 | `scripts/fix-dsh-settings-namespace.sh` | 修复 DSH alpha 版插件加载失败（`settingsNamespace` 缺失） | 幂等，含备份 |
+| `scripts/fix-login-shell.sh` | **登录 shell 悬空探测与修复**：NAS/容器宿主常把服务账号登录 shell 记成 `/sbin/nologin` 但系统里没装该文件；DSH 的 `subprocess-local` 用 `process.env.SHELL \|\| os.userInfo().shell` 解析侧边栏终端默认 shell，拿到悬空路径后抛 `command "/sbin/nologin" is not an executable file`，侧边栏终端整体不可用。探测用 `id -u` + 解析 `/etc/passwd`（不依赖 getent），且只认**已导出**的 `SHELL`——bash 在 `SHELL` 未设时会自填一个非导出的 `$SHELL`，node 子进程看不到，按 bash 变量判会误报解析来源。修补幂等：先备份 `.bak-<时间戳>`，改写后过 `bash -n` 才写；目标先 `readlink -f` 解析软链再按 inode 去重，并**就地 cat 写入**而非 mv（mv 会换 inode，破坏硬链伙伴、把软链换成普通文件） | 无参数=只读探测报告；`--check` 精简输出供 CI；`--patch [文件...]` 插入兜底（默认自动探测 DSH start.sh）；`--passwd` 改 `/etc/passwd`（需 root + 输入确认串）；`--shell PATH`、`--dry-run`。退出码 0/3/1 |
 | `scripts/generate-diff-report.sh` | 差分报告：对比正式版 / 测试版 FPK 差异 | 无参数 |
 | `scripts/first-build-logic.sh` | 「首启构建」逻辑留档（从 start.sh 抽离，实际打包不再使用） | 仅文档 |
 | `scripts/dsh` | **dsh CLI 包装器**：SSH 敲 `dsh` 直接用 DSH CLI（readlink 软链解析，多入口自适应） | 打进包 `bin/dsh` |
