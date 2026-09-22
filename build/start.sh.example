@@ -166,8 +166,23 @@ elif [ -n "${PKG_VAR:-}" ]; then
   DSH_HOME_PARENT="$PKG_VAR/$PKG_VERSION"
   DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
 else
-  DSH_HOME_DIR="$DSH_DIR/.dsh-home/.dsh"
-  DSH_HOME_PARENT="$DSH_DIR/.dsh-home"
+  # 手动启动（无 TRIM_PKGVAR / SYNOPKG_PKGVAR / PKG_VAR 注入，如 SSH 直跑 ./start.sh）：
+  # 优先复用群晖套件标准数据目录（/var/packages/<APP>/var → 真实数据卷，或 /volume*/@appdata/<APP>），
+  # 使手动启动与套件启动落到同一 DSH_HOME（同一 PID 文件），避免「两套实例」——否则
+  # is_running 各读各的 PID 文件互不感知，AI/手动 restart 会操作错误实例（2026-09-22 实测分叉）。
+  # 探测不到（非群晖部署：fnOS 走 TRIM_PKGVAR 分支不受影响；纯目录部署）则回退 .dsh-home 保持原行为。
+  _APP_NAME="${APP_NAME:-$(basename "$DSH_DIR")}"
+  SYNODATA=""
+  for _d in "/var/packages/${_APP_NAME}/var" /volume*/@appdata/${_APP_NAME}; do
+    [ -d "$_d/$PKG_VERSION" ] && { SYNODATA="$_d"; break; }
+  done
+  if [ -n "$SYNODATA" ]; then
+    DSH_HOME_PARENT="$SYNODATA/$PKG_VERSION"
+    DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
+  else
+    DSH_HOME_DIR="$DSH_DIR/.dsh-home/.dsh"
+    DSH_HOME_PARENT="$DSH_DIR/.dsh-home"
+  fi
 fi
 
 # ---------- 显式指定 DSH_HOME（2026-09-17）----------

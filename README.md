@@ -278,6 +278,11 @@ start.sh 已自动处理，**安装后无需手工指定**：
 - **CLI 侧**：`dsh` 命令由 start.sh 装成 wrapper（`/usr/bin/dsh` → `/usr/local/bin/dsh` →
   `$HOME/.local/bin/dsh` 依次尝试），wrapper 内注入同一 `DSH_HOME`；
   若用户已自行 `export DSH_HOME`，wrapper **尊重用户设置**不覆盖。
+- **手动启动侧（2026-09-22）**：SSH 直跑 `./start.sh`（无 TRIM_PKGVAR / SYNOPKG_PKGVAR /
+  PKG_VAR 注入）时，自动探测群晖套件标准数据目录（`/var/packages/<APP>/var` →
+  `/volume*/@appdata/<APP>`），解析到与服务侧**同一 DSH_HOME / 同一 PID 文件**——
+  避免「手动启动 vs 套件启动两套实例」导致 AI/手动 restart 操作错误实例；
+  fnOS（TRIM_PKGVAR 注入走独立分支）与纯目录部署（探测不到，回退 `.dsh-home`）不受影响。
 
 插件管理：
 
