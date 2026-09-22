@@ -140,7 +140,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 - 产物同时上传 artifact（`spk-dist` / `fpk-dist`，保留 14 天）；构建失败时额外上传 `build-spk-debug-log` / `build-fpk-debug-log`（完整 `pnpm-build.log`，因 GitHub 偶尔不归档该 job 日志）
 - **Release 自带 SHA256**（2026-09-15）：发布描述含每个产物的 `sha256sum` 校验值，下载后 `sha256sum <文件>` 对照验证完整性
 - **公共预编译单步（2026-09-14 后合并，2026-09-15 定稿）**：最初为定位死点拆过 `BUILD_STAGE`（`install`/`build`/`prune`）三步，但拆步后 step 被 OOM/磁盘杀时结论 `None` 不触发 `if: failure()`，日志 blob 又常丢失 → 排查不出去向。定稿：**CI 单步 `./build/build-common.sh`（默认 `BUILD_STAGE=all`）**，失败时 `failure()` 捕获 + artifact 兜底完整 `pnpm-build.log`
-- **install 前白名单裁剪（2026-09-14，SPK CI 磁盘爆盘修复）**：annotation 实测根因 = `pnpm install/build` 阶段把 runner 磁盘写满（`No space left on device` → worker 被杀 → step 永久 in_progress）。官方 monorepo 依赖树约 1.78 万包，install 阶段下载全部 devDeps（vitest/jsdom/mermaid 等巨大传递依赖）拉满磁盘峰值。修复：`prune-target.sh --before-install` 在 `pnpm install` **前**用纯白名单剥离根 package.json 中**非白名单 devDeps**，install 不再下载它们；构建必需工具（typescript/tsx/tsdown/lightningcss/execa/smol-toml）手动追加进白名单 `extra`（`gen-prune-whitelist.sh` 自动生成只动 `lockfileDeps`，不覆盖手动部分），install 保留、build 不裂
+- **install 前白名单裁剪（2026-09-14，SPK CI 磁盘爆盘修复）**：annotation 实测根因 = `pnpm install/build` 阶段把 runner 磁盘写满（`No space left on device` → worker 被杀 → step 永久 in_progress）。官方 monorepo 依赖树约 1.78 万包，install 阶段下载全部 devDeps（vitest/jsdom/mermaid 等巨大传递依赖）拉满磁盘峰值。修复：`prune-target.sh --before-install` 在 `pnpm install` **前**用纯白名单剥离根 package.json 中**非白名单 devDeps**，install 不再下载它们；构建必需工具（typescript/tsx/tsdown/lightningcss/execa/smol-toml/**extract-zip/tar**）手动追加进白名单 `extra`（`gen-prune-whitelist.sh` 自动生成只动 `lockfileDeps`，不覆盖手动部分），install 保留、build 不裂
 - 本地等效：按「本地构建」段落逐脚本跑（同一套 fetch → build → 打包 流程）
 
 ### 打包模式：预构建产物包（唯一模式）
