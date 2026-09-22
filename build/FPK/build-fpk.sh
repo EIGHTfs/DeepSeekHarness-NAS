@@ -479,163 +479,140 @@ load_variables_from_file "${INST_VARIABLES}"
 call_func "initialize_variables" install_log
 EOF
 
-# 空壳钩子
+# 生命周期钩子：官方薄壳结构（fnOS 只执行薄壳，自包含大脚本实测不被执行——
+#   2026-09-13 skill 实测铁证 + 2026-09-22 飞牛真机复验：数据保留但无 trace）。
+# 每个钩子 = source config/common/package + 调同名函数（函数定义在 package）。
 for hook in install_init uninstall_init upgrade_init config_init config_callback uninstall_callback upgrade_callback; do
-  printf '#!/bin/bash\n### %s hook\nif [ -r "$(dirname $0)/common" ]; then . "$(dirname $0)/common"; fi\nexit 0\n' "$hook" > "$FPK_SRC/cmd/$hook"
+  cat > "$FPK_SRC/cmd/$hook" <<'SHELL'
+#!/bin/bash
+
+. $(dirname $0)"/config"
+. $(dirname $0)"/common"
+. $(dirname $0)"/package"
+$(basename $0) > $TRIM_TEMP_LOGFILE
+SHELL
 done
 
-# cmd/install_callback：预建版本数据目录（/vol1/@appdata 属 root，应用用户无权限自建）
-#   版本号来源与 bin/start.sh 的 resolve_pkg_version 保持一致（dsh 包 → npm 产物 → 顶层），
-#   否则建目录与实际使用目录不一致（2026-09-13 实测：npm 链路顶层是外壳 dsh-web/1.0.0）
-#   ⚠ APP_DIR 不得依赖 TRIM_APPDEST 注入（fnOS 安装期不注入它，实测为空→回退 /vol1 错位）；
+# cmd/package：生命周期同名函数框架（官方薄壳链的第三层，钩子第二行调这里）
+#   install_callback：预建版本数据目录（/vol1/@appdata 属 root，应用用户无权限自建）
+#   uninstall_callback：消费 wizard/uninstall 的 wizard_delete_data —— true=彻底删除，
+#                        false/缺省=保留数据（2026-09-22 修复：旧自包含版本不被执行）
+cat > "$FPK_SRC/cmd/package" <<'SHELL'
+#!/bin/bash
+
+# 读 wizard 表单持久化值（installer-variables 文件；fnOS 卸载向导选择写这里）
+load_variables_from_file() {
+  local f="${1:-}"
+  [ -n "$f" ] && [ -f "$f" ] && . "$f" 2>/dev/null || true
+}
+
+# 版本号：与 bin/start.sh 的 resolve_pkg_version 一致（dsh 包 → npm 产物 → 顶层）
+#   ⚠ APP_DIR 不得依赖 TRIM_APPDEST 注入（fnOS 安装/卸载期实测为空→回退 /vol1 错位）；
 #     必须像 cmd/main 一样经 /var/apps/<APP>/target 软链解析真实安装位置（实测 /vol2）。
-cat > "$FPK_SRC/cmd/install_callback" <<'EOF'
-#!/bin/bash
-# 执行痕迹（写应用数据目录而非 /tmp：fnOS /tmp 属 root 且无 sticky，应用用户写不进；
-# 2026-09-13 曾用 /tmp 探针得到"未执行"的假结论，改这里才能确诊 fnOS 是否/以何用户执行本钩子）
-{
-  echo "[install_callback] $(date '+%H:%M:%S') uid=$(id -u) user=$(id -un) TRIM_APPDEST=${TRIM_APPDEST:-<空>} TRIM_PKGVAR=${TRIM_PKGVAR:-<空>}"
-} >> "${TRIM_PKGVAR:-/var/apps/__APP_NAME__}/install-callback.trace" 2>/dev/null || true
-APP_NAME="__APP_NAME__"
-APP_USER="${TRIM_APPNAME:-__APP_NAME__}"
-PKG_ROOT="${TRIM_PKGVAR:-/vol1/@appdata/__APP_NAME__}"
-# 真实应用目录：fnOS 把应用体解压后挂在 /var/apps/<APP>/target 软链上；
-# 安装期 TRIM_APPDEST 不注入，须经该软链解析（与 cmd/main 同款逻辑）
-if [ -n "${TRIM_APPDEST:-}" ]; then
-  APP_DIR="${TRIM_APPDEST}"
-elif [ -e "/var/apps/${APP_NAME}/target" ]; then
-  APP_DIR="$(readlink -f "/var/apps/${APP_NAME}/target" 2>/dev/null || echo "/var/apps/${APP_NAME}/target")"
-else
-  APP_DIR="/vol1/@appcenter/${APP_NAME}"
-fi
-# 版本号：dsh 包 version（优先）→ npm 产物 localBuildVersion 串 → 顶层 package.json → 打包期兜底值
-version_from(){
-  local src="$1" f v
+_app_dir() {
+  if [ -n "${TRIM_APPDEST:-}" ]; then
+    printf '%s' "${TRIM_APPDEST}"
+  elif [ -e "/var/apps/${APPNAME}/target" ]; then
+    readlink -f "/var/apps/${APPNAME}/target" 2>/dev/null
+  else
+    printf '%s' "/vol1/@appcenter/${APPNAME}"
+  fi
+}
+_version_from() {
+  local src="$1" dir="$2" f v
   case "$src" in
     dsh)
-      for f in "$APP_DIR/node_modules/@deepseek-ai/dsh/package.json" \
-               "$APP_DIR/node_modules/node_modules/@deepseek-ai/dsh/package.json" \
-               "$APP_DIR/apps/cli/package.json"; do
+      for f in "$dir/node_modules/@deepseek-ai/dsh/package.json" \
+               "$dir/node_modules/node_modules/@deepseek-ai/dsh/package.json" \
+               "$dir/apps/cli/package.json"; do
         [ -f "$f" ] || continue
         v="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" 2>/dev/null | head -1)"
         [ -n "$v" ] && { printf '%s' "$v"; return 0; }
       done ;;
     npm)
-      for f in "$APP_DIR/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js" \
-               "$APP_DIR/node_modules/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js"; do
+      for f in "$dir/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js" \
+               "$dir/node_modules/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js"; do
         [ -f "$f" ] || continue
         v="$(sed -n 's/.*function localBuildVersion()[^{]*{[[:space:]]*return[[:space:]]*`\([^`]*\)`.*/\1/p' "$f" 2>/dev/null | head -1)"
         [ -n "$v" ] && { printf '%s' "$v"; return 0; }
       done ;;
     top)
-      f="$APP_DIR/package.json"
+      f="$dir/package.json"
       [ -f "$f" ] && sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" 2>/dev/null | head -1 ;;
   esac
   return 0
 }
-VERSION=""
-for _s in __BRAND_VERSION_ORDER_COMMA__ top; do
-  VERSION="$(version_from "$_s")"
-  [ -n "$VERSION" ] && break
-done
-[ -z "$VERSION" ] && VERSION="__FPK_VERSION__"
-mkdir -p "${PKG_ROOT}/${VERSION}" 2>/dev/null || exit 0
-chown -R "${APP_USER}:${APP_USER}" "${PKG_ROOT}" 2>/dev/null || true
-chmod 700 "${PKG_ROOT}/${VERSION}" 2>/dev/null || true
-# ── dsh / pnpm 命令软链（本钩子由 fnOS 安装期以 root 执行，才能写系统 PATH；
-#    注意：service_postinst 在 fnOS 生命周期里从不被调用，软链只能放这里）──
-for _name in dsh pnpm; do
-  [ -f "${APP_DIR}/bin/${_name}" ] || continue
-  for _d in /usr/local/bin /usr/bin; do
-    [ -d "${_d}" ] || continue
-    ln -sfn "${APP_DIR}/bin/${_name}" "${_d}/${_name}" 2>/dev/null && break
-  done
-done
-exit 0
-EOF
 
-# uninstall_callback：只删本版本数据目录；父目录空则删父（仅剩一个版本时父目录即被删）
-cat > "$FPK_SRC/cmd/uninstall_callback" <<'EOF'
-#!/bin/bash
-APP_NAME="__APP_NAME__"
-APP_USER="${TRIM_APPNAME:-__APP_NAME__}"
-PKG_ROOT="${TRIM_PKGVAR:-/vol1/@appdata/__APP_NAME__}"
-# 同 install_callback：TRIM_APPDEST 卸载期不注入，经 /var/apps/<APP>/target 解析真实位置
-if [ -n "${TRIM_APPDEST:-}" ]; then
-  APP_DIR="${TRIM_APPDEST}"
-elif [ -e "/var/apps/${APP_NAME}/target" ]; then
-  APP_DIR="$(readlink -f "/var/apps/${APP_NAME}/target" 2>/dev/null || echo "/var/apps/${APP_NAME}/target")"
-else
-  APP_DIR="/vol1/@appcenter/${APP_NAME}"
-fi
-version_from(){
-  local src="$1" f v
-  case "$src" in
-    dsh)
-      for f in "$APP_DIR/node_modules/@deepseek-ai/dsh/package.json" \
-               "$APP_DIR/node_modules/node_modules/@deepseek-ai/dsh/package.json" \
-               "$APP_DIR/apps/cli/package.json"; do
-        [ -f "$f" ] || continue
-        v="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" 2>/dev/null | head -1)"
-        [ -n "$v" ] && { printf '%s' "$v"; return 0; }
-      done ;;
-    npm)
-      for f in "$APP_DIR/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js" \
-               "$APP_DIR/node_modules/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js"; do
-        [ -f "$f" ] || continue
-        v="$(sed -n 's/.*function localBuildVersion()[^{]*{[[:space:]]*return[[:space:]]*`\([^`]*\)`.*/\1/p' "$f" 2>/dev/null | head -1)"
-        [ -n "$v" ] && { printf '%s' "$v"; return 0; }
-      done ;;
-    top)
-      f="$APP_DIR/package.json"
-      [ -f "$f" ] && sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" 2>/dev/null | head -1 ;;
-  esac
-  return 0
-}
-VERSION=""
-for _s in __BRAND_VERSION_ORDER_COMMA__ top; do
-  VERSION="$(version_from "$_s")"
-  [ -n "$VERSION" ] && break
-done
-[ -z "$VERSION" ] && VERSION="__FPK_VERSION__"
-# ── 卸载数据选项（wizard/uninstall radio: wizard_delete_data）──
-# 值语义与官方 common 一致：true=彻底删除，false/缺省=保留。
-# fnOS 卸载向导值注入方式双通道兼容：环境变量（wizard_delete_data / WIZARD_DELETE_DATA）
-# 或 installer-variables 文件（wizard 值持久化处，同 install 向导机制）。
-DELETE_DATA="${wizard_delete_data:-${WIZARD_DELETE_DATA:-}}"
-if [ -z "$DELETE_DATA" ] && [ -f "${INST_VARIABLES:-/var/apps/${APP_NAME}/etc/installer-variables}" ]; then
-  # shellcheck disable=SC1090
-  . "${INST_VARIABLES:-/var/apps/${APP_NAME}/etc/installer-variables}" 2>/dev/null || true
-  DELETE_DATA="${wizard_delete_data:-}"
-fi
-# trace：记录卸载选择与执行痕迹（真机验证 fnOS 是否执行本钩子 + 选项是否传达）
-{
-  echo "[uninstall_callback] $(date '+%H:%M:%S') uid=$(id -u) user=$(id -un) wizard_delete_data=${DELETE_DATA:-<空>} VERSION=${VERSION:-<空>}"
-} >> "${PKG_ROOT}/uninstall-callback.trace" 2>/dev/null || true
-if [ "$DELETE_DATA" = "true" ]; then
-  # 用户选择彻底删除：只删本版本数据目录；父目录空则删父（仅剩一个版本时父目录即被删）
-  if [ -n "$VERSION" ] && [ -d "$PKG_ROOT/$VERSION" ]; then
-    rm -rf "$PKG_ROOT/$VERSION" 2>/dev/null
-  fi
-  if [ -d "$PKG_ROOT" ] && [ -z "$(ls -A "$PKG_ROOT" 2>/dev/null)" ]; then
-    rm -rf "$PKG_ROOT" 2>/dev/null
-  fi
-else
-  # 默认/保留：数据目录原样保留，重新安装直接复用（不再无条件删除）
+install_init() { exit 0; }
+
+install_callback() {
+  # 执行痕迹（写应用数据目录而非 /tmp：fnOS /tmp 属 root 且无 sticky，应用用户写不进）
   {
-    echo "[uninstall_callback] 保留数据（wizard_delete_data=${DELETE_DATA:-<空>}）: ${PKG_ROOT}/${VERSION}"
-  } >> "${TRIM_PKGVAR:-/var/apps/${APP_NAME}}/uninstall-callback.trace" 2>/dev/null || true
-fi
-# 清理本应用建的 dsh/pnpm 软链（只删指向本应用 bin/ 的软链，不碰别的应用/真实文件）
-for _name in dsh pnpm; do
-  for _d in /usr/local/bin /usr/bin; do
-    if [ -L "${_d}/${_name}" ] && [ "$(readlink "${_d}/${_name}" 2>/dev/null)" = "${APP_DIR}/bin/${_name}" ]; then
-      rm -f "${_d}/${_name}" 2>/dev/null || true
-    fi
+    echo "[install_callback] $(date '+%H:%M:%S') uid=$(id -u) user=$(id -un) TRIM_APPDEST=${TRIM_APPDEST:-<空>} TRIM_PKGVAR=${TRIM_PKGVAR:-<空>}"
+  } >> "${TRIM_PKGVAR:-/var/apps/${APPNAME}}/install-callback.trace" 2>/dev/null || true
+  local APP_DIR; APP_DIR="$(_app_dir)"
+  local VERSION=""
+  for _s in __BRAND_VERSION_ORDER_COMMA__ top; do
+    VERSION="$(_version_from "$_s" "$APP_DIR")"
+    [ -n "$VERSION" ] && break
   done
-done
-exit 0
-EOF
+  [ -z "$VERSION" ] && VERSION="__FPK_VERSION__"
+  # 预建版本数据目录（安装期 /vol1/@appdata 属 root，应用用户无权限自建）
+  if [ -n "$VERSION" ]; then
+    mkdir -p "${TRIM_PKGVAR:-/vol1/@appdata/${APPNAME}}/${VERSION}" 2>/dev/null || true
+  fi
+  exit 0
+}
+
+uninstall_init() { exit 0; }
+
+uninstall_callback() {
+  # 执行痕迹（真机验证 fnOS 是否执行本钩子 + 选项是否传达）
+  {
+    echo "[uninstall_callback] $(date '+%H:%M:%S') uid=$(id -u) user=$(id -un) TRIM_PKGVAR=${TRIM_PKGVAR:-<空>}"
+  } >> "${TRIM_PKGVAR:-/var/apps/${APPNAME}}/uninstall-callback.trace" 2>/dev/null || true
+  # wizard 卸载选项（保留/彻底删除）：值经 installer-variables 持久化（环境变量双通道兼容）
+  local DELETE_DATA="${wizard_delete_data:-${WIZARD_DELETE_DATA:-}}"
+  if [ -z "$DELETE_DATA" ]; then
+    load_variables_from_file "${INST_VARIABLES:-/var/apps/${APPNAME}/etc/installer-variables}"
+    DELETE_DATA="${wizard_delete_data:-}"
+  fi
+  local APP_DIR; APP_DIR="$(_app_dir)"
+  local VERSION=""
+  for _s in __BRAND_VERSION_ORDER_COMMA__ top; do
+    VERSION="$(_version_from "$_s" "$APP_DIR")"
+    [ -n "$VERSION" ] && break
+  done
+  [ -z "$VERSION" ] && VERSION="__FPK_VERSION__"
+  {
+    echo "[uninstall_callback] wizard_delete_data=${DELETE_DATA:-<空>} VERSION=${VERSION:-<空>}"
+  } >> "${TRIM_PKGVAR:-/var/apps/${APPNAME}}/uninstall-callback.trace" 2>/dev/null || true
+  if [ "$DELETE_DATA" = "true" ]; then
+    # 用户选择彻底删除：只删本版本数据目录；父目录空则删父（仅剩一个版本时父目录即被删）
+    local PKG_ROOT="${TRIM_PKGVAR:-/vol1/@appdata/${APPNAME}}"
+    if [ -n "$VERSION" ] && [ -d "$PKG_ROOT/$VERSION" ]; then
+      rm -rf "$PKG_ROOT/$VERSION" 2>/dev/null
+    fi
+    if [ -d "$PKG_ROOT" ] && [ -z "$(ls -A "$PKG_ROOT" 2>/dev/null)" ]; then
+      rm -rf "$PKG_ROOT" 2>/dev/null
+    fi
+  else
+    {
+      echo "[uninstall_callback] 保留数据（wizard_delete_data=${DELETE_DATA:-<空>}）: ${TRIM_PKGVAR:-/vol1/@appdata/${APPNAME}}/${VERSION}"
+    } >> "${TRIM_PKGVAR:-/var/apps/${APPNAME}}/uninstall-callback.trace" 2>/dev/null || true
+  fi
+  exit 0
+}
+
+upgrade_init() { exit 0; }
+
+upgrade_callback() { exit 0; }
+
+config_init() { exit 0; }
+
+config_callback() { exit 0; }
+SHELL
+
 
 chmod -R 755 "$FPK_SRC/cmd"/
 
