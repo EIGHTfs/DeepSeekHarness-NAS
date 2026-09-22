@@ -598,11 +598,33 @@ for _s in __BRAND_VERSION_ORDER_COMMA__ top; do
   [ -n "$VERSION" ] && break
 done
 [ -z "$VERSION" ] && VERSION="__FPK_VERSION__"
-if [ -n "$VERSION" ] && [ -d "$PKG_ROOT/$VERSION" ]; then
-  rm -rf "$PKG_ROOT/$VERSION" 2>/dev/null
+# ── 卸载数据选项（wizard/uninstall radio: wizard_delete_data）──
+# 值语义与官方 common 一致：true=彻底删除，false/缺省=保留。
+# fnOS 卸载向导值注入方式双通道兼容：环境变量（wizard_delete_data / WIZARD_DELETE_DATA）
+# 或 installer-variables 文件（wizard 值持久化处，同 install 向导机制）。
+DELETE_DATA="${wizard_delete_data:-${WIZARD_DELETE_DATA:-}}"
+if [ -z "$DELETE_DATA" ] && [ -f "${INST_VARIABLES:-/var/apps/${APP_NAME}/etc/installer-variables}" ]; then
+  # shellcheck disable=SC1090
+  . "${INST_VARIABLES:-/var/apps/${APP_NAME}/etc/installer-variables}" 2>/dev/null || true
+  DELETE_DATA="${wizard_delete_data:-}"
 fi
-if [ -d "$PKG_ROOT" ] && [ -z "$(ls -A "$PKG_ROOT" 2>/dev/null)" ]; then
-  rm -rf "$PKG_ROOT" 2>/dev/null
+# trace：记录卸载选择与执行痕迹（真机验证 fnOS 是否执行本钩子 + 选项是否传达）
+{
+  echo "[uninstall_callback] $(date '+%H:%M:%S') uid=$(id -u) user=$(id -un) wizard_delete_data=${DELETE_DATA:-<空>} VERSION=${VERSION:-<空>}"
+} >> "${PKG_ROOT}/uninstall-callback.trace" 2>/dev/null || true
+if [ "$DELETE_DATA" = "true" ]; then
+  # 用户选择彻底删除：只删本版本数据目录；父目录空则删父（仅剩一个版本时父目录即被删）
+  if [ -n "$VERSION" ] && [ -d "$PKG_ROOT/$VERSION" ]; then
+    rm -rf "$PKG_ROOT/$VERSION" 2>/dev/null
+  fi
+  if [ -d "$PKG_ROOT" ] && [ -z "$(ls -A "$PKG_ROOT" 2>/dev/null)" ]; then
+    rm -rf "$PKG_ROOT" 2>/dev/null
+  fi
+else
+  # 默认/保留：数据目录原样保留，重新安装直接复用（不再无条件删除）
+  {
+    echo "[uninstall_callback] 保留数据（wizard_delete_data=${DELETE_DATA:-<空>}）: ${PKG_ROOT}/${VERSION}"
+  } >> "${TRIM_PKGVAR:-/var/apps/${APP_NAME}}/uninstall-callback.trace" 2>/dev/null || true
 fi
 # 清理本应用建的 dsh/pnpm 软链（只删指向本应用 bin/ 的软链，不碰别的应用/真实文件）
 for _name in dsh pnpm; do
