@@ -789,8 +789,14 @@ code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
         });
       } else {
         const resHeaders = { ...proxyRes.headers };
-        resHeaders['cache-control'] = 'no-store, no-cache, must-revalidate';
-        resHeaders['pragma'] = 'no-cache';
+        const _ct = (resHeaders['content-type'] || '').toLowerCase();
+        // 媒体资源（video/*、image/*）保留后端缓存头（public max-age=86400 + ETag/If-Range）：
+        // 浏览器 HTTP 缓存生效 → 开屏/壁纸视频重播零请求（此前统一 no-store 导致每次全量重新
+        // Range 请求）；其余响应维持 no-store（认证代理保守，配置/页面即时生效原则不变）。
+        if (!(_ct.startsWith('video/') || _ct.startsWith('image/'))) {
+          resHeaders['cache-control'] = 'no-store, no-cache, must-revalidate';
+          resHeaders['pragma'] = 'no-cache';
+        }
         fixSetCookie(resHeaders);
         clientRes.writeHead(proxyRes.statusCode, resHeaders);
         proxyRes.pipe(clientRes, { end: true });
