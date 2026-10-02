@@ -38,7 +38,11 @@ done
 #   ① 显式传参 → ② 项目 tools/node-dist（本地构建缓存）→ ③ command -v node
 #   （CI 的 setup-node）→ ④ target/bin/node（已随包）。CI 之前只探测 ② 失败 → exit 1
 #   → 补包静默失败（CI 包缺 is-plain-obj，plugin-manager 挂，实测铁证）。
-[ -n "$NODE_BIN" ] || NODE_BIN="$(ls -d "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"/tools/node-dist/node-v*/bin/node 2>/dev/null | head -1)"
+# ⚠ 命令替换内管道在 set -euo pipefail 下的坑（2026-10-02 实测第 5 层根因）：
+#   NODE_BIN="$(ls ... | head -1)" —— CI 无 tools/node-dist 时 ls 失败 → 管道非零
+#   → 命令替换非零 → set -e 立即退出（连 command -v 回退都没机会跑）。每个命令
+#   替换必须内联 || true，不能只靠下一行的兜底。
+[ -n "$NODE_BIN" ] || NODE_BIN="$(ls -d "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"/tools/node-dist/node-v*/bin/node 2>/dev/null | head -1 || true)"
 [ -n "$NODE_BIN" ] || NODE_BIN="$(command -v node 2>/dev/null || true)"
 [ -n "$NODE_BIN" ] || NODE_BIN="${1:+$TARGET/bin/node}"
 [ -x "$NODE_BIN" ] || { echo "✗ 未找到 node: $NODE_BIN（请显式传 NODE_BIN）" >&2; exit 1; }
