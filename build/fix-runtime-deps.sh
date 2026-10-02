@@ -45,16 +45,21 @@ done
 [ -d "$BUILD_SRC/node_modules/.pnpm" ] || { echo "✗ BUILD_SRC 无 node_modules: $BUILD_SRC" >&2; exit 1; }
 
 # 探测：import 运行时核心入口，提取缺失包名（Cannot find package 'x'）
+# ⚠ 2026-10-02 修正：内层管道 `grep` 无匹配时在 set -euo pipefail 下返回非零，
+#   导致函数提前退出（后续入口未探测、误报"依赖完整"；CI 里表现为补包返回非零）。
+#   每个管道末尾加 `|| true`，保证遍历全部入口后再统一判空。
 detect() {
-  local entry out
   cd "$TARGET" || return
+  local out miss=""
   for entry in packages/boot/*/lib/index.js apps/cli/lib/bin.js; do
     [ -f "$entry" ] || continue
     out=$(timeout 20 "$NODE_BIN" --input-type=module -e "
       try { await import('file://$PWD/$entry'); }
-      catch(e) { if (e && e.message) console.log('MISS:' + e.message); }" 2>&1)
-    echo "$out" | grep -oE "Cannot find package '[^']+'" | sed "s/Cannot find package '//;s/'//"
-  done | sort -u
+      catch(e) { if (e && e.message) console.log('MISS:' + e.message); }" 2>&1) || true
+    miss+="$(echo "$out" | grep -oE "Cannot find package '[^']+'" | sed "s/Cannot find package '//;s/'//" || true)"
+    miss+=$'\n'
+  done
+  echo "$miss" | tr ' ' '\n' | sort -u | grep -v '^$' || true
 }
 
 restored=0
