@@ -34,8 +34,14 @@ while [ $# -gt 0 ]; do
     *) NODE_BIN="$1"; shift ;;
   esac
 done
+# NODE_BIN 自探测（2026-10-02 修正：CI 无 tools/node-dist，需回退 PATH 的 node）：
+#   ① 显式传参 → ② 项目 tools/node-dist（本地构建缓存）→ ③ command -v node
+#   （CI 的 setup-node）→ ④ target/bin/node（已随包）。CI 之前只探测 ② 失败 → exit 1
+#   → 补包静默失败（CI 包缺 is-plain-obj，plugin-manager 挂，实测铁证）。
 [ -n "$NODE_BIN" ] || NODE_BIN="$(ls -d "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"/tools/node-dist/node-v*/bin/node 2>/dev/null | head -1)"
-[ -x "$NODE_BIN" ] || { echo "✗ 未找到 node: $NODE_BIN" >&2; exit 1; }
+[ -n "$NODE_BIN" ] || NODE_BIN="$(command -v node 2>/dev/null || true)"
+[ -n "$NODE_BIN" ] || NODE_BIN="${1:+$TARGET/bin/node}"
+[ -x "$NODE_BIN" ] || { echo "✗ 未找到 node: $NODE_BIN（请显式传 NODE_BIN）" >&2; exit 1; }
 [ -d "$BUILD_SRC/node_modules/.pnpm" ] || { echo "✗ BUILD_SRC 无 node_modules: $BUILD_SRC" >&2; exit 1; }
 
 # 探测：import 运行时核心入口，提取缺失包名（Cannot find package 'x'）
