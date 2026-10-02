@@ -90,6 +90,42 @@ print(rs[0]['tag_name'])
   echo "▶ 最新 release: $TAG"
 fi
 
+# ---------- aria2c 自动探测 + 缺失下载（2026-10-02） ----------
+# 有则用系统/已有的；没有则下载 P3TERX/Aria2-Pro-Core 静态二进制到本项目
+# tools/aria2/（自备工具惯例）并注入 PATH，避免每次回退慢速 curl 单流。
+ARIA2C="$(command -v aria2c 2>/dev/null || true)"
+ensure_aria2c() {
+  if [[ -n "$ARIA2C" ]]; then return 0; fi
+  local _cand="$WS/tools/aria2/bin/aria2c"
+  if [[ -x "$_cand" ]]; then
+    ARIA2C="$_cand"; PATH="$WS/tools/aria2/bin:$PATH"; return 0
+  fi
+  echo "▶ 未检测到 aria2c，下载 P3TERX 静态构建（4.5MB）到 $WS/tools/aria2/"
+  mkdir -p "$WS/tools/aria2" "$WS/tools/.aria2-tmp"
+  local _tgz="$WS/tools/.aria2-tmp/aria2-static.tar.gz"
+  # 资产 id 固定（P3TERX/Aria2-Pro-Core 1.36.0 amd64）；下载失败则保留 curl 回退
+  if curl -L --fail --connect-timeout 10 --max-time 120 -H "$AUTH_HEADER" \
+      -H "Accept: application/octet-stream" \
+      -o "$_tgz" "https://api.github.com/repos/P3TERX/Aria2-Pro-Core/releases/assets/43018056" \
+      && tar -xzf "$_tgz" -C "$WS/tools/aria2" 2>/dev/null; then
+    # 静态包内含 bin/aria2c（不同版本路径可能不同，兜底 find）
+    if [[ ! -x "$WS/tools/aria2/bin/aria2c" ]]; then
+      local _found; _found="$(find "$WS/tools/aria2" -name aria2c -type f 2>/dev/null | head -1)"
+      [[ -n "$_found" ]] && mkdir -p "$WS/tools/aria2/bin" && cp "$_found" "$WS/tools/aria2/bin/aria2c"
+    fi
+    chmod +x "$WS/tools/aria2/bin/aria2c" 2>/dev/null || true
+    if [[ -x "$WS/tools/aria2/bin/aria2c" ]]; then
+      ARIA2C="$WS/tools/aria2/bin/aria2c"; PATH="$WS/tools/aria2/bin:$PATH"
+      echo "✓ aria2c 就绪: $ARIA2C"
+    else
+      echo "  ⚠ aria2c 下载/解压失败，继续用 curl 单流"
+    fi
+  else
+    echo "  ⚠ aria2c 下载失败，继续用 curl 单流"
+  fi
+  rm -rf "$WS/tools/.aria2-tmp"
+}
+
 # ---------- 列出资产（name/id/size） ----------
 list_assets() {
   api "https://api.github.com/repos/$REPO/releases/tags/$TAG" \
@@ -106,7 +142,8 @@ OUT_DIR="$WS/release/$TAG"
 mkdir -p "$OUT_DIR"
 
 echo "▶ 目标目录: $OUT_DIR"
-echo "▶ 下载器: aria2c（-x $THREADS -s $THREADS 分段并发）"
+echo "▶ 下载器: $([ -n "$ARIA2C" ] && echo "aria2c（-x $THREADS -s $THREADS 分段并发）" || echo "curl 单流（aria2c 不可用）")"
+ensure_aria2c
 
 fail=0
 while IFS=$'\t' read -r name id size; do
@@ -125,8 +162,8 @@ while IFS=$'\t' read -r name id size; do
 
   echo "  ↓ $name（${want_mb} MB）"
   url="https://api.github.com/repos/$REPO/releases/assets/$id"
-  if command -v aria2c >/dev/null 2>&1; then
-    aria2c --quiet=true --show-console-readout=false \
+  if [[ -n "$ARIA2C" ]]; then
+    "$ARIA2C" --quiet=true --show-console-readout=false \
       --max-connection-per-server="$THREADS" --split="$THREADS" --min-split-size=1M \
       --max-concurrent-downloads="$JOBS_PER_FILE" --continue=true \
       --header="$AUTH_HEADER" \
