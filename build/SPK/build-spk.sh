@@ -223,36 +223,48 @@ setup_pkg_env() {
 # ── 安装向导端口覆盖（WIZARD_UIFILES/install_uifile → wizard_proxy_port 等）──
 # 用户安装时填的端口写数据目录 <PKG_VAR>/ports（版本隔离、跨升级保留），
 # start-stop-status 优先读它；未填则回退打包默认（target/var/ports）。
+# 2026-10-02 修正：ui/config 门户端口**无条件同步**（不依赖 wizard 是否填写）——
+#   重装时安装向导没填端口 → 旧逻辑 NEED 为空 → 不同步 → DSM 重新部署的
+#   ui/config 回到打包默认 30800，而服务端口（ports 文件跨版本保留的 3080）没变
+#   → 服务 3080 / 门户 30800 不一致（实测 10.10.10.64）。现在始终用
+#   「向导值 → 历史 ports 文件 → 打包默认」的最终值同步 ui/config，门户与服务恒一致。
 apply_wizard_ports() {
   local VER="$(pkg_version_resolved)"
   local PORTS_FILE="${PKG_VAR_DIR}/${VER}/ports"
-  local NEED=""
-  # 任一端口字段填写即整体覆盖（三个一起写，避免半覆盖错乱）
-  if [ -n "${wizard_proxy_port:-}" ] || [ -n "${wizard_dsh_port:-}" ] || [ -n "${wizard_container_port:-}" ]; then
-    NEED=1
+  # 最终端口：① 历史 ports 文件（跨升级保留）→ ② 向导值覆盖 → ③ 打包默认兜底
+  local _PP="" _DP="" _CP=""
+  if [ -f "$PORTS_FILE" ]; then
+    _PP="$(awk -F= '/^PROXY_PORT=/{print $2}' "$PORTS_FILE" 2>/dev/null)"
+    _DP="$(awk -F= '/^DSH_PORT=/{print $2}' "$PORTS_FILE" 2>/dev/null)"
+    _CP="$(awk -F= '/^CONTAINER_PORT=/{print $2}' "$PORTS_FILE" 2>/dev/null)"
   fi
-  if [ -n "$NEED" ]; then
-    local _PP="${wizard_proxy_port:-__SPK_PROXY_PORT__}"
-    mkdir -p "${PKG_VAR_DIR}/${VER}"
-    {
-      echo "# 安装向导指定端口（2026-10-02 新增，优先级最高）"
-      echo "PROXY_PORT=${_PP}"
-      echo "DSH_PORT=${wizard_dsh_port:-__SPK_DSH_PORT__}"
-      echo "CONTAINER_PORT=${wizard_container_port:-__SPK_CONTAINER_PORT__}"
-    } > "$PORTS_FILE"
-    chown "${PACKAGE_NAME}:system" "$PORTS_FILE" 2>/dev/null || true
-    # ── 同步门户入口端口（2026-10-02）────────────────────────────────────────
-    # DSM 桌面套件图标的「打开」用 ui/config 的 port 字段；它是**打包期静态生成**的，
-    # 不同步则门户恒指向打包默认端口——实测 10.10.10.64：向导填 3080，门户仍打开
-    # http://<nas>:30800/。此处按安装向导值改写（INFO 带 reloadui="yes"，DSM 会重载 UI）。
-    for _ui in "/var/packages/${PACKAGE_NAME}/ui/config" "${PACKAGE_BASE}/ui/config"; do
-      if [ -f "$_ui" ]; then
-        sed -i "s/\"port\"[[:space:]]*:[[:space:]]*\"[0-9]*\"/\"port\": \"${_PP}\"/" "$_ui" 2>/dev/null || true
-        echo "[installer] 门户端口已同步: $_ui → ${_PP}" >&2
-      fi
-    done
-    echo "[installer] 安装向导端口已生效: ${_PP}/${wizard_dsh_port:-__SPK_DSH_PORT__}/${wizard_container_port:-__SPK_CONTAINER_PORT__}" >&2
-  fi
+  [ -n "${wizard_proxy_port:-}" ] && _PP="${wizard_proxy_port}"
+  [ -n "${wizard_dsh_port:-}" ] && _DP="${wizard_dsh_port}"
+  [ -n "${wizard_container_port:-}" ] && _CP="${wizard_container_port}"
+  _PP="${_PP:-__SPK_PROXY_PORT__}"
+  _DP="${_DP:-__SPK_DSH_PORT__}"
+  _CP="${_CP:-__SPK_CONTAINER_PORT__}"
+
+  # 写 ports 文件（总是写，反映最终生效端口；服务 start-stop-status 优先读它）
+  mkdir -p "${PKG_VAR_DIR}/${VER}"
+  {
+    echo "# 生效端口（2026-10-02：向导值优先，其次历史保留，缺省打包默认）"
+    echo "PROXY_PORT=${_PP}"
+    echo "DSH_PORT=${_DP}"
+    echo "CONTAINER_PORT=${_CP}"
+  } > "$PORTS_FILE"
+  chown "${PACKAGE_NAME}:system" "$PORTS_FILE" 2>/dev/null || true
+
+  # ── 无条件同步门户入口端口（ui/config 的 port 字段，打包期静态生成）──────
+  # DSM 桌面套件图标的「打开」用它；不同步则门户恒指打包默认端口。
+  # INFO 带 reloadui="yes"，DSM 会重载 UI。
+  for _ui in "/var/packages/${PACKAGE_NAME}/ui/config" "${PACKAGE_BASE}/ui/config"; do
+    if [ -f "$_ui" ]; then
+      sed -i "s/\"port\"[[:space:]]*:[[:space:]]*\"[0-9]*\"/\"port\": \"${_PP}\"/" "$_ui" 2>/dev/null || true
+      echo "[installer] 门户端口已同步: $_ui → ${_PP}" >&2
+    fi
+  done
+  echo "[installer] 生效端口: 反代 ${_PP} / DSH ${_DP} / 容器 ${_CP}" >&2
 }
 
 fix_ownership() {
