@@ -7,6 +7,8 @@
 #   ./fetch-dsh-latest.sh --tag dsh-v0.1.5-rc.2  # 指定某 tag（不自动判定最新）
 #   ./fetch-dsh-latest.sh --repo owner/name      # 指定官方仓库（默认 deepseek-ai/deepseek-harness）
 #   ./fetch-dsh-latest.sh --src-dir DIR          # 指定存放目录（默认 <脚本目录>/src/deepseek-ai）
+#   ./fetch-dsh-latest.sh --token '<ghp>'       # 显式传入 GitHub token（脚本不自找凭据文件）
+#                                               #   ⚠ 建议配合环境变量 DS_FETCH_TOKEN（避免进 history）
 #
 # 策略:
 #   版本: 从 GitHub 拉取全部 tags，用严格 semantic version(含 pre-release)比较，自动选最高 tag。
@@ -26,9 +28,10 @@ DEFAULT_SRC="$WS/src/deepseek-ai"
 TMP_PREFIX=".dsh-fetch-$$"
 TARGET_TAG=""          # 空 = 自动判定最新
 PRINT_TAG=0            # --print-tag: 只打印 tag 不下载（CI 发布用）
+FETCH_TOKEN=""         # GitHub token：只接受显式传入（--token 或环境变量 DS_FETCH_TOKEN），不自找凭据文件
 
 usage() {
-  sed -n '2,12p' "$0"
+  sed -n '2,14p' "$0"
 }
 
 # ---------- 解析参数 ----------
@@ -40,10 +43,16 @@ while [[ $# -gt 0 ]]; do
     --print-tag) PRINT_TAG=1; shift ;;   # 只解析并打印官方 tag（不下载；CI 发布用）
     --repo)     REPO="${2:?--repo 需要一个值}"; shift 2 ;;
     --src-dir)  SRC_DIR="${2:?--src-dir 需要一个值}"; shift 2 ;;
+    --token)    FETCH_TOKEN="${2:?--token 需要一个值}"; shift 2 ;;
     -h|--help)  usage; exit 0 ;;
     *) echo "未知参数: $1"; usage; exit 1 ;;
   esac
 done
+
+# token 显式传入优先：--token > 环境变量 DS_FETCH_TOKEN；两者都没有则匿名（限流更低）
+if [[ -z "$FETCH_TOKEN" && -n "${DS_FETCH_TOKEN:-}" ]]; then
+  FETCH_TOKEN="$DS_FETCH_TOKEN"
+fi
 
 # ---------- 确定存放目录 ----------
 [[ "$SRC_DIR" == "$DEFAULT_SRC" ]] && SRC_DIR="$WS/src/deepseek-ai"
@@ -51,15 +60,10 @@ mkdir -p "$SRC_DIR"
 
 # ---------- 利用 python3 做严格 semver 比较并选出最高 tag（含 pre-release） ----------
 pick_latest_tag() {
-  # tags 判定：带 token（CI 用内置 GITHUB_TOKEN，本机用 $GITHUB_TOKEN/凭据）提升限流
-  # 额度；加 --retry 应对抖动。匿名 CI runner 60 次/h 限流是 step 偶发失败根因
+  # tags 判定：token 只来自显式传参（--token 或环境变量 DS_FETCH_TOKEN，见参数解析），
+  # 脚本不自找凭据文件（用户要求 2026-10-02）。无 token 则匿名（限流 60 次/h）。
   local _hdr=()
-  local _tok=""
-  if [[ -n "${GITHUB_TOKEN:-}" ]]; then _tok="$GITHUB_TOKEN"; fi
-  if [[ -z "$_tok" && -f "$HOME/.dsh/git-push/github-token" ]]; then
-    _tok="$(python3 -c "print(open('$HOME/.dsh/git-push/github-token').read().strip())" 2>/dev/null || true)"
-  fi
-  [[ -n "$_tok" ]] && _hdr=(-H "Authorization: token $_tok")
+  [[ -n "$FETCH_TOKEN" ]] && _hdr=(-H "Authorization: token $FETCH_TOKEN")
   TAGS_JSON="$(curl -s --connect-timeout 8 --max-time 20 --retry 5 --retry-delay 3 "${_hdr[@]}" \
     "https://api.github.com/repos/$REPO/tags?per_page=300" || true)"
   if [[ -z "$TAGS_JSON" || -z "$(echo "$TAGS_JSON" | grep -o '\"name\"')" ]]; then

@@ -42,7 +42,41 @@ PNPM_STORE="${PNPM_STORE_DIR:-$WS/assets/pnpm-store}"
 NPM_CACHE="${npm_config_cache:-$WS/assets/pnpm-cache}"
 PNPM_BIN="$WS/tools/pnpm/bin/pnpm.mjs"  # 强制用项目自带 pnpm（tools/pnpm，不用系统自带）
 PNPM_BIN_DIR="$WS/tools/pnpm/bin"
-NODE_SRC="${NODE_SRC:-/usr/bin/node}"          # 打包进应用的 node 二进制
+
+# ── NODE_SRC 自探测（2026-10-02）────────────────────────────────────────────
+# 打包进应用的 node 二进制。0.2.0 起官方 native/system 需编译 node-api 附件
+# （flock.c），依赖 node 发行版自带的 include/node 头文件——套件裁剪 node 没有，
+# 故不能只看"有没有 node"，必须校验 headers 存在。探测顺序：
+#   ① 显式传入 $NODE_SRC（环境变量，最高优先，CI 用 setup-node 路径走这里）
+#   ② 项目自备 tools/node-dist/node-v*/bin/node（含 include/node，本地构建用）
+#   ③ PATH 里的 node 且带 include/node 头文件
+#   ④ 兜底 /usr/bin/node（历史默认，保持向后兼容）
+node_has_headers() {  # $1=node 可执行文件路径 → 校验同级/上级 include/node/node_api.h
+  local _n="$1" _d
+  [ -x "$_n" ] || return 1
+  _d="$(dirname "$_n")"
+  [ -f "$_d/../include/node/node_api.h" ] || [ -f "$_d/include/node/node_api.h" ]
+}
+resolve_node_src() {
+  local _c=""
+  _c="$(ls -d "$WS"/tools/node-dist/node-v*/bin/node 2>/dev/null | head -1)"
+  if node_has_headers "$_c"; then echo "$_c"; return 0; fi
+  _c="$(command -v node 2>/dev/null || true)"
+  if node_has_headers "$_c"; then echo "$_c"; return 0; fi
+  echo "/usr/bin/node"
+}
+if [ -z "${NODE_SRC:-}" ]; then
+  NODE_SRC="$(resolve_node_src)"
+  echo "▶ NODE_SRC 自探测: $NODE_SRC"
+fi
+# 自探测到的 node 目录注入 PATH：pnpm 运行 package scripts（tsx/tsdown/web build）
+# 需要 PATH 里有 node 可执行文件（shim 里虽用绝对路径 exec，但子进程仍靠 PATH）
+if [ -x "$NODE_SRC" ]; then
+  case ":$PATH:" in
+    *":$(dirname "$NODE_SRC"):"*) ;;
+    *) PATH="$(dirname "$NODE_SRC"):$PATH"; export PATH ;;
+  esac
+fi
 
 # ── pnpm 引擎自举（2026-09-16：tools/pnpm/dist 不入库，见 .gitignore）──
 #   bin/pnpm.mjs 只是入口（await import('../dist/pnpm.mjs') 引擎在 dist/）；
@@ -112,25 +146,61 @@ GEN_WHITELIST_SCRIPT="$BUILD_ROOT/gen-prune-whitelist.sh"    # 白名单生成�
 SPK_BUILD_SCRIPT="$BUILD_ROOT/SPK/build-spk.sh"              # SPK 打包（build/SPK/）
 FPK_BUILD_SCRIPT="$BUILD_ROOT/FPK/build-fpk.sh"              # FPK 打包（build/FPK/）
 NPM_FPK_SCRIPT="$BUILD_ROOT/FPK/build-npm-fpk-app.sh"        # FPK npm 链路（build/FPK/）
-SRC="${1:-}"
+# 参数：--dry-run 可出现在任意位置（亦可用环境变量 DRY_RUN=1）；其余按位置 = SRC SKIP_BUILD
+DRY_RUN="${DRY_RUN:-0}"
+_POS=()
+for _a in "$@"; do
+  case "$_a" in
+    --dry-run|--dryrun) DRY_RUN=1 ;;
+    -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
+    *) _POS+=("$_a") ;;
+  esac
+done
+SRC="${_POS[0]:-}"
 if [ -z "$SRC" ]; then
-  # 通配扫描 src/deepseek-ai/*（不硬编码版本目录名），其次 master-build
-  for cand in "$D_SRC"/deepseek-ai/* "$WORK_ROOT/master-build"; do
+  # 通配扫描 src/deepseek-ai/*（不硬编码版本目录名），其次 master-build；
+  # 多个候选时按 semver 取**最新**——2026-10-02 修复：原实现取 glob 字典序第一个，
+  # 本地同时存在 dsh-v0.1.5-rc.2（旧）与 dsh-v0.2.0-rc.2（新）时会误选旧版构建。
+  _cands=()
+  for cand in "$D_SRC"/deepseek-ai/* "$WORK_ROOT"/master-build/*; do
     if [ -f "$cand/package.json" ] && [ -d "$cand/apps/cli" ]; then
-      SRC="$cand"; break
+      _cands+=("$cand")
     fi
   done
+  if [ "${#_cands[@]}" -gt 0 ]; then
+    SRC="$(printf '%s\n' "${_cands[@]}" | python3 -c '
+import sys, re
+def vkey(p):
+    m = re.search(r"v?([0-9]+)\.([0-9]+)\.([0-9]+)([^/]*)", p)
+    if not m:
+        return (0, 0, 0, 0, "")
+    a, b, c, rest = int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4)
+    stable = 1 if rest == "" else 0   # 无预发布后缀 = 正式版，优先
+    return (a, b, c, stable, rest)
+cands = [l.strip() for l in sys.stdin if l.strip()]
+print(sorted(cands, key=vkey)[-1])
+')"
+    echo "▶ 源码自探测: $SRC（候选取最新 semver，共 ${#_cands[@]} 个）"
+  fi
 fi
 if [ -z "$SRC" ] || [ ! -f "$SRC/package.json" ]; then
-  echo "✗ 未找到源码目录。用法: $0 [SRC] [SKIP_BUILD]" >&2
+  echo "✗ 未找到源码目录。用法: $0 [SRC] [SKIP_BUILD] [--dry-run]" >&2
   exit 1
 fi
 SRC="$(cd "$SRC" && pwd)"
-SKIP_BUILD="${2:-1}"   # 默认跳过已存在的 target（=0 强制全量重建）
+SKIP_BUILD="${SKIP_BUILD:-${_POS[1]:-1}}"   # 默认跳过已存在的 target（=0 强制全量重建）；支持环境变量或第 2 位置参数（2026-10-02：原先只读位置参数，环境变量写法会被静默忽略）
 # 分阶段构建门控：all | install | build | prune（CI 把长步骤拆成 3 个独立 step，
 # 靠 step 结论定位死点；分阶段时复用已有 WORK，不清不删）
 BUILD_STAGE="${BUILD_STAGE:-all}"
 _STAGE_OK() { [ "$BUILD_STAGE" = "all" ] || [ "$BUILD_STAGE" = "$1" ]; }
+
+# ── 编译 dry-run（2026-10-02）：所有阶段均可预演，不执行任何编译/裁剪/写盘 ──
+#   ./build-common.sh [SRC] [SKIP_BUILD] --dry-run     # 或 DRY_RUN=1
+#   仅报告：阶段计划、源码/版本/node/编译器自探测结果、白名单与排除规则统计、
+#   现有 target 体积、各阶段将执行的具体动作（逐条 [dry-run] 列出）。
+_dry() { [ "$DRY_RUN" = "1" ]; }
+# 预演提示（dry-run 时打印一行；非 dry-run 静默）
+dry_note() { if _dry; then echo "  [dry-run] $1"; fi; return 0; }
 # GitHub annotation：存在 check run 里，日志 blob 丢（BlobNotFound）也能从 API 拿
 _ANN() { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::warning::$1" || echo "[stage] $1"; }
 
@@ -208,6 +278,92 @@ BUILD_SRC="$WORK/source"
 TARGET="$WORK/target"
 ASSEMBLE="$WORK/assemble"
 
+# ── 编译 dry-run 预演（所有阶段；不执行任何动作，逐条列出计划）──────────────
+if _dry; then
+  echo "════════════════ DRY-RUN 编译预演（不执行、不改动）════════════════"
+  echo "阶段      : $BUILD_STAGE   （all=全流程；可分阶段 install|build|prune）"
+  echo "源码      : $SRC"
+  echo "构建副本  : $BUILD_SRC"
+  echo "target    : $TARGET"
+  echo "版本      : dsh $PKG_VER | SPK $SPK_VERSION | FPK $FPK_VERSION | commit $COMMIT_HASH"
+  echo "应用名    : $APP_NAME"
+  echo "NODE_SRC  : $NODE_SRC"
+  _cc_bin="$(command -v cc 2>/dev/null || true)"
+  if [ -n "$_cc_bin" ]; then
+    echo "C 编译器  : $_cc_bin（native/system 走真实编译）"
+  else
+    echo "C 编译器  : 无 → 将启用 cc 替身 + 官方预编译 native 产物"
+  fi
+  echo "排除规则  : ${#TAR_EXCLUDES[@]} 条（$EXCLUDES_FILE）"
+  echo -n "白名单    : "
+  if [ -f "$WHITELIST_FILE" ]; then
+    python3 - "$WHITELIST_FILE" <<'PYD'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    def n(k):   # 容错：字段缺失或非数组（如说明用 bool）时计 0
+        v = d.get(k)
+        return len(v) if isinstance(v, list) else 0
+    print(f"extra={n('extra')} lockfileDeps={n('lockfileDeps')} "
+          f"workspaceRuntimeDeps={n('workspaceRuntimeDeps')}  ({sys.argv[1]})")
+except Exception as e:
+    print(f"⚠ 解析失败: {e}")
+PYD
+  else
+    echo "⚠ 未找到 $WHITELIST_FILE"
+  fi
+  if [ -d "$TARGET" ]; then
+    echo "现有 target: $(du -sh "$TARGET" 2>/dev/null | cut -f1)  （未裁剪的大体积需单独跑 BUILD_STAGE=prune）"
+  else
+    echo "现有 target: 不存在（全新构建）"
+  fi
+  echo
+  if _STAGE_OK install; then
+    echo "【install 阶段】将执行："
+    if [ -f "$BUILD_SRC/package.json" ] && [ "$BUILD_STAGE" != "all" ]; then
+      echo "  1. 复用已有构建副本（跳过源码复制，保留 node_modules）"
+    else
+      echo "  1. 复制源码 → $BUILD_SRC"
+      echo "  2. 品牌名替换（locale en/zh：DeepSeek Harness → $APP_NAME）"
+    fi
+    echo "  3. 生成 pnpm 包装垫片 $PNPM_BIN_DIR/pnpm（版本锁定 --pm-on-fail=ignore + json→yaml 桥接）"
+    if [ "${PRUNE_BEFORE_INSTALL:-1}" = "1" ]; then
+      echo "  4. 裁剪 devDeps：prune-target.sh --before-install $BUILD_SRC（白名单外 devDep 删除）"
+    else
+      echo "  4. 跳过 install 前裁剪（PRUNE_BEFORE_INSTALL=0）"
+    fi
+    echo "  5. pnpm install --store-dir=$PNPM_STORE --force --no-frozen-lockfile"
+    if [ "${PRUNE_BEFORE_BUILD:-1}" = "1" ]; then
+      echo "  6. build 前裁剪：prune-target.sh --node-modules $BUILD_SRC（纯白名单 + extra 构建工具）"
+      echo "     → build 在精简依赖树上跑（避免全量 8G 峰值）"
+    else
+      echo "  6. 跳过 build 前裁剪（PRUNE_BEFORE_BUILD=0）"
+    fi
+  fi
+  if _STAGE_OK build; then
+    echo "【build 阶段】将执行："
+    if [ -n "$_cc_bin" ]; then
+      echo "  1. native/system：cc 编译 flock.c（--host-addon-only）"
+    else
+      echo "  1. native/system：cc 替身复用官方预编译产物（免编译）"
+    fi
+    echo "  2. build:lib:host（tsc -b tsconfig.host.json + tsdown host；堆上限 ${DSH_TSC_MEM:-可用内存的75%}）"
+    echo "  3. build:lib:client（tsc -b tsconfig.client.json + tsdown client）"
+    echo "  4. build:web（前端构建）"
+    echo "  5. 组装 target 整树 → $TARGET（随附 pnpm）"
+  fi
+  if _STAGE_OK prune; then
+    echo "【prune 阶段】将执行："
+    echo "  1. prune-target.sh $TARGET $WHITELIST_FILE"
+    echo "     （纯白名单裁剪：删 .pnpm 中非白名单包 + 非目标平台二进制 → target 体积骤降）"
+  fi
+  if _STAGE_OK install; then
+    echo "【meta】写 $WORK/build-meta.env（APP_NAME/PKG_VER/SPK_VERSION/FPK_VERSION/COMMIT）"
+  fi
+  echo "════════════════ 预演结束（未执行任何动作、未改动任何文件）════════════════"
+  exit 0
+fi
+
 if [ "$SKIP_BUILD" = "1" ] && [ -f "$WORK/.build-done" ] && [ -d "$TARGET" ] && [ -f "$TARGET/package.json" ]; then
   # 断点续传：构建已完成（有 .build-done 标记）→ 跳过，直接复用 target
   echo "▶ 复用已有 target（$WORK/.build-done 存在，跳过编译）"
@@ -233,6 +389,13 @@ if [ "$BUILD_STAGE" = "build" ] && [ -f "$BUILD_SRC/package.json" ]; then
   echo "▶ (stage=build) 复用已有构建副本 $BUILD_SRC（跳过复制，保留 node_modules）"
 else
   echo "▶ 复制源码到构建副本 $BUILD_SRC"
+  # ⚠ cp -a 语义坑（2026-10-02 实测修复）：`cp -a SRC DST` 在 **DST 已存在** 时，会把
+  #   SRC 复制成 DST/<SRC 的 basename>（嵌套），而不是覆盖 DST 内容。分阶段
+  #   stage=install 复用已有 WORK 时必踩：会生成 source/dsh-v0.2.0-rc.2/ 并把源码
+  #   复制进子目录（还可能在 .git 大文件上失败中断）→ 后续 install/build 全乱。
+  #   故先清目标，保证结果恒为「DST = SRC 的内容」。
+  rm -rf "$BUILD_SRC"
+  mkdir -p "$WORK"
   cp -a "$SRC" "$BUILD_SRC"
 fi
 
@@ -314,8 +477,74 @@ if _STAGE_OK install && [ ! -d "$BUILD_SRC/node_modules" ]; then
 fi
 _ANN "stage=$BUILD_STAGE install 结束 (node_modules=$( [ -d "$BUILD_SRC/node_modules" ] && echo 有 || echo 无))"
 
+# ── build 前裁剪（2026-10-02，默认开）：install 完成立即按白名单裁 BUILD_SRC/node_modules/.pnpm，
+#   使 pnpm build 在**精简依赖树**上运行，避免「全量 install 8G → 编译 → 末尾才裁」的磁盘/内存峰值。
+#   白名单含 extra（构建工具：typescript/tsx/tsdown/lightningcss 等），否则 build 会缺包。
+#   PRUNE_BEFORE_BUILD=0 关闭（回退为仅末尾 target 裁剪）。
+if _STAGE_OK build && [ "${PRUNE_BEFORE_BUILD:-1}" = "1" ] && [ -x "$SCRIPT_DIR/prune-target.sh" ]; then
+  if _dry; then
+    dry_note "build 前裁剪：prune-target.sh --node-modules $BUILD_SRC（纯白名单 + extra）"
+  else
+    echo "▶ build 前裁剪 node_modules（纯白名单 + extra 构建工具）"
+    "$SCRIPT_DIR/prune-target.sh" --node-modules "$BUILD_SRC" "$WHITELIST_FILE" \
+      || echo "  ⚠ build 前裁剪返回非零，继续（不阻断 build）"
+  fi
+elif _STAGE_OK build; then
+  echo "▶ build 前裁剪已跳过（PRUNE_BEFORE_BUILD=${PRUNE_BEFORE_BUILD:-1}）"
+fi
+
 if _STAGE_OK build; then
 _ANN "stage=$BUILD_STAGE build 开始"
+
+# ── native/system 编译自探测（2026-10-02）──────────────────────────────────
+# 0.2.0 起官方 build:native-system 用 cc 编译 flock.c（Node-API 附件）+ musl-gcc 编
+# landlock-run；host-addon-only 模式只需 cc 出 glibc/system.node。部分环境（DSM 套件机、
+# 精简容器）无 C 编译器 → 这里自探测：无 cc 时用「cc 替身 + 官方预编译产物」复用，
+# 保持官方 build 链完全不变（writeClientBuildRecord 等后续步骤照跑）。
+# 复用依据：官方 native 产物确定性（实测三个不同来源 system.node md5 全为
+# 36a017660f00886cb9b42b427cefc347），故与 CI 编译产物一致。
+_NATIVE_SHIM_DIR=""
+if ! command -v cc >/dev/null 2>&1; then
+  _nat_host="linux-x64"
+  case "$(uname -m)" in aarch64|arm64) _nat_host="linux-arm64" ;; esac
+  _nat_pre="$BUILD_SRC/native/system/packages/$_nat_host/bin/glibc/system.node"
+  if [ ! -f "$_nat_pre" ]; then
+    # ① 已装套件里的现成产物（/var/packages/<pkg>/target/native/…）
+    _nat_pre="$(find /var/packages -maxdepth 8 -path "*native/system/packages/$_nat_host/bin/glibc/system.node" 2>/dev/null | head -1)"
+  fi
+  if [ -z "$_nat_pre" ] || [ ! -f "$_nat_pre" ]; then
+    # ② 工作区构建缓存里的官方 npm 包产物（@deepseek-ai/node-addon-system-<host>）
+    _nat_pre="$(find "$WS/build/master-build" -maxdepth 9 -path "*node-addon-system-$_nat_host/bin/glibc/system.node" 2>/dev/null | head -1)"
+  fi
+  if [ -n "$_nat_pre" ] && [ -f "$_nat_pre" ]; then
+    _NATIVE_SHIM_DIR="$WORK/native-shim"
+    mkdir -p "$_NATIVE_SHIM_DIR"
+    cat > "$_NATIVE_SHIM_DIR/cc" <<SHIM
+#!/bin/sh
+# cc 替身（build-common.sh 自动生成）：无 C 编译器环境复用官方预编译 native 产物。
+# 官方 build.ts 以 \`cc ... -o <output> <source>\` 调用；本替身忽略编译参数，
+# 直接把预编译产物落到 -o 指定路径，使官方构建链无需改动即可完成。
+_out=""; _prev=""
+for _a in "\$@"; do
+  if [ "\$_prev" = "-o" ]; then _out="\$_a"; break; fi
+  _prev="\$_a"
+done
+if [ -z "\$_out" ]; then echo "cc-shim: 未解析到 -o 输出路径" >&2; exit 1; fi
+mkdir -p "\$(dirname "\$_out")"
+cp "$_nat_pre" "\$_out" && chmod 755 "\$_out" || exit 1
+echo "cc-shim: 复用官方预编译产物 → \$_out（源 $_nat_pre）" >&2
+exit 0
+SHIM
+    chmod 755 "$_NATIVE_SHIM_DIR/cc"
+    cp "$_NATIVE_SHIM_DIR/cc" "$_NATIVE_SHIM_DIR/musl-gcc"
+    echo "▶ 无 C 编译器 → 自探测到官方预编译产物，启用 cc 替身复用"
+    echo "   产物: $_nat_pre"
+  else
+    echo "⚠ 无 C 编译器且未找到官方预编译产（native/system/packages/$_nat_host/bin/glibc/system.node）" >&2
+    echo "   native 编译将失败；请提供编译器或预编译产物。" >&2
+  fi
+fi
+
 echo "▶ pnpm build (native→lib→web, ~10-20min)"
 echo "   注入: DSH_CLIENT_VERSION=$PKG_VER  COMMIT=$COMMIT_HASH  TITLE=DeepSeekHarness-NAS"
 _BUILD_LOG="$WORK/pnpm-build.log"    # 完整构建日志（失败时打尾部 80 行，便于 CI 排查）
@@ -325,16 +554,19 @@ _BUILD_RC=0
 # 新逻辑查 available 内存（free -k Mem 行 available 列），取 60% 作为 tsc 堆上限。
 _AVAIL_KB=$(LC_ALL=C free -k 2>/dev/null | awk '/Mem:/{print $7}')
 if [ -n "$_AVAIL_KB" ]; then
-  _TSX_MEM=$((_AVAIL_KB * 60 / 100 / 1024))   # 可用内存的 60% → MB
+  # 2026-10-02：比例 60% → 75%，并支持 DSH_TSC_MEM 显式覆盖。
+  # 原因：0.2.0 源码 tsc -b tsconfig.host.json 需要 >2.3GB 堆；60% 在 3.8GB 可用内存
+  # 的机器上只给 2316MB → FATAL heap out of memory（本机实测 197s 后 OOM 退出 134）。
+  # 堆上限是"上限"非预分配，设大无害（物理不够时走 swap）。
+  _TSX_MEM="${DSH_TSC_MEM:-$((_AVAIL_KB * 75 / 100 / 1024))}"
   [ "$_TSX_MEM" -lt 1024 ] && _TSX_MEM=1024
-  if [ "$_TSX_MEM" -lt 4096 ]; then
-    echo "  (可用内存 $((_AVAIL_KB/1024))MB → tsc 堆从 4096MB 降为 ${_TSX_MEM}MB)"
-    sed -i "s/--max-old-space-size=[0-9]*/--max-old-space-size=${_TSX_MEM}/" \
-      "$BUILD_SRC/package.json" 2>/dev/null || true
-  fi
+  echo "  (tsc 堆上限 ${_TSX_MEM}MB（物理可用 $((_AVAIL_KB/1024))MB）；可用 DSH_TSC_MEM=<MB> 覆盖)"
+  # 无条件写入：BUILD_STAGE=build 复用构建副本时，package.json 会残留上一轮的堆值
+  sed -i "s/--max-old-space-size=[0-9]*/--max-old-space-size=${_TSX_MEM}/" \
+    "$BUILD_SRC/package.json" 2>/dev/null || true
 fi
 ( cd "$BUILD_SRC" && \
-  PATH="$PNPM_BIN_DIR:$PATH" HOME="$_HOME_DIR" PNPM_STORE_DIR="$PNPM_STORE" npm_config_cache="$NPM_CACHE" \
+  PATH="${_NATIVE_SHIM_DIR:+$_NATIVE_SHIM_DIR:}$PNPM_BIN_DIR:$PATH" HOME="$_HOME_DIR" PNPM_STORE_DIR="$PNPM_STORE" npm_config_cache="$NPM_CACHE" \
   DSH_CLIENT_VERSION="$PKG_VER" \
   DSH_CLIENT_COMMIT_HASH="$COMMIT_HASH" \
   DSH_CLIENT_TITLE="DeepSeekHarness-NAS" \

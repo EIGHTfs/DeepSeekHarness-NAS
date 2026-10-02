@@ -220,6 +220,41 @@ setup_pkg_env() {
   link_dsh_cmd
 }
 
+# ── 安装向导端口覆盖（WIZARD_UIFILES/install_uifile → wizard_proxy_port 等）──
+# 用户安装时填的端口写数据目录 <PKG_VAR>/ports（版本隔离、跨升级保留），
+# start-stop-status 优先读它；未填则回退打包默认（target/var/ports）。
+apply_wizard_ports() {
+  local VER="$(pkg_version_resolved)"
+  local PORTS_FILE="${PKG_VAR_DIR}/${VER}/ports"
+  local NEED=""
+  # 任一端口字段填写即整体覆盖（三个一起写，避免半覆盖错乱）
+  if [ -n "${wizard_proxy_port:-}" ] || [ -n "${wizard_dsh_port:-}" ] || [ -n "${wizard_container_port:-}" ]; then
+    NEED=1
+  fi
+  if [ -n "$NEED" ]; then
+    local _PP="${wizard_proxy_port:-__SPK_PROXY_PORT__}"
+    mkdir -p "${PKG_VAR_DIR}/${VER}"
+    {
+      echo "# 安装向导指定端口（2026-10-02 新增，优先级最高）"
+      echo "PROXY_PORT=${_PP}"
+      echo "DSH_PORT=${wizard_dsh_port:-__SPK_DSH_PORT__}"
+      echo "CONTAINER_PORT=${wizard_container_port:-__SPK_CONTAINER_PORT__}"
+    } > "$PORTS_FILE"
+    chown "${PACKAGE_NAME}:system" "$PORTS_FILE" 2>/dev/null || true
+    # ── 同步门户入口端口（2026-10-02）────────────────────────────────────────
+    # DSM 桌面套件图标的「打开」用 ui/config 的 port 字段；它是**打包期静态生成**的，
+    # 不同步则门户恒指向打包默认端口——实测 10.10.10.64：向导填 3080，门户仍打开
+    # http://<nas>:30800/。此处按安装向导值改写（INFO 带 reloadui="yes"，DSM 会重载 UI）。
+    for _ui in "/var/packages/${PACKAGE_NAME}/ui/config" "${PACKAGE_BASE}/ui/config"; do
+      if [ -f "$_ui" ]; then
+        sed -i "s/\"port\"[[:space:]]*:[[:space:]]*\"[0-9]*\"/\"port\": \"${_PP}\"/" "$_ui" 2>/dev/null || true
+        echo "[installer] 门户端口已同步: $_ui → ${_PP}" >&2
+      fi
+    done
+    echo "[installer] 安装向导端口已生效: ${_PP}/${wizard_dsh_port:-__SPK_DSH_PORT__}/${wizard_container_port:-__SPK_CONTAINER_PORT__}" >&2
+  fi
+}
+
 fix_ownership() {
   chown -R "${PACKAGE_NAME}:system" "${PACKAGE_BASE}" 2>/dev/null || true
   chown -R "${PACKAGE_NAME}:system" "${PACKAGE_BASE}/var" 2>/dev/null || true
@@ -235,6 +270,7 @@ preinst() { exit 0; }
 
 postinst() {
   setup_pkg_env
+  apply_wizard_ports
   exit 0
 }
 
@@ -249,13 +285,20 @@ postreplace() {
 }
 
 # 卸载清理（群晖 CLI 卸载只执行 preuninst；postuninst 双保险）
+# 数据删除尊重安装向导 uninstall_uifile 的 wizard_delete_data：
+#   卸载时用户选「彻底删除」（true）才清数据；选「保留」（默认 false）则数据目录原样保留，
+#   重装直接恢复（2026-10-02 按用户「卸载给选项」需求实现，对齐 SynoCommunity 通用范式）。
 cleanup_uninstall() {
   local VER="$(pkg_version_resolved)"
-  if [ -n "$VER" ] && [ -d "${PKG_VAR_DIR}/${VER}" ]; then
-    rm -rf "${PKG_VAR_DIR}/${VER}" 2>/dev/null
-  fi
-  if [ -d "${PKG_VAR_DIR}" ] && [ -z "$(ls -A "${PKG_VAR_DIR}" 2>/dev/null)" ]; then
-    rm -rf "${PKG_VAR_DIR}" 2>/dev/null
+  if [ "${wizard_delete_data:-false}" = "true" ]; then
+    if [ -n "$VER" ] && [ -d "${PKG_VAR_DIR}/${VER}" ]; then
+      rm -rf "${PKG_VAR_DIR}/${VER}" 2>/dev/null
+    fi
+    if [ -d "${PKG_VAR_DIR}" ] && [ -z "$(ls -A "${PKG_VAR_DIR}" 2>/dev/null)" ]; then
+      rm -rf "${PKG_VAR_DIR}" 2>/dev/null
+    fi
+  else
+    echo "[uninstall] 保留数据（wizard_delete_data=${wizard_delete_data:-false}）: ${PKG_VAR_DIR}/${VER}" >&2
   fi
   # 注册软链（/usr/syno/etc/packages/<pkg> → /volumeX/@appconf/<pkg>）及其指向目录
   if [ -e "/usr/syno/etc/packages/${PACKAGE_NAME}" ]; then
@@ -292,7 +335,11 @@ postupgrade() {
   exit 0
 }
 
-# hook 分发：DSM 以 `scripts/installer <hook名>` 子命令方式调用
+# hook 分发：仅当 installer **被直接运行**时执行（synopkg CLI 以 `installer <hook名>`
+# 子命令方式调用）。⚠ 独立 hook 文件（scripts/postinst 等）是 source 本文件定义函数、
+# 由薄壳调用同名函数——此时 basename 是 hook 名，绝不能进 case（否则命中 `*)` 的
+# `exit 0` 会让整个 hook 立即退出，postinst() 等函数永远不被调用，2026-10-02 实测铁证）
+if [ "$(basename "$0" 2>/dev/null)" = "installer" ]; then
 case "$1" in
   preinst)      preinst ;;
   postinst)     postinst ;;
@@ -304,6 +351,7 @@ case "$1" in
   postupgrade)  postupgrade ;;
   *)            exit 0 ;;
 esac
+fi
 INSTALLER_EOF
 
 # start-stop-status：DSM 启停（端口只认 var/ports，由本脚本生成）
@@ -313,8 +361,14 @@ PACKAGE_NAME="${SYNOPKG_PKGNAME}"
 PACKAGE_BASE="/var/packages/${PACKAGE_NAME}/target"
 START_SCRIPT="${PACKAGE_BASE}/start.sh"
 
-# 端口由 build-spk.sh 依 build-config.yaml 生成的 var/ports 提供（不硬编码）
+# 端口读取优先级（2026-10-02）：
+#   ① 数据目录 <var>/<版本>/ports（安装向导 wizard_*_port 写入，跨升级保留）→ 最高
+#   ② 打包默认 target/var/ports（build-spk.sh 依 build-config.yaml 生成）→ 回退
 PORT_FILE="${PACKAGE_BASE}/var/ports"
+# 数据目录版本隔离（与 installer pkg_version_resolved 同源：dsh → npm → top）
+for _pf in "${SYNOPKG_PKGVAR}"/*/ports "${SYNOPKG_PKGVAR}/ports"; do
+  [ -f "$_pf" ] && { PORT_FILE="$_pf"; break; }
+done
 if [ -f "$PORT_FILE" ]; then
   . "$PORT_FILE"
 fi
@@ -372,10 +426,26 @@ case "$1" in
   log)     echo "${PACKAGE_BASE}/var/logs/start.log"; exit 0;;
 esac
 SSS_EOF
+
+# ── 独立生命周期 hook 文件（DSM 官方机制，2026-10-02 修复）────────────────────
+# ⚠ DSM **只执行与 hook 同名的独立脚本**（preinst/postinst/preuninst/postuninst/
+#   preupgrade/postupgrade），**不会调用单一的 scripts/installer**——实测 10.10.10.64
+#   DSM 7.2 安装日志仅见文件 mv + start-stop-status，无任何 hook 执行记录；
+#   同机 aiproxy 套件正是靠这套独立薄壳文件让 wizard 值落地（其 aiproxy_key 已生成）。
+#   此前只放 installer → 端口向导/卸载选项/目录初始化全部静默失效。
+# 形态（官方 + aiproxy 实测）：source installer 定义函数 → 调用与文件名同名函数。
+for _hook in preinst postinst preuninst postuninst preupgrade postupgrade; do
+  cat > "$ASSEMBLE/scripts/$_hook" <<'HOOK_EOF'
+#!/bin/sh
+. $(dirname $0)/installer
+$(basename $0) > $SYNOPKG_TEMP_LOGFILE
+HOOK_EOF
+done
+
 chmod +x "$ASSEMBLE/scripts/"*
 # scripts 内占位符统一替换（品牌版本优先级链 / 版本兜底；不替换 → 装完数据目录名会带占位符）
-sed -i "s/__BRAND_VERSION_ORDER_COMMA__/${CFG_BRAND_VERSION_ORDER//,/ }/g; s/__FPK_VERSION__/${FPK_VERSION}/g; s/__APP_NAME__/${APP_NAME}/g" "$ASSEMBLE/scripts/"* 2>/dev/null || true
-if grep -rlE "__BRAND_VERSION_ORDER_COMMA__|__FPK_VERSION__|__APP_NAME__" "$ASSEMBLE/scripts/" 2>/dev/null | grep -q .; then
+sed -i "s/__BRAND_VERSION_ORDER_COMMA__/${CFG_BRAND_VERSION_ORDER//,/ }/g; s/__FPK_VERSION__/${FPK_VERSION}/g; s/__APP_NAME__/${APP_NAME}/g; s/__SPK_PROXY_PORT__/${SPK_PROXY_PORT}/g; s/__SPK_DSH_PORT__/${SPK_DSH_PORT}/g; s/__SPK_CONTAINER_PORT__/${SPK_CONTAINER_PORT}/g" "$ASSEMBLE/scripts/"* 2>/dev/null || true
+if grep -rlE "__BRAND_VERSION_ORDER_COMMA__|__FPK_VERSION__|__APP_NAME__|__SPK_PROXY_PORT__|__SPK_DSH_PORT__|__SPK_CONTAINER_PORT__" "$ASSEMBLE/scripts/" 2>/dev/null | grep -q .; then
   echo "[!] scripts 占位符未全部替换" >&2; exit 1
 fi
 
@@ -384,6 +454,93 @@ mkdir -p "$ASSEMBLE/ui/images"
 cp "$D_ASSETS/ui/images/"*.png "$ASSEMBLE/ui/images/" 2>/dev/null || true
 cp "$TARGET/ui/config" "$ASSEMBLE/ui/config"
 cp "$D_ASSETS/PACKAGE_ICON.PNG" "$D_ASSETS/PACKAGE_ICON_256.PNG" "$ASSEMBLE/"
+
+# ── WIZARD_UIFILES 安装/卸载向导（2026-10-02 新增：安装时填端口 + 卸载保留/删除选项）──
+# 官方机制：WIZARD_UIFILES/install_uifile（安装向导）→ wizard_* 环境变量传 postinst；
+#           uninstall_uifile（卸载向导）→ wizard_delete_data 传 preuninst/postuninst。
+# 详见 syno-spk-package-guide 1.7.2 / B2（aiproxy 实测范式）。
+mkdir -p "$ASSEMBLE/WIZARD_UIFILES"
+cat > "$ASSEMBLE/WIZARD_UIFILES/install_uifile" <<WIZARD_EOF
+[
+    {
+        "step_title": "DeepSeek Harness 端口设置",
+        "items": [
+            {
+                "type": "textfield",
+                "desc": "门户端口（代理端口，默认 ${SPK_PROXY_PORT}）",
+                "subitems": [
+                    {
+                        "key": "wizard_proxy_port",
+                        "desc": "",
+                        "validator": { "allowBlank": true, "regex": { "expr": "/^\\\\d+$/", "errorText": "请输入数字端口" } }
+                    }
+                ]
+            },
+            {
+                "type": "textfield",
+                "desc": "DSH 服务端口（默认 ${SPK_DSH_PORT}）",
+                "subitems": [
+                    {
+                        "key": "wizard_dsh_port",
+                        "desc": "",
+                        "validator": { "allowBlank": true, "regex": { "expr": "/^\\\\d+$/", "errorText": "请输入数字端口" } }
+                    }
+                ]
+            },
+            {
+                "type": "textfield",
+                "desc": "容器端口（默认 ${SPK_CONTAINER_PORT}）",
+                "subitems": [
+                    {
+                        "key": "wizard_container_port",
+                        "desc": "",
+                        "validator": { "allowBlank": true, "regex": { "expr": "/^\\\\d+$/", "errorText": "请输入数字端口" } }
+                    }
+                ]
+            }
+        ]
+    }
+]
+WIZARD_EOF
+cp "$ASSEMBLE/WIZARD_UIFILES/install_uifile" "$ASSEMBLE/WIZARD_UIFILES/install_uifile_chs"
+# 卸载向导：保留/删除单选（wizard_keep_data 默认保留，wizard_delete_data 默认不删）
+cat > "$ASSEMBLE/WIZARD_UIFILES/uninstall_uifile" <<WIZARD_EOF
+[{
+  "step_title": "Uninstall package",
+  "items": [{
+    "type": "singleselect",
+    "desc": "Keep or delete package settings.",
+    "subitems": [{
+      "key": "wizard_keep_data",
+      "desc": "<b>Uninstall only.</b> Keep existing files for future re-installation.",
+      "defaultValue": true
+    }, {
+      "key": "wizard_delete_data",
+      "desc": "<b style=\"color: red\">Erase all of the package data files. (Not Recoverable)</b>",
+      "defaultValue": false
+    }]
+  }]
+}]
+WIZARD_EOF
+cat > "$ASSEMBLE/WIZARD_UIFILES/uninstall_uifile_chs" <<WIZARD_EOF
+[{
+  "step_title": "卸载套件",
+  "items": [{
+    "type": "singleselect",
+    "desc": "保留或删除套件设置。",
+    "subitems": [{
+      "key": "wizard_keep_data",
+      "desc": "<b>仅卸载。</b>保留现有文件以备将来重新安装。",
+      "defaultValue": true
+    }, {
+      "key": "wizard_delete_data",
+      "desc": "<b style=\"color: red\">删除套件所有的数据文件。（不可恢复！）</b>",
+      "defaultValue": false
+    }]
+  }]
+}]
+WIZARD_EOF
+echo "  ✓ WIZARD_UIFILES 已生成（install/uninstall × 中英）"
 
 # var/ports 落盘（start-stop-status 读取；端口全部 build-config.yaml 驱动）
 echo "▶ SPK 端口: $SPK_PROXY_PORT/$SPK_DSH_PORT/$SPK_CONTAINER_PORT"
@@ -430,7 +587,7 @@ OUT_SPK="$D_STAGING/${APP_NAME}_x86_64-${SPK_VERSION}.spk"
 #   （exit code 2）。本地长期有该目录，掩盖了此问题。
 mkdir -p "$D_STAGING"
 echo "▶ 组装外层 SPK → $OUT_SPK"
-( cd "$ASSEMBLE" && tar -cf "$OUT_SPK" INFO PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG conf scripts ui package.tgz )
+( cd "$ASSEMBLE" && tar -cf "$OUT_SPK" INFO PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG conf scripts ui WIZARD_UIFILES package.tgz )
 
 sync   # CIFS 元数据滞后，不 sync 时 du 读旧大小
 _SPK_SIZE=$(du -m --apparent-size "$OUT_SPK" 2>/dev/null | cut -f1)

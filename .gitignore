@@ -35,6 +35,9 @@
 # ── 构建时生成的 pnpm 垫片（含本机绝对路径，由 build-common.sh 自动生成） ──
 /tools/pnpm/bin/pnpm
 
+# ── 本地构建用 node 发行版缓存（build-common.sh 自探测下载，含 headers，不入库） ──
+/tools/node-dist/
+
 # ── 本地回收站（安全删除暂存） ──
 /.trash/
 

@@ -55,14 +55,14 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 
 | 脚本 | 作用 | 参数 / 示例 |
 |------|------|-------------|
-| `build/build-common.sh` | **公共预编译**：install 前白名单裁剪 devDeps + pnpm install + pnpm build + 纯白名单裁剪 → `target` 整树 + `build-meta.env`（输出 `build/master-build/build-<版本>/`） | `[SRC] [SKIP_BUILD]`；`./build/build-common.sh "" 1` = 复用已有 target 秒级重打包 |
+| `build/build-common.sh` | **公共预编译**：install 前白名单裁剪 devDeps + pnpm install + **build 前裁剪** + pnpm build + 纯白名单裁剪 → `target` 整树 + `build-meta.env`（输出 `build/master-build/build-<版本>/`）。**自探测**：①NODE_SRC（`tools/node-dist/node-v*`→PATH 带 headers 的 node→`/usr/bin/node`，并注入 PATH）②源码目录（多候选按 semver 取**最新**）③无 C 编译器时用「cc 替身 + 官方 native 预编译产物」完成 `build:native-system`（官方产物确定性，多来源 md5 一致）④tsc 堆上限（可用内存 75%，`DSH_TSC_MEM` 覆盖；0.2.0 源码需 >2.3GB）⑤**build 前裁剪**（install 后立即裁 `.pnpm`，`PRUNE_BEFORE_BUILD=0` 关闭） | `[SRC] [SKIP_BUILD] [--dry-run]`；`./build/build-common.sh "" 1` = 复用已有 target 秒级重打包；`--dry-run` = 全阶段预演（列计划不执行） |
 | `build/gen-prune-whitelist.sh` | **白名单自动生成**：从 npm 链路 `package-lock.json` 的 packages 键解析包名全集（排除平台变体/claude/codex），写入白名单 `lockfileDeps` 字段（源码构建裁剪用）；只动 `lockfileDeps` 键，**不覆盖手动 `extra`** | `[锁文件]` / `--dry-run`；`./build/gen-prune-whitelist.sh` = 自动找最新锁文件更新白名单 |
-| `build/prune-target.sh` | **纯白名单裁剪（独立可跑，双模式）**：`--before-install <BUILD_SRC>` 在 install 前剥离非白名单 devDeps（省 install 磁盘峰值，防 CI 撑爆 runner；构建必需工具已手动追加白名单 extra）；默认模式对已构建 target 裁剪（不在 lockfileDeps+workspaceRuntimeDeps 的一律删 + force_exclude codex/claude/linuxmusl），白名单更新后可单独重裁 target 免重编译 | `--before-install <BUILD_SRC>` 或 `<TARGET> [WHITELIST]`；`./build/prune-target.sh --before-install build/master-build/build-<版本>/source` |
+| `build/prune-target.sh` | **纯白名单裁剪（独立可跑，三模式）**：①`--before-install <SRC>` install 前剥离非白名单 devDeps（省 install 峰值）；②`--node-modules <SRC>` **install 后、build 前**裁 `node_modules/.pnpm`（白名单 = 运行时 + **构建工具依赖闭包**，沿 `.pnpm` 软链自动递归，解决 esbuild/rollup 等传递依赖漏包）→ build 在精简树上跑；③默认模式裁已构建 target（白名单 = 运行时；force_exclude codex/claude/linuxmusl）。三模式均保留 `.pnpm/node_modules` 提升目录并清理其悬空软链 | `--before-install <SRC>` / `--node-modules <SRC>` / `<TARGET> [WHITELIST]` |
 | `build/FPK/build-npm-fpk-app.sh` | **FPK npm 链路（可选）**：npm 装官方包（`--omit=dev`）→ `build/master-build/npm-app-<版本>/app_root`（免源码编译） | `[VERSION]`；`./build/FPK/build-npm-fpk-app.sh <版本>`（幂等，重跑秒级） |
 | `build/SPK/build-spk.sh` | 消费 target → 群晖 `.spk`（端口 30800/30801/30802） | 无参数；`./build/SPK/build-spk.sh` → `build/staging/<APP_NAME>_x86_64-<版本>.spk` |
 | `build/FPK/build-fpk.sh` | 消费 target → 飞牛 `.fpk`（端口 3080/3081/3082）；`--npm` 消费 npm 链路 app_root（双链路并存） | `[--npm]`；`./build/FPK/build-fpk.sh --npm` → `build/staging/<APP_NAME>_x86-<版本>.fpk` |
 | `build/build-test-fpk.sh` | 构建**测试版** FPK（调试用，含版本标记） | 无参数 |
-| `scripts/fetch-dsh-latest.sh` | 一键拉取 **DSH 官方最新版源码**到 `src/deepseek-ai/<tag>`（自动识别 tag） | `./scripts/fetch-dsh-latest.sh` |
+| `scripts/fetch-dsh-latest.sh` | 一键拉取 **DSH 官方最新版源码**到 `src/deepseek-ai/<tag>`（自动识别 tag）；**token 显式传参**（脚本不自找凭据文件）：`--token <ghp>` 或环境变量 `DS_FETCH_TOKEN`，不传则匿名（限流 60 次/h） | `./scripts/fetch-dsh-latest.sh [--token <ghp>]` |
 | `scripts/fetch-release-mt.sh` | **多线程下载本仓 Release 资产**（spk/fpk）：走 api.github.com Git Data API 通道（不依赖 github.com 直连），aria2c 分段并发，失败回退 curl 单流；大小校验 + 已存在跳过；凭据取插件托管的 githubToken（不落命令行、不打印） | `[--tag <tag>] [--only spk\|fpk] [--threads N]`；`./scripts/fetch-release-mt.sh --only spk` → `release/<tag>/` |
 | `scripts/promote-release.sh` | **发布提升**：验证通过的 `build/staging/` 产物 → `release/` | `D_REL=<dir>` 覆盖输出目录 |
 | `web-install/install-remote-spk.sh` | **远程安装工具（群晖 DSM 专用）**：网页/SSH 远端装 spk（install/uninstall/check 三合一，root 补建软链） | 读 `install-config.json`（host/user/password/spk 路径） |
@@ -330,6 +330,11 @@ start.sh 已自动处理，**无需手工设置**：
 # Package Center → 手动安装 → 选择 .spk
 ```
 
+- **安装向导（`WIZARD_UIFILES/`，群晖官方机制）**：套件中心安装/卸载时弹窗收集参数，值以 `wizard_*` 环境变量传给 `scripts/installer`：
+  - **安装时填端口**：可选填「门户端口 / DSH 端口 / 容器端口」（留空 = 打包默认 `30800/30801/30802`）。`postinst` 把填写值写入 `<数据目录>/<版本>/ports`，`start-stop-status` **优先读它**（跨升级保留）→ 支持**同机多实例用不同端口并存**；
+  - **卸载时选数据**：卸载向导提供「**仅卸载（保留文件）** / **彻底删除数据（不可恢复）**」单选（默认保留）。`installer` 依 `wizard_delete_data` 决定是否清理数据目录——选保留则重装即恢复，选删除才清理；
+  - **版本覆盖 + 数据保留（2026-10-02 实测）**：套件用固定 package 名（`DeepSeekHarness-NAS`），DSM 对同名套件重装**一律按全新安装处理**（先 `rm -rf /var/packages/<pkg>` 再重建），版本号被新包覆盖——这是 DSM 预期行为。**数据不会丢**：数据在 `@appdata` 的**版本隔离目录**（`var/<版本>/`，如 `0.1.5-rc.2` / `0.2.0-rc.2` 并存），DSM 清理 `/var/packages/` 不碰 `@appdata`；跨版本重装后旧版本数据完整保留。如需**多版本同时安装/启动**（python2/python310 模式），须改版本化 package 名（当前未采用，保持覆盖安装 + 数据保留）；
+  - 文件：`install_uifile`(+`_chs`) / `uninstall_uifile`(+`_chs`)，中英双语。
 - Web 入口：DSM 桌面套件图标（网页端打开＝携带 token 的第一步），或访问 `http://<NAS-IP>:30800`
 - **门户免密原理（权威设计·禁止改动，参考 SA6400 Iventoy 套件「打开」机制）**：
   1. **群晖 Web 打开才带 token** — DSM 网页（桌面套件图标 / 应用中心）打开套件入口时，浏览器请求才携带 token（同 aria2 / Iventoy 等套件的「打开」方式）；**直接地址栏访问 `http://<NAS-IP>:30800` 不携带 token**；
@@ -715,6 +720,11 @@ sudo synopkg stop deepseek-harness-nas
 > 3. **固定解释器**：`exec "$NODE_SRC" "$PNPM_BIN"`，用打包用 node（CI 的 setup-node 22）跑自带 pnpm。
 >
 > install 与 build 两处调用都改走该垫片（原来直接 `node "$PNPM_BIN"` 会绕过包装），并前置 `PATH="$PNPM_BIN_DIR:$PATH"`，使上游 `sh -c` 子进程同样命中垫片。
+>
+> **native/system 编译自探测（2026-10-02）**：0.2.0 起官方 `build:native-system` 用 `cc` 编译 `flock.c`（Node-API 附件），依赖 **C 编译器**与 **node 发行版头文件**（`include/node/node_api.h`；套件裁剪版 node 没有）。`build-common.sh` 现全自探测，无需手动传参：
+> 1. **NODE_SRC**：`tools/node-dist/node-v*/bin/node`（含 headers，本地构建）→ PATH 中带 headers 的 node → 兜底 `/usr/bin/node`；探测到的 node 目录自动注入 PATH（package scripts 需要）；显式 `NODE_SRC=` 仍最高优先（CI 走 `setup-node` 路径）；
+> 2. **无 C 编译器**时：自动启用「`cc` 替身 + 官方预编译产物」完成 `build:native-system`，**官方 build 链完全不变**（`writeClientBuildRecord` 等后续步骤照跑）。复用依据 = 官方 native 产物**确定性**（实测三个不同来源 `system.node` md5 全为 `36a017660f00886cb9b42b427cefc347`）。有编译器（CI runner）时仍走真实编译。
+> 3. 预编译产物查找顺序：本机构建副本 → 已装套件 `native/system/…` → 工作区 `master-build` 缓存内的官方 npm 包（`@deepseek-ai/node-addon-system-<host>`）。
 
 ---
 

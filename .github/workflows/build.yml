@@ -48,7 +48,7 @@ jobs:
       - name: 拉取官方最新源码到 src/deepseek-ai/{tag}
         run: ./scripts/fetch-dsh-latest.sh
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DS_FETCH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 清理 runner 磁盘空间（释放 ~20G）
         run: |
@@ -115,7 +115,7 @@ jobs:
       - name: 拉取官方最新源码到 src/deepseek-ai/{tag}
         run: ./scripts/fetch-dsh-latest.sh
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DS_FETCH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # ── FPK 构建方式：vars.FPK_MODE 选择 ──
       #   'npm' = npm 链路（npm 装官方包 → app_root → --npm 打包，免源码编译，体积更小）
@@ -193,7 +193,7 @@ jobs:
         id: reltag
         run: echo "TAG=$(./scripts/fetch-dsh-latest.sh --print-tag)" >> "$GITHUB_OUTPUT"
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DS_FETCH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 下载产物（spk 可能缺失，容忍失败）
         uses: actions/download-artifact@v4
