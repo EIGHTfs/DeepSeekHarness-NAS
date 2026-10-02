@@ -55,7 +55,7 @@ fi
 # ==============================================================================
 if [ "$MODE_BEFORE_INSTALL" = "1" ]; then
   echo "▶ install 前裁剪 devDeps（纯白名单）: $BUILD_SRC"
-  python3 - "$BUILD_SRC" "$WHITELIST_FILE" <<'PYEOF' 2>/dev/null || true
+  python3 - "$BUILD_SRC" "$WHITELIST_FILE" <<'PYEOF' 2>&1 || echo "  ⚠ 裁剪 python 段返回非零（详见上方错误）"
 import json, os, sys
 build_src, white_file = sys.argv[1], sys.argv[2]
 white = json.load(open(white_file, encoding='utf-8'))
@@ -119,7 +119,7 @@ fi
 # ==============================================================================
 if [ "$MODE_BEFORE_BUILD" = "1" ]; then
   echo "▶ build 前裁剪 node_modules: $BUILD_SRC/node_modules（$(du -sh "$BUILD_SRC/node_modules" 2>/dev/null | cut -f1)）"
-  python3 - "$BUILD_SRC" "$WHITELIST_FILE" <<'PYEOF' 2>/dev/null || true
+  python3 - "$BUILD_SRC" "$WHITELIST_FILE" <<'PYEOF' 2>&1 || echo "  ⚠ 裁剪 python 段返回非零（详见上方错误）"
 import json, os, re, shutil, sys
 build_src, white_file = sys.argv[1], sys.argv[2]
 white = json.load(open(white_file, encoding='utf-8'))
@@ -271,7 +271,7 @@ fi
 # ==============================================================================
 echo "▶ 裁剪 target: $TARGET ($(du -sh "$TARGET" 2>/dev/null | cut -f1))"
 
-python3 - "$TARGET" "$WHITELIST_FILE" <<'PYEOF' 2>/dev/null || true
+python3 - "$TARGET" "$WHITELIST_FILE" <<'PYEOF' 2>&1 || echo "  ⚠ 裁剪 python 段返回非零（详见上方错误）"
 import json, glob, os, re, shutil, sys
 target, white_file = sys.argv[1], sys.argv[2]
 white = json.load(open(white_file, encoding='utf-8'))
@@ -291,56 +291,15 @@ if white.get('workspaceRuntimeDeps'):
             except Exception:
                 pass
 
-# ── 依赖闭包（2026-10-02 修复：运行时传递依赖闭环）──────────────────────────
-# ⚠ 白名单 lockfileDeps 来自 **npm 链路**的 package-lock，而源码构建的 .pnpm 是
-#   **pnpm 链路**装的——两链路依赖有差异，npm 白名单会把 pnpm 装的传递依赖
-#   （实测 execa 依赖的 is-plain-obj）漏掉 → 装完运行时 ERR_MODULE_NOT_FOUND。
-#   故沿 .pnpm 软链从白名单出发求依赖闭包，闭包内全部保留。
-def pkg_deps(full):
-    nm = os.path.join(full, 'node_modules')
-    out = set()
-    if not os.path.isdir(nm):
-        return out
-    for e in os.listdir(nm):
-        ep = os.path.join(nm, e)
-        if e.startswith('@'):
-            try:
-                for g in os.listdir(ep):
-                    if os.path.exists(os.path.join(ep, g)):
-                        out.add(f'{e}/{g}')
-            except OSError:
-                pass
-        elif os.path.exists(ep):
-            out.add(e)
-    return out
-
-if os.path.isdir(pnpm):
-    _nm2d = {}
-    for _d in os.listdir(pnpm):
-        _full = os.path.join(pnpm, _d)
-        if os.path.isdir(_full) and not os.path.islink(_full) and _d != 'node_modules':
-            _nm2d.setdefault(pkg_name(_full), []).append(_full)
-    _seen, _stack = set(), list(whitelist)
-    while _stack:
-        _n = _stack.pop()
-        if _n in _seen:
-            continue
-        _seen.add(_n)
-        for _d in _nm2d.get(_n, []):
-            for _dep in pkg_deps(_d):
-                if _dep not in _seen:
-                    _stack.append(_dep)
-    whitelist |= _seen
-
-# 强制排除（即使在白名单里也不保留：体积大 / disabled preset / 非目标平台）
-force_exclude = {'@openai/codex', 'claude-agent-sdk', '@anthropic-ai/claude',
-                 '@img/sharp-libvips-linuxmusl-x64'}
-
 def pkg_name(pnpm_dir):
     """.pnpm 目录名 → 包名（js-yaml@4.2.0 → js-yaml；@types+js-yaml@4.0.9 → @types/js-yaml）"""
     base = os.path.basename(pnpm_dir)
     m = re.match(r'(@[^@]+|[^@]+)@', base)
     return m.group(1).replace('+', '/') if m else base
+
+# 强制排除（即使在白名单里也不保留：体积大 / disabled preset / 非目标平台）
+force_exclude = {'@openai/codex', 'claude-agent-sdk', '@anthropic-ai/claude',
+                 '@img/sharp-libvips-linuxmusl-x64'}
 
 # ── 纯白名单裁剪：.pnpm 里不在白名单的一律删 ──
 deleted = 0

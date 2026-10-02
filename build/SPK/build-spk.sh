@@ -568,6 +568,19 @@ chmod 644 "$ASSEMBLE/INFO" "$ASSEMBLE/conf/privilege" "$ASSEMBLE/conf/resource" 
         "$ASSEMBLE/ui/config" 2>/dev/null || true
 chmod 755 "$ASSEMBLE/scripts/start-stop-status" "$ASSEMBLE/scripts/installer" 2>/dev/null || true
 
+# ── 运行时精准补包（2026-10-02 自动并入打包流程）────────────────────────────
+# 裁剪白名单（npm 链路 lock）会漏 pnpm 链路的运行时传递依赖（实测 execa 的
+# is-plain-obj 等）→ 装完 DSH 启动时内置插件 failed to import（Cannot find package）。
+# 此处探测 boot 入口 import 缺失 → 从构建副本 BUILD_SRC 精准恢复缺包（不搞全量闭包，
+# 体积保持精准级；实测只补 execa 依赖链 ~14 个小包，714M → SPK ~137MB）。
+_FIX_SCRIPT="$BUILD_ROOT/fix-runtime-deps.sh"
+if [ -x "$_FIX_SCRIPT" ] && [ -d "${WORK:-}/source/node_modules/.pnpm" ]; then
+  echo "▶ 运行时精准补包（fix-runtime-deps.sh）"
+  "$_FIX_SCRIPT" "$TARGET" "$WORK/source" || echo "  ⚠ 补包探测返回非零，继续打包"
+else
+  echo "▶ 跳过运行时补包（fix-runtime-deps.sh 缺失或其 BUILD_SRC 不完整）"
+fi
+
 # 内层 package.tgz（gzip；--hard-dereference 硬链展开；软链保留——旧包含软链可装）
 echo "▶ 打包 package.tgz（gzip, 预构建产物包, ${#TAR_EXCLUDES[@]} 条排除规则）"
 tar -czf "$ASSEMBLE/package.tgz" --hard-dereference -C "$TARGET" \
