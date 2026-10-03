@@ -466,6 +466,24 @@ start.sh 已自动处理，**无需手工设置**：
 
 ---
 
+### 卸载/修复：**默认保留数据**（2026-10-04）
+
+套件自身的卸载向导**默认保留数据**（SPK：`pack-spk.sh` 的 `wizard_keep_data` 单选，默认保留；
+FPK：`pack-fpk.sh` 的「保留数据（推荐）」）。网页端此前**没有该选项**，卸载时无条件调用
+`scripts/clean-dsm-residue.sh` 删除 `@appdata` / `@apphome` / `@appshare` —— 等于绕过用户选择直接清空数据
+（2026-10-03 数据丢失事故即经此路径：`@appdata/<PKG>/<版本>/工作区` 正是工作区挂载点）。
+
+现与套件口径对齐：
+
+| 入口 | 保留数据（默认） | 连数据一起删 |
+|---|---|---|
+| 网页 UI | 勾选「保留数据」（默认勾选） | 取消勾选 |
+| API `/api/run` | `{"cmd":"uninstall"}`（`keep_data` 缺省为 true） | `{"cmd":"uninstall","keep_data":false}` |
+| 脚本 `install-remote-spk.sh uninstall` | 缺省，或 `--keep-data` | `--delete-data`，或环境变量 `DSH_KEEP_DATA=0` |
+| 清理脚本 `scripts/clean-dsm-residue.sh` | 缺省，或 `--keep-data`（只删程序 `@appstore/@appconf/@apptemp/@eaDir`） | `--delete-data`（另删 `@appdata/@apphome/@appshare`） |
+
+> 修复（repair）流程同样**默认保留数据**：它的本意是清程序残留再重装，`install-server.py` 已显式传 `--keep-data`。
+
 ## 🖥 网页安装工具（远程探测 + 一键安装）
 
 浏览器访问安装网页（本机局域网地址 + 端口 8765，`web-install/install-server-ctl.sh start` 启动），远程安装 spk/fpk：
