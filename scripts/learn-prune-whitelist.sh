@@ -71,6 +71,19 @@ if mode == 'scan':
     if not os.path.isfile(root_pkg):
         sys.exit(f'✗ 源码根 package.json 不存在: {root_pkg}')
     root_dev = set((json.load(open(root_pkg, encoding='utf-8')).get('devDependencies') or {}).keys())
+    # ── 扩展③：候选集加上 workspace 各包的 devDependencies（2026-10-03）──
+    #   只扩扫描面不扩候选集，workspace 包自己的构建期 devDeps（如 vite）与类型依赖
+    #   （如 @types/semver）会被 `learned &= stripped` 过滤掉 → "扫到了却学不进来"。
+    import glob as _glob2
+    _ws_dev = set()
+    for _pj2 in (_glob2.glob(os.path.join(src_root, 'packages', '*', '*', 'package.json'))
+                 + _glob2.glob(os.path.join(src_root, 'apps', '*', 'package.json'))):
+        try:
+            _d2 = json.load(open(_pj2, encoding='utf-8'))
+        except Exception:
+            continue
+        _ws_dev |= set((_d2.get('devDependencies') or {}).keys())
+    root_dev |= _ws_dev
 else:
     root_dev = set()  # 日志模式：只对出现的裸包去重，交由 --extra-supplied 决定是否属于 devDeps
 
@@ -104,9 +117,10 @@ def bare_imports(text):
 learned = set()
 
 if mode == 'scan':
-    # 只扫「命脉脚本」：根 package.json scripts 中 build 链 / postinstall / clean 引用的
-    # 入口文件（及其一层层相对 import）。绝不扫 scripts/ 全部（vitest/jsdom 等测试校验
-    # 脚本会误学进来，正是裁剪要削掉的巨型包）。
+    # 扫描面 = 「构建命脉」脚本的入口文件及其相对 import 链：
+    #   ① 根 package.json 的 build 链 / postinstall / clean 引用的入口
+    #   ② workspace 各包（packages/*/*、apps/*）的 build*/postinstall 入口
+    #   刻意**不**扫全部 scripts/：vitest/jsdom 等测试校验脚本会误学进来（正是裁剪要削的巨型包）。
     rp = json.load(open(os.path.join(src_root, 'package.json'), encoding='utf-8'))
     scripts = rp.get('scripts') or {}
 
@@ -118,11 +132,33 @@ if mode == 'scan':
                 files.append(tok)
         return files
 
+    def is_vital_script(name):
+        return name == 'postinstall' or name == 'clean' or 'build' in name
+
     vital = []
     for name, cmd in scripts.items():
-        if name == 'postinstall' or name == 'clean' or 'build' in name:
+        if is_vital_script(name):
             vital.extend(entry_files(cmd))
     vital = [p.lstrip('./') for p in vital]
+
+    # ② workspace 各包的构建期脚本：包内构建脚本不扫就学不到
+    #    （实测 vite 出现在 packages/experimental/inspector/scripts/devtools/vite.ts）
+    import glob as _glob
+    for _pj in (_glob.glob(os.path.join(src_root, 'packages', '*', '*', 'package.json'))
+                + _glob.glob(os.path.join(src_root, 'apps', '*', 'package.json'))):
+        try:
+            _ps = (json.load(open(_pj, encoding='utf-8')).get('scripts') or {})
+        except Exception:
+            continue
+        _base = os.path.dirname(_pj)
+        for _name, _cmd in _ps.items():
+            if not is_vital_script(_name):
+                continue
+            for _f in entry_files(_cmd):
+                _ap = os.path.normpath(os.path.join(_base, _f))
+                if _ap.startswith(src_root + os.sep):
+                    vital.append(os.path.relpath(_ap, src_root))
+    vital = sorted(set(vital))
 
     seen = set()
     queue = list(vital)
@@ -142,10 +178,33 @@ if mode == 'scan':
             rel = m.group(1)
             joined = os.path.normpath(os.path.join(os.path.dirname(fname), rel))
             queue.append(joined)
-    source = f"命脉脚本静态解析（{len(vital)} 入口）"
-    # 只保留「将被剥离的根 devDeps」→ 这才是真正需要补白名单的
-    stripped = root_dev - existing_white
-    learned &= stripped
+    source = f"构建命脉脚本静态解析（{len(vital)} 入口）"
+
+    # ── 候选判定（统一口径）──────────────────────────────────────────────
+    #   判据：**构建命脉脚本 import 到、且裁剪前的树里确实存在** → 必须保白名单。
+    #   为什么不用"是否被声明为 devDependency"：传递依赖会被漏掉 —— 实测 vite 不被任何包
+    #   声明，却是 packages/experimental/inspector/scripts/devtools/vite.ts 的 import；
+    #   按"已声明"过滤就学不到 → 裁剪剥掉 → tsc 报 TS2307: Cannot find module 'vite'
+    #   （现象像"没装"，实际 .pnpm 实体还在、被删的是顶层解析入口）。
+    #   扫描面只含命脉脚本，故"import 到什么就保什么"不会把 vitest/jsdom 测试树学进来。
+    import glob as _glob3
+    _nm = os.path.join(src_root, 'node_modules')
+
+    def _in_tree(pkg):
+        return (os.path.exists(os.path.join(_nm, pkg))
+                or bool(_glob3.glob(os.path.join(_nm, '.pnpm', pkg.replace('/', '+') + '@*'))))
+
+    learned = {p for p in learned if _in_tree(p)}
+
+    # 类型专用依赖：@types/* 不被 import，但 tsc 需要（实测 @types/semver → TS7016）。
+    #   对每个学到的包派生 @types/<pkg>（scoped: @scope/name → @types/scope__name），
+    #   同样要求"树里存在"。
+    _derived = set()
+    for _p in learned:
+        _d = ('@types/' + _p[1:].replace('/', '__')) if (_p.startswith('@') and _p.count('/') == 1) else ('@types/' + _p)
+        if _in_tree(_d):
+            _derived.add(_d)
+    learned |= _derived
 elif mode == 'log':
     try:
         text = open(target, encoding='utf-8', errors='replace').read()
@@ -167,6 +226,19 @@ elif mode == 'log':
                 learned.add('/'.join(parts[:2]))
             else:
                 learned.add(mod.split('/')[0])
+    # ── TS7016：缺的是**类型声明**（@types/<pkg>），不是运行时包本身（2026-10-03）──
+    #   实测 scripts/release/publish.ts: error TS7016: Could not find a declaration file
+    #   for module 'semver' → 要补 @types/semver（semver 本身可能已在 lockfileDeps）。
+    for _pat in [r"Could not find a declaration file for module '([^']+)'",
+                 r"Could not find a declaration file for module \"([^\"]+)\""]:
+        for _m in re.finditer(_pat, text):
+            _mod = _m.group(1)
+            if _mod.startswith('.') or _mod.startswith('node:'):
+                continue
+            if _mod.startswith('@') and _mod.count('/') == 1:
+                learned.add('@types/' + _mod[1:].replace('/', '__'))
+            else:
+                learned.add('@types/' + _mod.split('/')[0])
     source = f"日志反查 {target}"
 
 learned = {x for x in learned if x}  # 去空

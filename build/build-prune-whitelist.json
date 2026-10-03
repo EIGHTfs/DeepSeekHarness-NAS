@@ -7,6 +7,7 @@
     "@types/js-yaml",
     "@types/jsdom",
     "@types/mdast",
+    "@types/semver",
     "@types/spdx-expression-parse",
     "execa",
     "extract-zip",
@@ -27,11 +28,10 @@
     "tsdown",
     "tsx",
     "typescript",
-    "vite-tsconfig-paths",
     "vite",
-    "@types/semver"
+    "vite-tsconfig-paths"
   ],
-  "_extraNote": "native 不是 .pnpm 包，由黑名单 sourceDirs 保护逻辑单独处理；typescript/tsx/tsdown/vite-tsconfig-paths/lightningcss/execa/smol-toml 为 build/run 必需工具（install 前裁剪 devDeps 时保护，否则 build 阶段缺工具失败；2026-09-14 手动追加，gen-prune-whitelist.sh 自动更新只动 lockfileDeps 不覆盖此处）；learn-prune-whitelist.sh 自动并入 1 个构建必需包: lefthook；learn-prune-whitelist.sh 自动并入 5 个构建必需包: fast-check, mdast, mdast-util-from-markdown, mdast-util-gfm, micromark-extension-gfm；learn-prune-whitelist.sh 自动并入 2 个构建必需包: publint, spdx-expression-parse；2026-09-22 官方 0.1.7-alpha.1 新增 scripts/primary-runtime/prepare.ts（import extract-zip/tar），不保护则 tsc 报 TS2307，手动追加 extract-zip、tar；2026-10-03 手动追加 vite, @types/semver：vite 被 workspace 包 packages/experimental/inspector/scripts/devtools/vite.ts import、@types/semver 被 scripts/release/publish.ts 类型检查需要；二者原先都不在白名单 → install 前裁剪剥掉 → tsc 报 TS2307/TS7016。（待 learn-prune-whitelist.sh 学习面扩到 workspace 构建期依赖 + @types 派生后自动学到）",
+  "_extraNote": "native 不是 .pnpm 包，由黑名单 sourceDirs 保护逻辑单独处理；typescript/tsx/tsdown/vite-tsconfig-paths/lightningcss/execa/smol-toml 为 build/run 必需工具（install 前裁剪 devDeps 时保护，否则 build 阶段缺工具失败；2026-09-14 手动追加，gen-prune-whitelist.sh 自动更新只动 lockfileDeps 不覆盖此处）；learn-prune-whitelist.sh 自动并入 1 个构建必需包: lefthook；learn-prune-whitelist.sh 自动并入 5 个构建必需包: fast-check, mdast, mdast-util-from-markdown, mdast-util-gfm, micromark-extension-gfm；learn-prune-whitelist.sh 自动并入 2 个构建必需包: publint, spdx-expression-parse；2026-09-22 官方 0.1.7-alpha.1 新增 scripts/primary-runtime/prepare.ts（import extract-zip/tar），不保护则 tsc 报 TS2307，手动追加 extract-zip、tar；2026-10-03 手动追加 vite, @types/semver：vite 被 workspace 包 packages/experimental/inspector/scripts/devtools/vite.ts import、@types/semver 被 scripts/release/publish.ts 类型检查需要；二者原先都不在白名单 → install 前裁剪剥掉 → tsc 报 TS2307/TS7016。（待 learn-prune-whitelist.sh 学习面扩到 workspace 构建期依赖 + @types 派生后自动学到）；learn-prune-whitelist.sh 自动并入 2 个构建必需包: @types/semver, vite；learn-prune-whitelist.sh 自动并入 2 个构建必需包: @types/semver, vite",
   "lockfileDeps": [
     "@agentclientprotocol/sdk",
     "@anthropic-ai/sdk",
@@ -532,6 +532,8 @@
     "mdast-util-gfm",
     "micromark-extension-gfm",
     "publint",
-    "spdx-expression-parse"
+    "spdx-expression-parse",
+    "@types/semver",
+    "vite"
   ]
 }
