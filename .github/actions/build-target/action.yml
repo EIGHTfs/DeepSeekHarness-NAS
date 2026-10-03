@@ -37,6 +37,23 @@ runs:
     - name: 随包 node / pnpm 环境
       uses: ./.github/actions/setup-node-env
 
+
+    # ── 缓存：官方源码 git 镜像（fetch-dsh-latest.sh 增量拉取的基础）──
+    #   key 用仓库 + build-config.yaml 指纹；restore-keys 兜底到最近一次（镜像本身就是增量源，
+    #   命中即可只拉增量，未命中则首建镜像）。
+    - name: 缓存官方源码 git 镜像
+      id: cache-src-mirror
+      uses: actions/cache@v4
+      with:
+        path: src/deepseek-ai/.cache
+        key: dsh-src-mirror-${{ github.repository }}-${{ hashFiles('build/build-config.yaml') }}
+        restore-keys: |
+          dsh-src-mirror-${{ github.repository }}-
+
+    - name: 记录镜像缓存命中情况
+      shell: bash
+      run: echo "源码 git 镜像缓存命中: ${{ steps.cache-src-mirror.outputs.cache-hit }}（true=只拉增量）"
+
     - name: 拉取官方最新源码（增量）
       uses: ./.github/actions/fetch-latest
       with:
@@ -44,6 +61,25 @@ runs:
 
     - name: 构建目录清理
       uses: ./.github/actions/ci-clean
+
+
+    # ── 缓存：pnpm store（跨 run 复用已下载的包）──
+    #   本仓库根目录无 pnpm-lock.yaml（官方源码才有），故 hashFiles 可能为空；
+    #   restore-keys 兜底到最近一次 store，仍能显著减少下载。
+    - name: 缓存 pnpm store
+      id: cache-pnpm-store
+      uses: actions/cache@v4
+      with:
+        path: assets/pnpm-store
+        key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+        restore-keys: |
+          pnpm-store-${{ runner.os }}-
+
+    - name: 记录 pnpm store 缓存命中情况
+      shell: bash
+      run: |
+        echo "pnpm store 缓存命中: ${{ steps.cache-pnpm-store.outputs.cache-hit }}"
+        du -sh assets/pnpm-store 2>/dev/null || echo "（store 目录尚未创建，本次为冷启动）"
 
     # ⚠ 单步构建（BUILD_STAGE=all）保证失败时 failure() 能捕获；日志靠 artifact 兜底。
     - name: 公共预编译 pnpm install + build + 裁剪（唯一一次）
