@@ -4,6 +4,31 @@
 #===============================================================================
 # 【用途】三种模式，都走纯白名单（不在白名单 = 删除）：
 #
+#   ┌──────┬────────────────────┬──────────────────────────┬───────────────────────────────┬──────────┐
+#   │ 模式 │ 时机               │ 裁什么                   │ 白名单集合                    │ 需闭包?  │
+#   ├──────┼────────────────────┼──────────────────────────┼───────────────────────────────┼──────────┤
+#   │ A    │ pnpm install 之前  │ 根 package.json 的       │ extra + lockfileDeps          │ 不需要   │
+#   │      │ --before-install   │ devDependencies(+ 清     │ + workspaceRuntimeDeps        │ (无 .pnpm│
+#   │      │                    │ pnpm-workspace.yaml 的   │                               │  可走)   │
+#   │      │                    │ patchedDependencies)     │                               │          │
+#   ├──────┼────────────────────┼──────────────────────────┼───────────────────────────────┼──────────┤
+#   │ C    │ install 之后、     │ BUILD_SRC/node_modules   │ lockfileDeps + 全部 workspace │ 需要     │
+#   │      │ build 之前         │ /.pnpm                   │ 声明(deps+dev+peer+optional)  │ (原有)   │
+#   │      │ --node-modules     │ (不裁源码/文档)          │ + extra（构建工具，必需）     │          │
+#   ├──────┼────────────────────┼──────────────────────────┼───────────────────────────────┼──────────┤
+#   │ B    │ build 之后、       │ TARGET/node_modules/     │ lockfileDeps                  │ 需要     │
+#   │      │ 打到 target        │ .pnpm + 源码/文档 +      │ + workspaceRuntimeDeps        │ ← 原本   │
+#   │      │ (默认，出货形态)   │ 权限归一 755/644         │ （不含 extra）                │   没有！ │
+#   └──────┴────────────────────┴──────────────────────────┴───────────────────────────────┴──────────┘
+#
+#   关键区别：
+#   ① A 只决定「要下载什么」（清单裁剪，省 CI 磁盘峰值）；B/C 决定「装好的树留什么」。
+#   ② C 必须带 extra（tsc/tsx/tsdown 等构建工具），否则 build 直接缺工具失败；
+#      B 不能带 extra（最终包不需要类型检查/测试工具），只保留运行时。
+#   ③ C 不裁源码/文档（build 还要读 src/）；B 才裁源码/文档并归一权限。
+#   ④ **只有 B 决定最终 SPK 里有什么** —— 所以只有 B 的闭包缺失会导致出货的包缺依赖
+#      （本次故障即此），A/C 的名单差异只会造成构建期或体积问题。
+#
 #  模式 A：install 前（--before-install <BUILD_SRC>）
 #    pnpm install **之前** 对源码副本 BUILD_SRC 根 package.json 的 devDependencies
 #    应用纯白名单：不在白名单的 devDep 一律删除。
@@ -12,7 +37,7 @@
 #    已手动追加进白名单 extra，install 时保留，build 不会缺工具。
 #
 #  模式 B：target 后（默认 <TARGET> [WHITELIST]）
-#    对已构建 target 的 .pnpm 目录应用纯白名单裁剪：
+#    对已构建 target 的 .pnpm 目录应用纯白名单裁剪（**含依赖闭包**，2026-10-03 修）：
 #    不在 lockfileDeps + workspaceRuntimeDeps 的一律删除。
 #    额外排除 codex/claude（disabled preset，即使在 lockfileDeps 也删）。
 #    + sourceDirs 源码/文档裁剪。
@@ -26,7 +51,19 @@
 # 【规则】纯白名单：白名单列出的保留，其余全删。无黑名单。
 #   白名单 = extra（模式 A/C 用，构建与类型检查包）+ lockfileDeps（自动生成的运行时依赖）
 #          + workspaceRuntimeDeps（动态收集 packages/*/package.json dependencies）
+#   ⚠ 纯名字白名单必须再做**依赖闭包扩展**（沿 .pnpm 依赖软链 BFS），否则外部包的
+#     运行时传递依赖会被误删。公共实现见 build/prune_common.py。
 #   ⚠ native/ 不在裁剪范围：node-addon-system-linux-x64 软链真身，删了启动必挂
+#
+# 【2026-10-03 修复：模式 B 补上依赖闭包】
+#   实测缺陷：模式 B 原本没有闭包扩展（模式 C 有），把外部包的传递依赖删光——
+#     @deepseek-ai/libreoffice-kit → fontkit          （dsh-office-to-pdf failed to import）
+#     got                         → @sindresorhus/is  （dsh-otel failed to import）
+#     @modelcontextprotocol/client → @modelcontextprotocol/core
+#   两台机器（10.10.10.64 / 10.10.10.193）装的同一 SPK 全部中招。
+#   同时把 pkg_name / pkg_deps / expand_closure 抽到 build/prune_common.py：
+#   原先 B/C 各自内联、pkg_name 重复定义两份，正是模式 B 漂移掉的机制性原因。
+#   ⚠ 以后新增模式请一律 import build/prune_common.py，不要再内联复制。
 #===============================================================================
 set -euo pipefail
 
@@ -119,8 +156,10 @@ fi
 # ==============================================================================
 if [ "$MODE_BEFORE_BUILD" = "1" ]; then
   echo "▶ build 前裁剪 node_modules: $BUILD_SRC/node_modules（$(du -sh "$BUILD_SRC/node_modules" 2>/dev/null | cut -f1)）"
-  python3 - "$BUILD_SRC" "$WHITELIST_FILE" <<'PYEOF' 2>&1 || echo "  ⚠ 裁剪 python 段返回非零（详见上方错误）"
+  PRUNE_COMMON_DIR="$SCRIPT_DIR" python3 - "$BUILD_SRC" "$WHITELIST_FILE" <<'PYEOF' 2>&1 || echo "  ⚠ 裁剪 python 段返回非零（详见上方错误）"
 import json, os, re, shutil, sys
+sys.path.insert(0, os.environ['PRUNE_COMMON_DIR'])
+from prune_common import pkg_name, pkg_deps, expand_closure   # 公共逻辑，勿再内联复制
 build_src, white_file = sys.argv[1], sys.argv[2]
 white = json.load(open(white_file, encoding='utf-8'))
 pnpm = os.path.join(build_src, 'node_modules', '.pnpm')
@@ -130,30 +169,8 @@ pnpm = os.path.join(build_src, 'node_modules', '.pnpm')
 # esbuild / rollup / vite / postcss / oxc-resolver 等**传递依赖**——这些既不在运行时
 # lockfileDeps、也不在 extra 名单里，静态列举必漏（实测漏 esbuild →
 # build 报 Cannot find package 'esbuild'）。故改为**沿 .pnpm 依赖软链自动递归**：
-# 从 extra 构建工具出发收集整棵依赖闭包，闭包内全部保留。
-def pkg_name(pnpm_dir):
-    base = os.path.basename(pnpm_dir)
-    m = re.match(r'(@[^@]+|[^@]+)@', base)
-    return m.group(1).replace('+', '/') if m else base
-
-def pkg_deps(full):
-    """列出 .pnpm/<pkg>/node_modules/ 下的依赖包名（沿软链/实体目录）。"""
-    nm = os.path.join(full, 'node_modules')
-    out = set()
-    if not os.path.isdir(nm):
-        return out
-    for e in os.listdir(nm):
-        ep = os.path.join(nm, e)
-        if e.startswith('@'):
-            try:
-                for g in os.listdir(ep):
-                    if os.path.exists(os.path.join(ep, g)):
-                        out.add(f'{e}/{g}')
-            except OSError:
-                pass
-        elif os.path.exists(ep):
-            out.add(e)
-    return out
+# 从白名单出发收集整棵依赖闭包，闭包内全部保留。
+# （pkg_name / pkg_deps / expand_closure 已抽到 build/prune_common.py，2026-10-03）
 
 # ── 构建期白名单（2026-10-02 修正）：以「所有 workspace 包声明的依赖」为根 ──
 # 教训：只从 extra（构建工具）出发会漏掉**源码构建依赖**——react/react-dom/electron/
@@ -199,25 +216,8 @@ if white.get('workspaceRuntimeDeps'):
             except Exception:
                 pass
 
-# 依赖闭包：name→dirs 映射（裁剪前的完整 .pnpm）→ 从声明集合 BFS
-name2dirs = {}
-if os.path.isdir(pnpm):
-    for d in os.listdir(pnpm):
-        full = os.path.join(pnpm, d)
-        if os.path.isdir(full) and not os.path.islink(full) and d != 'node_modules':
-            name2dirs.setdefault(pkg_name(d), []).append(full)
-_seen, _stack = set(), list(whitelist)
-while _stack:
-    _n = _stack.pop()
-    if _n in _seen:
-        continue
-    _seen.add(_n)
-    for _d in name2dirs.get(_n, []):
-        for _dep in pkg_deps(_d):
-            if _dep not in _seen:
-                _stack.append(_dep)
-build_closure = _seen
-whitelist |= build_closure
+# 依赖闭包：从白名单种子沿 .pnpm 软链 BFS（公共实现，见 build/prune_common.py）
+whitelist, build_closure = expand_closure(whitelist, pnpm)
 declared_n = len(declared)
 
 force_exclude = {'@openai/codex', 'claude-agent-sdk', '@anthropic-ai/claude',
@@ -271,8 +271,10 @@ fi
 # ==============================================================================
 echo "▶ 裁剪 target: $TARGET ($(du -sh "$TARGET" 2>/dev/null | cut -f1))"
 
-python3 - "$TARGET" "$WHITELIST_FILE" <<'PYEOF' 2>&1 || echo "  ⚠ 裁剪 python 段返回非零（详见上方错误）"
+PRUNE_COMMON_DIR="$SCRIPT_DIR" python3 - "$TARGET" "$WHITELIST_FILE" <<'PYEOF' 2>&1 || echo "  ⚠ 裁剪 python 段返回非零（详见上方错误）"
 import json, glob, os, re, shutil, sys
+sys.path.insert(0, os.environ['PRUNE_COMMON_DIR'])
+from prune_common import pkg_name, expand_closure   # 公共逻辑，勿再内联复制
 target, white_file = sys.argv[1], sys.argv[2]
 white = json.load(open(white_file, encoding='utf-8'))
 pnpm = os.path.join(target, 'node_modules', '.pnpm')
@@ -291,11 +293,20 @@ if white.get('workspaceRuntimeDeps'):
             except Exception:
                 pass
 
-def pkg_name(pnpm_dir):
-    """.pnpm 目录名 → 包名（js-yaml@4.2.0 → js-yaml；@types+js-yaml@4.0.9 → @types/js-yaml）"""
-    base = os.path.basename(pnpm_dir)
-    m = re.match(r'(@[^@]+|[^@]+)@', base)
-    return m.group(1).replace('+', '/') if m else base
+# ── 依赖闭包（2026-10-03 修复：模式 B 此前完全没有闭包）────────────────────
+# 【症状】纯名字白名单只认「lockfileDeps 里列出的包名」+「workspace 包自己声明的依赖」，
+#   而**外部包自己的传递依赖两者都不属于**：
+#       @deepseek-ai/libreoffice-kit@0.1.1 → fontkit@2.0.4         （dsh-office-to-pdf 挂）
+#       got@14.6.6                         → @sindresorhus/is@^7.0.1（dsh-otel 挂）
+#       @modelcontextprotocol/client@2.0.0 → @modelcontextprotocol/core（acp-app 挂）
+#   于是它们被无条件删除，而消费者 `got` / `libreoffice-kit` 留下 → 目录里出现
+#   悬空软链（这正是本缺陷的指纹）。装完 DSH 启动报 "Cannot find package 'x'",
+#   内置插件 failed to import。实测 10.10.10.64 与 10.10.10.193 两台机器安装的
+#   同一个 SPK 全部中招（同源构建缺陷，非某台机器偶发）。
+# 【为何只漏模式 B】模式 C（build 前）早已有闭包，模式 B（最终 target）只做纯名单
+#   匹配 → 模式 C 保住的包在最后一步又被删掉。
+# 【修法】调公共 expand_closure，与模式 C 同款（见 build/prune_common.py）。
+whitelist, runtime_closure = expand_closure(whitelist, pnpm)
 
 # 强制排除（即使在白名单里也不保留：体积大 / disabled preset / 非目标平台）
 force_exclude = {'@openai/codex', 'claude-agent-sdk', '@anthropic-ai/claude',
@@ -337,8 +348,9 @@ if os.path.isdir(hoist):
                 except OSError:
                     pass
 
-print('  ✓ 纯白名单裁剪: 保留 %d 个, 删除 %d 个 .pnpm 目录（白名单共 %d 项）%s'
-      % (kept, deleted, len(whitelist),
+print('  ✓ 纯白名单裁剪: 保留 %d 个, 删除 %d 个 .pnpm 目录'
+      '（白名单 %d 项 = 名单 %d + 闭包 %d）%s'
+      % (kept, deleted, len(whitelist), len(whitelist) - len(runtime_closure), len(runtime_closure),
          ('；清理 %d 条悬空提升软链' % hoist_broken) if hoist_broken else ''))
 
 # 源码/文档裁剪（native/ 保留）

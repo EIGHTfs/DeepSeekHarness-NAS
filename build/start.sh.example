@@ -2,7 +2,7 @@
 # ============================================================
 #  DSH 实例启动脚本 (dsh-v0.1.2-alpha.4) —— 自包含版
 #  数据区: <DSH_DIR>/.dsh-home/.dsh (自动定位)
-#  用法:   ./start.sh [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status]
+#  用法:   ./start.sh [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner]
 #
 #  ⚠ 本文件是【逻辑母版】，不是最终运行脚本：
 #     最终 start.sh 由 build-spk.sh / build-fpk.sh 依 build-config.yaml 生成，
@@ -14,7 +14,17 @@
 #          → 清理旧实例 → 权限与目录修复 → 启动 DSH
 #          → 内置反代 (带 ownsHost polyfill + 自动重定向 ?token) + 容器页面
 #          → 支持 CLI 自定义 3 端口 (--proxy-port / --dsh-port / --container-port)
+#          → check 只读自检（属主 / 凭据权限 / ACL / 端口 / 缺包）；fix-owner 修属主漂移（仅 root）
 #  PID/日志/临时文件一律落应用版本数据目录（禁止 /tmp：fnOS /tmp 属 root 无 sticky，应用用户不可写）
+#
+#  【2026-10-03 可诊断化】权限收紧不再静默吞 EPERM：
+#  背景：从旧版本迁移/共享文件夹场景下，数据区条目属主可能是管理员用户而非服务用户，
+#        chmod 全部 EPERM。旧实现内层 catch{} 把失败全丢掉，只有 .credentials.yaml 卡在 622，
+#        DSH 三秒后以 "1 required plugin did not activate" 崩溃，日志里零线索（193 实机）。
+#  现在：① secureDshTree 汇总失败项 + 打印可执行的 chown 命令；
+#        ② preflightCredentials 提前镜像 credentials-local 的 mode&0o077 断言；
+#        ③ 启动超时路径直接抛出日志里的致命原因；
+#        ④ ./start.sh check 一条命令给出根因（含 --deep 缺包探测）。
 # ============================================================
 
 # ---------- 自动定位 ----------
@@ -225,8 +235,6 @@ detect_entry() {
     ENTRY="$DSH_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js"; TSX=0
   elif [ -f "$DSH_DIR/lib/bin.js" ]; then
     ENTRY="$DSH_DIR/lib/bin.js"; TSX=0
-  elif [ -f "$DSH_DIR/apps/cli/lib/bin.js" ]; then
-    ENTRY="$DSH_DIR/apps/cli/lib/bin.js"; TSX=0
   else
     echo "[!] 未找到 DSH 启动入口（apps/cli/src/bin.ts / lib/bin.js）" >&2
     exit 1
@@ -240,6 +248,8 @@ DSH_CMD="${1:-start}"
 PROXY_PORT_ARG=""
 DSH_PORT_ARG=""
 CONTAINER_PORT_ARG=""
+OWNER_ARG=""
+CHECK_DEEP=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --proxy-port=*)     PROXY_PORT_ARG="${1#*=}" ; shift ;;
@@ -248,17 +258,24 @@ while [[ $# -gt 0 ]]; do
     --proxy-port)       PROXY_PORT_ARG="$2" ; shift 2 ;;
     --dsh-port)         DSH_PORT_ARG="$2" ; shift 2 ;;
     --container-port)   CONTAINER_PORT_ARG="$2" ; shift 2 ;;
-    start|stop|restart|status) DSH_CMD="$1" ; shift ;;
+    --owner=*)          OWNER_ARG="${1#*=}" ; shift ;;
+    --owner)            OWNER_ARG="$2" ; shift 2 ;;
+    --deep)             CHECK_DEEP=1 ; shift ;;
+    start|stop|restart|status|check|fix-owner) DSH_CMD="$1" ; shift ;;
     -h|--help)
-      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status]"
+      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner]"
       echo "  --proxy-port N       反代端口（默认 __PROXY_PORT__，环境变量 DSH_PROXY_PORT）"
       echo "  --dsh-port N         DSH 内部端口（默认 __DSH_PORT__，环境变量 DSH_DSH_PORT）"
       echo "  --container-port N   容器页面端口（默认 __CONTAINER_PORT__，环境变量 DSH_CONTAINER_PORT）"
+      echo "  check                只读自检：属主/凭据权限/ACL/端口/缺包（--deep 追加缺包导入探测）"
+      echo "  fix-owner            修复属主漂移（仅 root；--owner <服务用户名>）"
+      echo "  --owner NAME         fix-owner 的目标属主（默认取数据父目录的属主）"
+      echo "  --deep               check 追加运行时缺包导入探测（较慢）"
       exit 0
       ;;
     *)
       echo "[!] 未知参数: $1" >&2
-      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status]" >&2
+      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner]" >&2
       exit 1
       ;;
   esac
@@ -280,12 +297,16 @@ APP_NAME="__APP_NAME__"
 # 统一放应用自己的版本数据目录（DSH_HOME_PARENT，安装期 chown 给应用用户）：
 #   <PKG_VAR>/<version>/<APP_NAME>.pid 与 .log
 PID_DIR="${DSH_HOME_PARENT:-$DSH_HOME_DIR}"
-mkdir -p "$PID_DIR" 2>/dev/null || true
 PID_FILE="${PID_DIR}/${APP_NAME}.pid"
 LOG_FILE="${PID_DIR}/${APP_NAME}.log"
 # node 的临时文件走 TMPDIR；fnOS /tmp 不可写会让 mkdtemp EACCES → 启动崩溃
 export TMPDIR="${PID_DIR}/tmp" TMP="${PID_DIR}/tmp" TEMP="${PID_DIR}/tmp"
-mkdir -p "$TMPDIR" 2>/dev/null || true
+# 【2026-10-03】目录创建推迟到 cmd_start：原先写在顶层，会让只读的 `check` 也产生副作用
+# （凭空建出数据目录/ tmp），且 status/stop 本就不该创建目录。只读子命令必须真的只读。
+ensure_pid_dirs() {
+  mkdir -p "$PID_DIR" 2>/dev/null || true
+  mkdir -p "$TMPDIR" 2>/dev/null || true
+}
 # fnOS/Synology 把包用户的登录 shell 记成 /sbin/nologin，但该文件在本机并不存在
 # （/sbin -> usr/sbin，/usr/sbin/nologin 缺失）。DSH 的 subprocess-local 用
 # process.env.SHELL || os.userInfo().shell 解析侧边栏终端默认 shell；不设 SHELL 时
@@ -308,7 +329,7 @@ ensure_tmpfile_writable() {
   if : > "$f" 2>/dev/null; then
     return 0
   fi
-  echo "[!] 无法写入 $f（请检查 /tmp 权限）" >&2
+  echo "[!] 无法写入 $f（请检查该路径及其父目录的权限/属主）" >&2
   return 1
 }
 
@@ -346,29 +367,87 @@ function writeTmpFile(file, content) {
   fs.writeFileSync(file, content, 'utf-8');
 }
 
-// 权限修复（尽力而为；非属主时 EPERM 仅警告）
+// 读 /proc/self/mountinfo 的挂载点集合：收紧权限时跳过嵌套挂载点
+// （bind 挂载 / NFS 子树里的文件不属本实例，连带 chmod 会改到别的系统/远端）
+function readMountPoints() {
+  const s = new Set();
+  try {
+    for (const line of fs.readFileSync('/proc/self/mountinfo', 'utf-8').split('\n')) {
+      const f = line.split(' ');
+      // mountinfo 格式: id parent major:minor root mountpoint ...
+      if (f.length > 4 && f[4].startsWith('/')) s.add(f[4].replace(/\\040/g, ' '));
+    }
+  } catch {}
+  return s;
+}
+
+// 权限收紧结果汇报：把「谁没改成功 / 为什么 / 怎么修」一次说清。
+// 2026-10-03 实测教训：迁移后 .dsh 内 76 个条目属主是管理员用户而非服务用户，
+// chmod 全部 EPERM 却被内层 catch{} 丢弃，只有 .credentials.yaml 卡在 622 →
+// DSH 三秒后以 "1 required plugin did not activate" 崩溃，现场零线索。
+function reportHarden(dir, myUid, denied, failed) {
+  const ui = (() => { try { return require('os').userInfo(); } catch { return {}; } })();
+  const uname = ui.username || (myUid !== -1 ? String(myUid) : 'root');
+  const who = ui.gid != null ? `${uname}:${ui.gid}` : uname;
+  if (denied.length) {
+    console.error(`[✗] ${denied.length} 个条目不属当前服务用户，chmod 被拒（EPERM），权限未收紧:`);
+    for (const d of denied.slice(0, 10)) console.error(`      ${d.p}`);
+    if (denied.length > 10) console.error(`      …… 另有 ${denied.length - 10} 项，同因`);
+    console.error('[!] 若失败项含 DSH_HOME 根目录，它下面的 .credentials.yaml 就收不紧；');
+    console.error('    credentials 是必需插件，DSH 会直接启动失败（非属主时 chmod 无效，必须先 chown）。');
+    console.error(`[!] 修复（需 root）: chown -R ${who} ${dir}`);
+    console.error('    或执行: ./start.sh fix-owner --owner <服务用户名>');
+  }
+  for (const f of failed.slice(0, 5)) console.error(`[!] 权限收紧失败 ${f.p}: ${f.code}`);
+}
+
+// 权限修复。跳过嵌套挂载点、已是目标权限则不重复 chmod；失败项汇总上报（不再静默）
 function secureDshTree(dir) {
   console.log(`[√] 收紧权限: ${dir}`);
-  try {
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    fs.chmodSync(dir, 0o700);
-    const walk = (d) => {
-      let entries;
-      try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
-      for (const ent of entries) {
-        if (ent.name === '.' || ent.name === '..') continue;
-        const p = require('path').join(d, ent.name);
-        try {
-          if (ent.isSymbolicLink()) continue;
-          if (ent.isDirectory()) { fs.chmodSync(p, 0o700); walk(p); }
-          else { fs.chmodSync(p, 0o600); }
-        } catch {}
-      }
-    };
-    walk(dir);
-  } catch (error) {
-    console.error(`[!] 权限修复警告: ${error.message}`);
-  }
+  const myUid = typeof process.getuid === 'function' ? process.getuid() : -1;
+  const mounts = readMountPoints();
+  const denied = [];   // EPERM/EACCES：几乎总是「不是自己的文件」
+  const failed = [];   // 其它错误（只读文件系统、IO 等）
+  const harden = (p, mode) => {
+    try {
+      const st = fs.lstatSync(p);
+      if ((st.mode & 0o777) === mode) return;
+      fs.chmodSync(p, mode);
+    } catch (e) {
+      const code = e && e.code;
+      ((code === 'EPERM' || code === 'EACCES') ? denied : failed).push({ p, code });
+    }
+  };
+  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch {}
+  harden(dir, 0o700);
+  const walk = (d) => {
+    let entries;
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); }
+    catch (e) { failed.push({ p: d, code: e && e.code }); return; }
+    for (const ent of entries) {
+      if (ent.name === '.' || ent.name === '..') continue;
+      const p = require('path').join(d, ent.name);
+      if (ent.isSymbolicLink()) continue;         // 原行为：不跟随软链
+      if (mounts.has(p)) continue;                // 新增：不跨挂载点（只跳过子项，根目录仍处理）
+      if (ent.isDirectory()) { harden(p, 0o700); walk(p); }
+      else harden(p, 0o600);
+    }
+  };
+  walk(dir);
+  reportHarden(dir, myUid, denied, failed);
+}
+
+// 镜像 credentials-local 的 assertOwnerOnly（判据 mode & 0o077 === 0）。
+// 把结论提前到启动阶段，不让用户去猜 "1 required plugin did not activate"。
+// 只警告不退出：自定义 profile 未必加载 credentials，硬退出可能挡掉本可用的配置。
+function preflightCredentials(dshHome) {
+  const f = require('path').join(dshHome, '.credentials.yaml');
+  let st;
+  try { st = fs.statSync(f); } catch { return; }   // 不存在：首启由 DSH 自行创建
+  if ((st.mode & 0o077) === 0) return;
+  console.warn(`[!] ${f} 权限 ${(st.mode & 0o777).toString(8)} 含 group/other 位；`);
+  console.warn('    credentials 为必需插件，DSH 将拒绝启动（非属主时 chmod 无效，须先 chown）。');
+  console.warn(`    修复（需 root）: chown -R <服务用户>:<服务组> ${dshHome} 后重试，或 ./start.sh check`);
 }
 
 async function isPortInUse(port) {
@@ -524,6 +603,7 @@ async function main() {
   try { fs.mkdirSync(dshHome, { recursive: true, mode: 0o700 }); } catch (e) { console.error(`[!] mkdir DSH_HOME: ${e.message}`); }
   try { fs.mkdirSync(home, { recursive: true, mode: 0o700 }); } catch (e) {}
   secureDshTree(dshHome);
+  preflightCredentials(dshHome);
 
   let waitCount = 0;
   while (waitCount < 10) {
@@ -564,7 +644,17 @@ async function main() {
 
   dshProcess.on('exit', (code, sig) => {
     console.log(`[!] DSH 退出 code=${code} signal=${sig}`);
+    // 清理 PID 文件：否则异常退出会留下陈旧 pid（status/排障会误导）
+    try { fs.unlinkSync(PID_FILE); } catch {}
     setTimeout(() => process.exit(code || 0), 1000);
+  });
+
+  // 2026-10-03 新增：spawn 自身失败（如入口/cwd 不存在 → ENOENT）会触发未处理的
+  // 'error' 事件，直接把守护进程崩栈、日志只剩一段 Node 堆栈。这里收敛成一行结论。
+  dshProcess.on('error', (err) => {
+    console.error(`[!] 无法启动 DSH 进程: ${err && err.message}`);
+    try { fs.unlinkSync(PID_FILE); } catch {}
+    setTimeout(() => process.exit(1), 1000);
   });
 
   await new Promise(r => setTimeout(r, 3000));
@@ -903,6 +993,189 @@ get_token() {
   grep -o 'token=[A-Za-z0-9_-]*' "$LOG_FILE" 2>/dev/null | tail -1 | cut -d= -f2
 }
 
+# ---------- check（只读自检；2026-10-03 新增）----------
+# 一条命令给出「起不来」的根因：属主漂移 / 凭据权限 / ACL / 端口 / 运行时缺包。
+# 只读：不写文件、不改权限、不启动服务。退出码 0=无致命项，1=有致命项（⚠ 不计入）。
+#
+# 判定基准是「服务用户」而不是「当前用户」：运维通常 SSH 成 root 跑自检，
+# 若拿 root 当基准，正常归属服务用户的整棵树都会被误报成"不属当前用户"。
+# 服务用户 = --owner 显式值 > （非 root 运行时）当前用户 > 数据父目录属主 > 套件目录属主。
+resolve_service_user() {
+  local u=""
+  if [ -n "${OWNER_ARG:-}" ]; then printf '%s' "$OWNER_ARG"; return 0; fi
+  if [ "$(id -u)" != "0" ]; then id -un; return 0; fi
+  u="$(stat -c '%U' "$DSH_HOME_PARENT" 2>/dev/null || true)"
+  [ -n "$u" ] && [ "$u" != "root" ] && { printf '%s' "$u"; return 0; }
+  u="$(stat -c '%U' "$DSH_DIR" 2>/dev/null || true)"
+  [ -n "$u" ] && [ "$u" != "root" ] && { printf '%s' "$u"; return 0; }
+  id -un
+}
+
+cmd_check() {
+  local rc=0 me mgroup
+  me="$(resolve_service_user)"
+  mgroup="$(id -gn "$me" 2>/dev/null || echo "$me")"
+  echo "═══════════════════════════════════════"
+  echo "  DSH 自检（只读）"
+  echo "═══════════════════════════════════════"
+  echo "实例目录  : $DSH_DIR"
+  echo "DSH_HOME  : $DSH_HOME_DIR"
+  echo "数据父目录: $DSH_HOME_PARENT"
+  echo "Node      : $NODE_BIN"
+  echo "启动入口  : $ENTRY (tsx=$TSX)"
+  echo "服务用户  : $me:$mgroup"
+  echo "当前用户  : $(id -un):$(id -gn) (uid=$(id -u))"
+  [ "$me" != "$(id -un)" ] && echo "            （基准取服务用户 $me；可用 --owner 覆盖）"
+  echo
+
+  # ① 属主一致性：非本用户的条目 chmod 会 EPERM（2026-10-03 实机故障根因）
+  #    两个根分别扫描：.dsh 可能是独立子卷/绑定挂载，单次 -xdev 会把它整个剪掉
+  echo "① 属主一致性（非本用户的条目 chmod 会 EPERM）"
+  local d n
+  for d in "$DSH_HOME_PARENT" "$DSH_HOME_DIR"; do
+    if [ ! -e "$d" ]; then echo "   ⚠ $d 不存在"; continue; fi
+    n=$(find "$d" -xdev ! -user "$me" 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$n" -gt 0 ]; then
+      echo "   ✗ $d: $n 个条目不属于 $me"
+      find "$d" -xdev ! -user "$me" 2>/dev/null | head -5 | sed 's/^/       /'
+      echo "       修复(需 root): chown -R $me:$mgroup $d   （或 ./start.sh fix-owner --owner $me）"
+      rc=1
+    else
+      echo "   ✓ $d 属主一致"
+    fi
+  done
+  echo
+
+  # ② 凭据文件权限：镜像 credentials-local 的 assertOwnerOnly（判据 mode & 0o077 === 0）
+  echo "② 凭据文件权限（credentials 是必需插件，含 group/other 位会拒绝启动）"
+  local cf="$DSH_HOME_DIR/.credentials.yaml" perm last2
+  if [ -f "$cf" ]; then
+    perm=$(stat -c '%a' "$cf" 2>/dev/null || echo "?")
+    last2="${perm: -2}"
+    if [ "$perm" = "?" ]; then
+      echo "   ⚠ 无法读取 $cf 的权限"
+    elif [ "$last2" = "00" ]; then
+      echo "   ✓ $cf 权限 $perm"
+    else
+      echo "   ✗ $cf 权限 $perm 含 group/other 位"
+      echo "       修复(需 root): chown -R $me:$mgroup $DSH_HOME_DIR && chmod 600 '$cf'"
+      echo "       注意：不是自己所有时 chmod 无效（EPERM），必须先 chown"
+      rc=1
+    fi
+  else
+    echo "   ⚠ $cf 不存在（首启由 DSH 自行创建）"
+  fi
+  echo
+
+  # ③ ACL（群晖）：chmod 600 不会撤销 ACL 授权，mode 位看不出但实际仍可读
+  echo "③ ACL 检查（群晖；chmod 不会撤销 ACL 授权）"
+  local acltool="" a acl_extra
+  for a in /usr/syno/bin/synoacltool /bin/synoacltool; do
+    [ -x "$a" ] && { acltool="$a"; break; }
+  done
+  if [ -z "$acltool" ]; then
+    echo "   - 非群晖或无 synoacltool，跳过"
+  elif [ ! -f "$cf" ]; then
+    echo "   - 凭据文件不存在，跳过"
+  else
+    acl_extra=$("$acltool" -get "$cf" 2>/dev/null | grep -E '^[[:space:]]*\[[0-9]+\][[:space:]]*(user|group|everyone):' | grep -v "user:$me:" || true)
+    if [ -n "$acl_extra" ]; then
+      echo "   ⚠ 凭据文件存在非 $me 的 ACL 授权项:"
+      printf '%s\n' "$acl_extra" | sed 's/^/       /'
+      echo "       修复(需 root): $acltool -delall '$cf'   （按需保留服务用户条目）"
+    else
+      echo "   ✓ 未见非 $me 的 ACL 授权项"
+    fi
+  fi
+  echo
+
+  # ④ 运行状态与端口
+  echo "④ 运行状态与端口"
+  if is_running; then
+    echo "   ✓ 运行中 (PID $(cat "$PID_FILE" 2>/dev/null))"
+  else
+    echo "   - 未运行"
+  fi
+  local p
+  for p in $PORT_LIST; do
+    if netstat -tln 2>/dev/null | grep -q ":$p "; then echo "   ✓ $p 监听中"; else echo "   - $p 未监听"; fi
+  done
+  echo
+
+  # ⑤ 运行时依赖完整性（对应「npm 白名单裁掉 pnpm 传递依赖」那类缺陷）
+  echo "⑤ 运行时依赖完整性"
+  local broken
+  broken=$(find "$DSH_DIR/node_modules/.pnpm" -xtype l 2>/dev/null | wc -l | tr -d ' ')
+  if [ "${broken:-0}" -gt 0 ]; then
+    echo "   ⚠ node_modules/.pnpm 下 $broken 个悬空软链（多为 dev 依赖；打中运行时依赖会让内置插件 failed to import）"
+    find "$DSH_DIR/node_modules/.pnpm" -xtype l 2>/dev/null | head -5 | sed 's/^/       /'
+    echo "       修复: ./build/fix-runtime-deps.sh <TARGET> <BUILD_SRC> <NODE>"
+  else
+    echo "   ✓ 无悬空软链"
+  fi
+  if [ "${CHECK_DEEP:-0}" = "1" ]; then
+    echo "   --deep 导入探测（入口集对齐 build/fix-runtime-deps.sh）:"
+    local entry out probe_bad=0
+    for entry in "$DSH_DIR"/packages/boot/*/lib/index.js "$DSH_DIR"/apps/cli/lib/bin.js; do
+      [ -f "$entry" ] || continue
+      out=$(DSH_PROBE_ENTRY="$entry" timeout 30 "$NODE_BIN" --input-type=module \
+            -e 'import(process.env.DSH_PROBE_ENTRY).catch(e=>{console.log(e.message);process.exit(1)})' 2>&1 || true)
+      if printf '%s' "$out" | grep -q "Cannot find package"; then
+        echo "       ✗ ${entry#"$DSH_DIR"/}: $(printf '%s' "$out" | grep -m1 'Cannot find package')"
+        probe_bad=1
+      fi
+    done
+    if [ "$probe_bad" = 1 ]; then rc=1; else
+      echo "       ✓ 探测的入口均可 import（注意：不含 packages/telemetry、packages/document）"
+    fi
+  else
+    echo "   （加 --deep 可逐个入口做 import 探测，较慢）"
+  fi
+  echo
+  echo "═══════════════════════════════════════"
+  if [ "$rc" = 0 ]; then echo "自检结果: 无致命项"; else echo "自检结果: 存在致命项（见上方 ✗）"; fi
+  return "$rc"
+}
+
+# ---------- fix-owner（仅 root；修迁移导致的属主漂移）----------
+# 背景：从旧版本迁移 / 共享文件夹恢复后，数据区条目属主可能是管理员用户而非服务用户；
+#   服务用户 chmod 会 EPERM → .credentials.yaml 收不紧 → credentials 插件拒绝启动（实机故障）。
+# 说明：chown 需要特权，而服务侧以套件用户运行本脚本（见 cmd_start 注释），故独立成子命令。
+cmd_fix_owner() {
+  local user group rc=0 d
+  if [ "$(id -u)" != "0" ]; then
+    echo "[!] fix-owner 需要 root（chown 需要特权）" >&2
+    echo "    请执行: sudo $0 fix-owner${OWNER_ARG:+ --owner $OWNER_ARG}" >&2
+    return 1
+  fi
+  user="$(resolve_service_user)"
+  # 保护：解析不出或解析为 root 时拒绝执行，避免把数据区 chown 给 root
+  if [ -z "$user" ] || [ "$user" = "root" ]; then
+    echo "[!] 无法确定服务用户（解析为 '${user:-空}'）" >&2
+    echo "    请显式指定: $0 fix-owner --owner <服务用户名>" >&2
+    return 1
+  fi
+  if ! id "$user" >/dev/null 2>&1; then
+    echo "[!] 用户不存在: $user" >&2
+    return 1
+  fi
+  group="$(id -gn "$user" 2>/dev/null || echo "$user")"
+  echo "服务用户: $user:$group"
+  for d in "$DSH_HOME_PARENT" "$DSH_HOME_DIR"; do
+    if [ ! -e "$d" ]; then echo "   - $d 不存在，跳过"; continue; fi
+    echo "   chown -R $user:$group $d"
+    # 用 find -xdev 而非 chown -R：嵌套挂载点（bind/NFS）内的文件不应被连带改属主
+    find "$d" -xdev -exec chown "$user:$group" {} + 2>/dev/null || rc=1
+    chown "$user:$group" "$d" 2>/dev/null || rc=1
+  done
+  if [ "$rc" = 0 ]; then
+    echo "✓ 属主已修复。权限收紧在下次 start 生效（或现在执行: $0 restart）"
+    return 0
+  fi
+  echo "[!] 部分条目修复失败，请查看上方输出" >&2
+  return 1
+}
+
 # ---------- start ----------
 cmd_start() {
   # dsh 命令软链：让系统里直接敲 `dsh` 调 DSH CLI（优先 /usr/bin——
@@ -962,6 +1235,7 @@ DSH_WRAPPER_EOF
   echo "启动 DSH ..."
   # PATH 前置用户级 pnpm wrapper（如需 pnpm 插件安装）
   export PATH="$HOME/.local/bin:$PATH"
+  ensure_pid_dirs
   ensure_tmpfile_writable "$LOG_FILE" || return 1
   DSH_REPAIR_DIR="$DSH_DIR" \
   DSH_REPAIR_HOME="$DSH_HOME_DIR" \
@@ -1004,6 +1278,16 @@ DSH_WRAPPER_EOF
     fi
   done
   echo "! 端口未就绪，请查看日志: $LOG_FILE"
+  # 2026-10-03 新增：直接把日志里的致命原因抛出来，不让用户自己翻大日志
+  # （旧行为只有一句"请查看日志"，193 那次的真因是 credentials 权限，藏在几千行之后）
+  local hit
+  hit=$(grep -m1 -E "startup failed|required plugin did not activate|readable beyond its owner|Cannot find package|EADDRINUSE" "$LOG_FILE" 2>/dev/null || true)
+  if [ -n "$hit" ]; then
+    echo "  ── 检测到的根因 ──"
+    echo "  $hit"
+    grep -m1 -B1 -A3 "readable beyond its owner" "$LOG_FILE" 2>/dev/null | sed 's/^/    /' || true
+    echo "  自检: $0 check"
+  fi
   return 1
 }
 
@@ -1098,8 +1382,10 @@ case "$DSH_CMD" in
   stop)    cmd_stop ;;
   restart) cmd_restart ;;
   status)  cmd_status ;;
+  check)   cmd_check ;;
+  fix-owner) cmd_fix_owner ;;
   *)
-    echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status]"
+    echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner]"
     exit 1
     ;;
 esac
