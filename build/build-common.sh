@@ -421,9 +421,16 @@ else
   #   stage=install 复用已有 WORK 时必踩：会生成 source/dsh-v0.2.0-rc.2/ 并把源码
   #   复制进子目录（还可能在 .git 大文件上失败中断）→ 后续 install/build 全乱。
   #   故先清目标，保证结果恒为「DST = SRC 的内容」。
+  #
+  # ⚠ 深硬链目录坑（2026-10-03 实测修复）：pnpm 的 node_modules/.pnpm 是**深硬链目录**，
+  #   在 ZFS/CIFS/NFS 上 `cp -a` 递归复制会报「Directory not empty」而中断 —— 实测
+  #   .../@playwright+mcp@0.0.80/...: Directory not empty → 构建中止、日志停在"复制源码"，
+  #   且留下半成品 BUILD_SRC 让下次重跑继续踩。
+  #   改用 **tar 管道 + --hard-dereference**（硬链展开为真实文件、软链保留），与
+  #   build/FPK/build-fpk.sh 的 app.tgz 段同一套实现（那里也是为规避深目录复制失败）。
   rm -rf "$BUILD_SRC"
-  mkdir -p "$WORK"
-  cp -a "$SRC" "$BUILD_SRC"
+  mkdir -p "$BUILD_SRC"
+  ( cd "$SRC" && tar -cf - --hard-dereference . ) | ( cd "$BUILD_SRC" && tar -xf - )
 fi
 
 # 品牌: locale 源码（后续 build 会编译进产物）
