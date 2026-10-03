@@ -1,4 +1,7 @@
 #!/bin/bash
+# ⚠ 机制已更新（2026-10-03）：改为写 **pnpm-workspace.yaml 的 storeDir**（完整路径，不剥 /v11 段）。
+#   原因：pnpm 11 不读 .npmrc 的 store-dir（实测写完 pnpm store path 仍是默认值）→ 旧实现等于没生效。
+#   机制说明见 README「裁剪白名单」(#prune-whitelist)；权威实现见 build/start.sh.example 的 fix_pnpm_store_dir_one()。
 # ============================================================
 #  fix-pnpm-store.sh
 #  修复 pnpm store 位置不匹配导致的插件安装失败
@@ -97,8 +100,9 @@ fi
 
 STORE_DIR="$(grep -oE '"storeDir"[[:space:]]*:[[:space:]]*"[^"]+"' "$MODULES_YAML" 2>/dev/null \
   | head -1 | sed -E 's/.*"storeDir"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
-# .modules.yaml 里可能写 .../store/v11，.npmrc 的 store-dir 要的是 .../store（不带版本段）
-STORE_DIR="${STORE_DIR%/v[0-9]*}"
+# ⚠ **不要**剥掉 /v11 版本段：pnpm 11 读的是 pnpm-workspace.yaml 的 storeDir，需要**完整路径**。
+#   旧实现剥段后写 .npmrc 的 store-dir —— 而 pnpm 11 根本不读 .npmrc 的该键（实测：写完
+#   `pnpm store path` 仍返回默认值），等于整段没生效。
 
 if [ -z "$STORE_DIR" ]; then
   echo "[!] 未能从 .modules.yaml 解析出 storeDir" >&2
@@ -106,26 +110,28 @@ if [ -z "$STORE_DIR" ]; then
 fi
 echo "  真实 store: $STORE_DIR  ← 来自 .modules.yaml"
 
-# ── ② 写 .npmrc（幂等）──────────────────────────────────────
-WANT_LINE="store-dir=$STORE_DIR"
+# ── ② 写 pnpm-workspace.yaml 的 storeDir（幂等）────────────────────────
+#   pnpm 11 从 pnpm-workspace.yaml 读 storeDir；.npmrc 的 store-dir 已不生效（实测）。
+#   权威实现：build/start.sh.example 的 fix_pnpm_store_dir_one()（README #prune-whitelist）。
+WS_YAML="$(dirname "$(dirname "$MODULES_YAML")")/pnpm-workspace.yaml"
+WANT_LINE="storeDir: $STORE_DIR"
 echo ""
-if [ -f "$NPMRC" ] && grep -qxF "$WANT_LINE" "$NPMRC" 2>/dev/null; then
-  echo "[√] .npmrc 已是正确值，无需修改"
+if [ -f "$WS_YAML" ] && grep -qxF "$WANT_LINE" "$WS_YAML" 2>/dev/null; then
+  echo "[√] pnpm-workspace.yaml 已是正确值，无需修改"
 else
   if [ "$DRY_RUN" = "1" ]; then
-    echo "[dry-run] 将写入 $NPMRC:"
+    echo "[dry-run] 将写入 $WS_YAML:"
     echo "          $WANT_LINE"
   else
-    # 存在旧的 store-dir/store.path 行先移除，避免多条冲突
-    if [ -f "$NPMRC" ]; then
-      cp "$NPMRC" "$NPMRC.bak-$(date +%s)" 2>/dev/null
-      grep -vE '^[[:space:]]*(store-dir|store\.path)[[:space:]]*=' "$NPMRC" > "$NPMRC.tmp" 2>/dev/null
-      mv "$NPMRC.tmp" "$NPMRC"
+    # 存在旧 storeDir 行先移除，避免多条冲突
+    if [ -f "$WS_YAML" ]; then
+      cp "$WS_YAML" "$WS_YAML.bak-$(date +%s)" 2>/dev/null
+      grep -vE '^[[:space:]]*storeDir[[:space:]]*:' "$WS_YAML" > "$WS_YAML.tmp" 2>/dev/null
+      mv "$WS_YAML.tmp" "$WS_YAML"
     fi
-    printf '%s\n' "$WANT_LINE" >> "$NPMRC"
-    chown "$PKG_USER" "$NPMRC" 2>/dev/null
-    chmod 600 "$NPMRC" 2>/dev/null
-    echo "[√] 已写入 $NPMRC（属主 $PKG_USER）"
+    printf '%s\n' "$WANT_LINE" >> "$WS_YAML"
+    chown "$PKG_USER" "$WS_YAML" 2>/dev/null
+    echo "[√] 已写入 $WS_YAML（属主 $PKG_USER）"
   fi
 fi
 
