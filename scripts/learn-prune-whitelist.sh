@@ -239,6 +239,15 @@ elif mode == 'log':
                 learned.add('@types/' + _mod[1:].replace('/', '__'))
             else:
                 learned.add('@types/' + _mod.split('/')[0])
+    # 运行时探测（fix-runtime-deps.sh）的缺包行：▶ 第 N 轮缺包: a b c
+    #   按用户口径（只允许白名单自动学习），这些**正是白名单该包含**的运行期依赖，
+    #   应学进白名单，而不是打包时临时补包（那会让出货超出白名单）。
+    for _m in re.finditer(r"第\s*\d+\s*轮缺包[:：]\s*(.+)", text):
+        for _tok in _m.group(1).split():
+            _tok = _tok.strip()
+            if not _tok or _tok.startswith(".") or _tok.startswith("node:"):
+                continue
+            learned.add(_tok if (_tok.startswith("@") and _tok.count("/") == 1) else _tok.split("/")[0])
     source = f"日志反查 {target}"
 
 learned = {x for x in learned if x}  # 去空
