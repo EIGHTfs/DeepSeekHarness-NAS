@@ -25,18 +25,23 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: 下载 target artifact
+    - name: 下载 target artifact（单文件）
       uses: actions/download-artifact@v4
       with:
         name: ${{ inputs.artifact-name }}
-        path: .
+        path: ${{ runner.temp }}
 
-    - name: 校验 target 与 meta 就位
+    - name: 解包还原 target 与 meta
       shell: bash
       run: |
         set -e
+        TAR="$RUNNER_TEMP/build-target.tar.gz"
+        [ -f "$TAR" ] || { echo "✗ 未找到 $TAR（artifact 名是否与 build-target 一致？）"; ls -la "$RUNNER_TEMP" || true; exit 1; }
         T="build/master-build/build"
-        [ -d "$T/target" ] || { echo "✗ 解包后缺少 $T/target（artifact 名是否与 build-target 一致？）"; exit 1; }
+        mkdir -p "$T"
+        tar -xzf "$TAR" -C "$T"
+        [ -d "$T/target" ] || { echo "✗ 解包后缺少 $T/target"; exit 1; }
         [ -f "$T/build-meta.env" ] || { echo "✗ 解包后缺少 $T/build-meta.env"; exit 1; }
         echo "✓ 复用 target: $(du -sh "$T/target" | cut -f1)（未重新构建）"
         echo "✓ meta: $(wc -c < "$T/build-meta.env") 字节"
+        echo "  解包自: $TAR（$(du -h "$TAR" | cut -f1)）"

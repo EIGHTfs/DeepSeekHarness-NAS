@@ -86,7 +86,7 @@ runs:
       shell: bash
       run: ./build/build-common.sh
 
-    - name: 校验 target 与 meta 已产出
+    - name: 校验 target 与 meta 并打包为单文件（供 pack-* 复用）
       shell: bash
       run: |
         set -e
@@ -95,20 +95,24 @@ runs:
         [ -f "$T/build-meta.env" ] || { echo "✗ 缺少 build-meta.env（构建未完成）"; exit 1; }
         echo "✓ target: $(du -sh "$T/target" | cut -f1)"
         echo "✓ meta  : $(wc -c < "$T/build-meta.env") 字节"
+        # 2026-10-04（用户方案）：upload-artifact@v4 的 OOM 多因"目录太大/文件太多"——
+        #   它逐文件处理，745M+ 海量文件会爆 4GB 堆。改为**先 tar 成单文件再上传**：
+        #   一个文件几乎不占内存，问题直接消失；不去调 NODE_OPTIONS（对官方 action 无效）。
+        TAR="$RUNNER_TEMP/build-target.tar.gz"
+        tar -czf "$TAR" -C "$T" target build-meta.env
+        echo "✓ 已打包单文件: $TAR（$(du -h "$TAR" | cut -f1)）"
+        echo "  上传后 pack-* job 解包即得同样的 target/ 与 build-meta.env"
+        echo "ARTIFACT_TAR=$TAR" >> "$GITHUB_ENV"
 
-    - name: 上传 target（供 pack-* job 复用，避免重复构建）
+    - name: 上传 target（单文件，供 pack-* job 复用，避免重复构建）
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.artifact-name }}
-        path: |
-          build/master-build/build/target
-          build/master-build/build/build-meta.env
+        path: ${{ env.ARTIFACT_TAR }}
         retention-days: ${{ inputs.retention-days }}
-        # 0 = 只打包不压缩（2026-10-04）：该 artifact 只在**同一次运行内**被 pack-* 复用，
-        # 无需压缩。实测 compression-level=6 时，upload-artifact 的 node 进程在压缩
-        # 745MB target（文件数极多）时爆 4GB 堆：FATAL ERROR: Ineffective mark-compacts
-        # near heap limit → 整个 job 失败。改为 0 后既消除 OOM，也大幅加快上传。
+        # 已经是 .tar.gz，再压一次无意义；0 也让上传更快
         compression-level: 0
+        if-no-files-found: error
 
     - name: 上传构建日志
       uses: ./.github/actions/upload-build-logs
