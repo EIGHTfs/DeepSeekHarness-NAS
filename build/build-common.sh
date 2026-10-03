@@ -535,28 +535,43 @@ if _STAGE_OK install && [ ! -d "$BUILD_SRC/node_modules" ]; then
   #    ② install 失败自动重试 3 次（间隔 30s，瞬时网络抖动标准解法）
   #    ③ 仍失败切 npmmirror 镜像兜底一次（registry.npmjs.org 海外偶发不稳）
   _PNPM_LOG="$WS/assets/pnpm-install.log"
-  _pnpm_install() {  # $1 额外参数（如 --registry）；退出码=pnpm 真实退出码
+  # $1 额外参数（如 --registry）；$2 日志标签（默认 attempt）
+  # ⚠ 每次尝试写**独立日志**（2026-10-04）：原实现全部重定向到同一文件 →
+  #   后一次覆盖前一次，前几次的完整 stderr 被丢弃，导致 frozen-lockfile 那类
+  #   只在第 1 次出现的报错无从定位（只剩 tail -15）。
+  _pnpm_install() {
+    local _tag="${2:-attempt}"
     ( cd "$BUILD_SRC" && \
       PATH="$PNPM_BIN_DIR:$PATH" HOME="$_HOME_DIR" PNPM_STORE_DIR="$PNPM_STORE" \
       npm_config_cache="$NPM_CACHE" \
       npm_config_fetch_timeout=600000 npm_config_fetch_retries=5 npm_config_network_concurrency=8 \
       "$_PNPM_SHIM" install --store-dir="$PNPM_STORE" --force --no-frozen-lockfile "${1:-}" \
-      > "$_PNPM_LOG" 2>&1 )
+      > "${_PNPM_LOG}.${_tag}" 2>&1 )
+    local _rc=$?
+    cp -f "${_PNPM_LOG}.${_tag}" "$_PNPM_LOG" 2>/dev/null || true   # 保持旧路径仍指向最近一次
+    return $_rc
   }
   _inst_ok=1
   for _attempt in 1 2 3; do
     echo "  → pnpm install 尝试 $_attempt/3（fetch-timeout=600s, retries=5）"
-    if _pnpm_install; then _inst_ok=0; break; fi
-    tail -15 "$_PNPM_LOG" 2>/dev/null || true
+    if _pnpm_install "" "attempt-$_attempt"; then _inst_ok=0; break; fi
+    echo "  ── 第 $_attempt 次失败输出（完整日志: ${_PNPM_LOG}.attempt-$_attempt）──" >&2
+    tail -15 "${_PNPM_LOG}.attempt-$_attempt" 2>/dev/null || true
+    grep -m3 -iE "unknown option|ERR_PNPM|error" "${_PNPM_LOG}.attempt-$_attempt" 2>/dev/null | sed 's/^/     /' >&2 || true
     echo "  ⚠ pnpm install 第 $_attempt 次失败，30s 后重试" >&2
     [ "$_attempt" -lt 3 ] && sleep 30
   done
   if [ "$_inst_ok" = "1" ]; then
     echo "  ⚠ 默认源 3 次失败，切 npmmirror 镜像最后尝试" >&2
-    _pnpm_install "--registry=https://registry.npmmirror.com" && _inst_ok=0 || true
+    _pnpm_install "--registry=https://registry.npmmirror.com" "attempt-mirror" && _inst_ok=0 || true
   fi
   if [ "$_inst_ok" = "1" ]; then
-    echo "✗ pnpm install 4 次尝试均失败，最近日志见 $_PNPM_LOG" >&2
+    echo "✗ pnpm install 4 次尝试均失败。各次完整日志（首次报错最可能在此）：" >&2
+    for _lg in "${_PNPM_LOG}".attempt-* ; do
+      [ -f "$_lg" ] || continue
+      echo "   · $_lg（$(wc -l < "$_lg" 2>/dev/null) 行）" >&2
+      grep -m2 -iE "unknown option|ERR_PNPM|error" "$_lg" 2>/dev/null | sed 's/^/       /' >&2 || true
+    done
     exit 1
   fi
   tail -5 "$_PNPM_LOG" >&2
