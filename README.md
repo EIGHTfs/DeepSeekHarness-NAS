@@ -77,7 +77,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | `scripts/generate-diff-report.sh` | 差分报告：对比正式版 / 测试版 FPK 差异 | 无参数 |
 | `scripts/first-build-logic.sh` | 「首启构建」逻辑留档（从 start.sh 抽离，实际打包不再使用） | 仅文档 |
 | `scripts/dsh` | **dsh CLI 包装器**：SSH 敲 `dsh` 直接用 DSH CLI（readlink 软链解析，多入口自适应） | 打进包 `bin/dsh` |
-| `scripts/pnpm` | **pnpm 命令包装器**：随包 node 跑 pnpm.mjs（软链解析，路径与包名无关） | 打进包 `bin/pnpm` |
+| `scripts/pnpm` | **pnpm 命令包装器**：随包 node 跑 pnpm.mjs（软链解析，路径与包名无关）。安装后提供 `pnpm` 命令，并供 `start.sh fix-deps` 依赖兜底解析缺包闭包 | 打进包 `bin/pnpm` |
 | `scripts/migrate-session.sh` | **会话跨版本迁移**：把低版本 generation（如 0.1.2 的 v0）投放为目标 home 中可被自动迁移的会话，由 DSH 打开时沿 v0→v1→v2→v3 迁移边还原。内置两项格式契约校验：`sessions/` 根下裸目录会引发激活失败（`unsupported flat-file layout`，表现为工作区列表为空 + `directoryPickerController unavailable`）；`session.jsonl.zstd` 首帧必须恰好一行 header，`zstd` 整体重压缩会把帧合并成一帧并触发 `corrupt Zstandard session log`。改 header 只重建首帧、其余字节原样保留 | `--list` / `--check <文件>` / `--fix-layout` / `--cwd <新cwd> --in <源文件> --id <会话id>` / `--rollback [备份名]`，均可加 `--home <DSH_HOME>` |
 | `scripts/migrate-session/` | `migrate-session.sh` 的实现模块（ESM）：`cli.mjs` 命令行入口，`index.mjs` 工具编排，`lib/{zstd,layout,import,inspect,target}.js` 分别负责 zstd 多帧读写、`sessions/` 布局校验、会话投放、日志探查与目标 home 探测；`cordis.patch.yml` 为 DSH 插件 bundle 声明 | 由 `migrate-session.sh` 自动调用，无独立入口 |
 | `scripts/migrate-session/lib/follow.py` | **触发迁移**：`session/follow` 是流式 Remote 方法，必须走 WebSocket（HTTP 调会报 `stream Remote methods must be opened through the stream carrier`）。脚本先用启动日志里的 token 换 cookie，再带进 `ws://127.0.0.1:<port>/api/remote.mux` 握手；实测 HTTP 的 `session/page` 冷读**不触发**迁移，只有 follow 一走 `session.lock` 与 `session.v3.jsonl.zstd` 才落盘 | `python3 follow.py <会话id\|all> <DSH_HOME> [--port 30801] [--wait 90]` |
@@ -215,9 +215,11 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 ./start.sh stop           # 停止：PID 精确终止（先 TERM 后 KILL），清端口
 ./start.sh restart        # 重启：stop + start（未启动时相当于 start）
 ./start.sh status         # 状态：DSH 进程存活 + 三端口监听检查，退出码 0/3（供外部判活）
+./start.sh fix-deps       # 依赖兜底：按启动日志的缺包记录，用随包 pnpm 在线补齐（打包阶段应已带全，这里是最后一道防线）
 ```
 
 - **cmd_status 返回退出码**（0=运行中 / 3=未运行），供 fnOS/DSM 判活；运行检测 `pgrep -f "<绝对路径>/bin/start.sh"` 精确匹配，避免宽松匹配误判
+- **依赖兜底 `fix-deps`（2026-10-03）**：打包阶段负责把运行时依赖**离线带全**，本子命令只是**最后一道防线**——`start` 因缺包失败时自动触发一次（读日志 `Cannot find package 'X'` → 用随包 `bin/pnpm` 解析该包完整依赖闭包 → 平铺补进实例 `node_modules`，补完重试一次启动；`DSH_DEPS_RETRIED` 防重试递归），也可手动执行。缺包版本从 pnpm 悬空软链反解（`fontkit -> ../../fontkit@2.0.4/…`，scoped 包目录名把 `/` 写成 `+`），registry 取 `DSH_NPM_REGISTRY`（默认国内镜像）。**刻意不做全量扫描补齐**：现场悬空软链 200+ 条且绝大多数是构建期 devDependencies，全补等于把裁剪掉的 dev 依赖又装回来。任何一步失败只记日志、**不阻断启动**。
 - **PID 文件禁放 /tmp**（fnOS `/tmp` 无 sticky 位，应用用户无权限）→ 移入 `$DSH_HOME_PARENT/DeepSeekHarness-NAS.pid`
 
 ### 2. 实例定位（多布局自适应）

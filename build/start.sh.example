@@ -2,7 +2,7 @@
 # ============================================================
 #  DSH 实例启动脚本 (dsh-v0.1.2-alpha.4) —— 自包含版
 #  数据区: <DSH_DIR>/.dsh-home/.dsh (自动定位)
-#  用法:   ./start.sh [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner]
+#  用法:   ./start.sh [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps]
 #
 #  ⚠ 本文件是【逻辑母版】，不是最终运行脚本：
 #     最终 start.sh 由 build-spk.sh / build-fpk.sh 依 build-config.yaml 生成，
@@ -261,9 +261,9 @@ while [[ $# -gt 0 ]]; do
     --owner=*)          OWNER_ARG="${1#*=}" ; shift ;;
     --owner)            OWNER_ARG="$2" ; shift 2 ;;
     --deep)             CHECK_DEEP=1 ; shift ;;
-    start|stop|restart|status|check|fix-owner) DSH_CMD="$1" ; shift ;;
+    start|stop|restart|status|check|fix-owner|fix-deps) DSH_CMD="$1" ; shift ;;
     -h|--help)
-      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner]"
+      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps]"
       echo "  --proxy-port N       反代端口（默认 __PROXY_PORT__，环境变量 DSH_PROXY_PORT）"
       echo "  --dsh-port N         DSH 内部端口（默认 __DSH_PORT__，环境变量 DSH_DSH_PORT）"
       echo "  --container-port N   容器页面端口（默认 __CONTAINER_PORT__，环境变量 DSH_CONTAINER_PORT）"
@@ -275,7 +275,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "[!] 未知参数: $1" >&2
-      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner]" >&2
+      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps]" >&2
       exit 1
       ;;
   esac
@@ -1288,6 +1288,19 @@ DSH_WRAPPER_EOF
     grep -m1 -B1 -A3 "readable beyond its owner" "$LOG_FILE" 2>/dev/null | sed 's/^/    /' || true
     echo "  自检: $0 check"
   fi
+  # 2026-10-03 新增：缺包兜底 —— 只补日志点名的那几个包，补完重试一次启动。
+  #   打包阶段本应离线带全，这里是最后一道防线；DSH_DEPS_RETRIED 防止重试递归。
+  local miss
+  miss="$(missing_from_log)"
+  if [ -n "$miss" ] && [ -z "${DSH_DEPS_RETRIED:-}" ]; then
+    export DSH_DEPS_RETRIED=1
+    echo "  ── 触发依赖兜底补齐（打包阶段应已带全，这里是兜底）──"
+    # shellcheck disable=SC2086
+    rescue_deps $miss
+    echo "  重试启动一次…"
+    cmd_start
+    return $?
+  fi
   return 1
 }
 
@@ -1376,6 +1389,104 @@ cmd_status() {
   return 3
 }
 
+# ============================================================================
+# 运行时依赖兜底补齐（缺包导致启动失败时的最后一道防线）
+# ----------------------------------------------------------------------------
+# 【职责边界】打包阶段（build-common.sh + prune-target.sh 的依赖闭包）负责把运行时
+#   依赖**离线带全**；这里只做兜底：启动真的因缺包失败时，在线把那几个包补上，
+#   补完重试一次启动。
+#   ⚠ 刻意**不做**"全量扫描补齐"：现场 node_modules 的悬空软链可达 200+ 条，绝大多数
+#     是构建期 devDependencies（@testing-library/*、pretty-format 等），全补等于把
+#     裁剪掉的 dev 依赖又装回来——既慢又违背裁剪初衷。只补**启动真正点名要用的**。
+# 【版本来源】pnpm 布局的悬空软链本身带着精确版本，readlink 反解即可：
+#     fontkit            -> ../../fontkit@2.0.4/node_modules/fontkit
+#     @sindresorhus/is   -> ../../../@sindresorhus+is@4.6.0/node_modules/@sindresorhus/is
+#   （scoped 包在 pnpm 目录名里把 / 写成 +）反解不到就退回裸包名（取 registry 最新）。
+# 【补齐方式】用**随包 pnpm**（<实例>/bin/pnpm → pnpm/dist/pnpm.mjs，与 build-common.sh
+#   同一套），在一个临时工程里解析完整依赖闭包，再把结果**平铺**复制进
+#   <实例>/node_modules（不覆盖已有条目、不动 pnpm 现有布局），让 Node 能解析到。
+# 【registry】DSH_NPM_REGISTRY 环境变量 > 默认国内镜像。
+# 【绝不阻断启动】任何一步失败只记日志并继续——兜底失败时的行为与没有本功能完全一致。
+# ============================================================================
+DEP_RESCUE_REGISTRY="${DSH_NPM_REGISTRY:-https://registry.npmmirror.com}"
+
+# 悬空软链条数（现场绝大多数是构建期 devDeps，只作日志/自检参考）
+count_dangling_links() {
+  find "$DSH_DIR/node_modules" -xtype l 2>/dev/null | wc -l | tr -d ' '
+}
+
+# 反解某包的精确版本：resolve_missing_spec <pkg> → 输出 <pkg>@<ver>；解不到输出空
+resolve_missing_spec() {
+  local pkg="$1" flat t
+  flat="${pkg//\//+}"
+  while IFS= read -r t; do
+    case "$t" in
+      */"${flat}@"*"/node_modules/"*)
+        printf '%s@%s\n' "$pkg" "$(printf '%s' "$t" | sed -n "s|.*/${flat}@\([^/]*\)/node_modules/.*|\1|p" | head -1)"
+        return 0 ;;
+    esac
+  done < <(find "$DSH_DIR/node_modules" -xtype l -exec readlink {} \; 2>/dev/null)
+  return 0
+}
+
+# 从最近启动日志提取 "Cannot find package 'X'" 的包名（去重）
+missing_from_log() {
+  [ -f "$LOG_FILE" ] || return 0
+  grep -oE "Cannot find package '[^']+'" "$LOG_FILE" 2>/dev/null \
+    | sed "s/Cannot find package '//; s/'\$//" | sort -u
+}
+
+# 在线补齐指定包：随包 pnpm 解析闭包 → 平铺复制进实例 node_modules
+rescue_deps() {
+  [ $# -gt 0 ] || { echo "[deps] 未指定要补的包，跳过"; return 0; }
+  [ -x "$DSH_DIR/bin/pnpm" ] || { echo "[deps] 随包 pnpm 不存在（$DSH_DIR/bin/pnpm），跳过兜底"; return 0; }
+  local specs=() p v
+  for p in "$@"; do
+    v="$(resolve_missing_spec "$p")"
+    if [ -n "$v" ]; then specs+=("$v"); else specs+=("$p"); fi
+  done
+  echo "[deps] 兜底补齐: ${specs[*]}  (registry=$DEP_RESCUE_REGISTRY)"
+  local work
+  work="$(mktemp -d "${TMPDIR:-/tmp}/dsh-rescue.XXXXXX" 2>/dev/null)" || { echo "[deps] 建临时目录失败，跳过"; return 0; }
+  printf '{}\n' > "$work/package.json"
+  if ! "$DSH_DIR/bin/pnpm" add --dir "$work" --registry "$DEP_RESCUE_REGISTRY" \
+        --ignore-scripts --reporter=append-only "${specs[@]}" > "$work/pnpm.log" 2>&1; then
+    echo "[deps] 在线补齐失败（网络或 registry 不可达），保持原状"
+    tail -6 "$work/pnpm.log" 2>/dev/null | sed 's/^/    /'
+    rm -rf "$work"; return 0
+  fi
+  # 平铺复制：pnpm 真实包在 <work>/node_modules/.pnpm/<flat>@<ver>/node_modules/<name>；
+  #   用 -L 解引用（pnpm 顶层是软链，直接复制软链会留下新的死链）
+  local copied=0 d name
+  while IFS= read -r d; do
+    name="$(basename "$d")"
+    [ -e "$DSH_DIR/node_modules/$name" ] && continue
+    cp -aL "$d" "$DSH_DIR/node_modules/$name" 2>/dev/null && copied=$((copied+1))
+  done < <(find "$work/node_modules/.pnpm" -mindepth 3 -maxdepth 3 -type d -path "*/node_modules/*" 2>/dev/null)
+  echo "[deps] 已补入 $copied 个包（悬空软链现 $(count_dangling_links) 条）"
+  rm -rf "$work"
+  return 0
+}
+
+# fix-deps：手动兜底（扫描报告 + 按日志缺包补齐；可用 DSH_RESCUE_PKGS 指定包）
+cmd_fix_deps() {
+  echo "── 运行时依赖兜底 ──"
+  echo "  实例目录 : $DSH_DIR"
+  echo "  悬空软链 : $(count_dangling_links) 条（含构建期 devDependencies，不全是运行时缺包）"
+  local pkgs
+  pkgs="$(missing_from_log)"
+  if [ -z "$pkgs" ]; then
+    echo "  最近日志未发现 'Cannot find package' 记录（$LOG_FILE）"
+    echo "  提示: 先 start 一次让缺包暴露；或指定要补的包:"
+    echo "        DSH_RESCUE_PKGS='foo@1.2.3 @scope/bar' $0 fix-deps"
+  fi
+  if [ -n "${DSH_RESCUE_PKGS:-}" ]; then
+    pkgs="$(printf '%s\n%s\n' "$pkgs" "$(printf '%s' "$DSH_RESCUE_PKGS" | tr ' ' '\n')" | sed '/^$/d' | sort -u)"
+  fi
+  # shellcheck disable=SC2086
+  rescue_deps $pkgs
+}
+
 # ---------- main ----------
 case "$DSH_CMD" in
   start)   cmd_start ;;
@@ -1384,8 +1495,9 @@ case "$DSH_CMD" in
   status)  cmd_status ;;
   check)   cmd_check ;;
   fix-owner) cmd_fix_owner ;;
+  fix-deps) cmd_fix_deps ;;
   *)
-    echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner]"
+    echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps]"
     exit 1
     ;;
 esac
