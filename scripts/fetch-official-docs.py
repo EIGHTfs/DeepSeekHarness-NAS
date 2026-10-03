@@ -124,7 +124,7 @@ class Markdownizer(HTMLParser):
             self._put("\n")
 
     # ---------- 标签 ----------
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag, attrs):  # dsh-skip-func-length: HTML→Markdown 标签分派器，单一职责但天然多分支（每个 HTML 标签一个分支），抽子函数会把分派表拆散反而更难查
         if self.pre_buf is not None:                 # <pre> 内部：只认 <br>
             if tag == "br":
                 self.pre_buf.append("\n")
@@ -177,7 +177,7 @@ class Markdownizer(HTMLParser):
         elif tag == "code":
             self._put("`")
 
-    def handle_endtag(self, tag):
+    def handle_endtag(self, tag):  # dsh-skip-func-length: 与 handle_starttag 对称的收尾分派器，同样属单一职责但天然多分支
         if self.pre_buf is not None:
             if tag == "pre":
                 code = "".join(self.pre_buf).strip("\n")
