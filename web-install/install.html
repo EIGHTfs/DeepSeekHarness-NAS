@@ -646,7 +646,11 @@
                         buildPollTimer = setInterval(pollBuild, 1500);
                     }
                 }
-            } catch (err) { /* 静默 */ }
+            } catch (err) {
+                /* 有意忽略：本函数只是页面加载时\"恢复上次构建进度\"的便利功能，
+                   失败场景都可预期——服务端未启动 / 尚无任何构建历史 / 会话已过期。
+                   此时保持界面为初始态即可，弹错反而干扰用户；故不提示、不重试。 */
+            }
         }
         loadLastBuild();
     </script>
