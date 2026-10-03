@@ -28,6 +28,35 @@
 const WAIT_PORT_RELEASE_MS = 2000; // 发完 SIGKILL 后等旧进程真正退出、端口释放
 const WAIT_DSH_START_MS = 3000;    // 启动 DSH 后等它监听就绪，再挂反代与容器页
 
+// ---- standalone CLI shim（自 dsh-repair.cjs 移植）----
+// 把 --xxx 参数映射为 DSH_REPAIR_* 环境变量，使本文件与 build/start.sh.example 内嵌的
+// REPAIR_CODE **同构**（内嵌段就是靠这些环境变量驱动的）。已存在的 DSH_REPAIR_* 不覆盖，
+// 因此"环境变量驱动"优先级高于命令行参数 —— 与 .cjs 原有语义一致。
+// ⚠ 必须放在读取配置之前执行。
+(function shim() {
+  const argv = process.argv;
+  const get = (name) => { const i = argv.indexOf(name); return i !== -1 && argv[i + 1] ? argv[i + 1] : undefined; };
+  const map = [
+    ['--dsh', 'DSH_REPAIR_DIR'],
+    ['--dsh-home', 'DSH_REPAIR_HOME'],
+    ['--home', 'DSH_REPAIR_HOME_PARENT'],
+    ['--dsh-port', 'DSH_REPAIR_DSH_PORT'],
+    ['--proxy-port', 'DSH_REPAIR_PROXY_PORT'],
+    ['--container-port', 'DSH_REPAIR_CONTAINER_PORT'],
+    ['--node', 'DSH_REPAIR_NODE'],
+    ['--entry', 'DSH_REPAIR_ENTRY'],
+  ];
+  for (const [flag, env] of map) {
+    const v = get(flag);
+    if (v !== undefined && process.env[env] === undefined) process.env[env] = v;
+  }
+  if (!process.env.DSH_REPAIR_PID_FILE) {
+    const uid = typeof process.getuid === 'function' && process.getuid() !== undefined ? process.getuid() : 'x';
+    process.env.DSH_REPAIR_PID_FILE = `/tmp/dsh-repair-${uid}.pid`;
+  }
+  if (get('--tsx') !== undefined) process.env.DSH_REPAIR_TSX = '1';
+})();
+
 const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const http = require('http');
@@ -63,6 +92,13 @@ function writeTmpFile(file, content) {
 
 // ========== 1. 定位 DSH 目录 ==========
 function findDshDir() {
+  // ⓪ 环境变量（start.sh 内嵌版走这条；shim 也把 --dsh 映射到这里）
+  if (process.env.DSH_REPAIR_DIR) {
+    const d = path.resolve(process.env.DSH_REPAIR_DIR);
+    if (isDshDir(d)) return d;
+    console.error(`[!] DSH_REPAIR_DIR 指定的路径不是 DSH 目录: ${d}`);
+    process.exit(1);
+  }
   // ① 参数
   const argIdx = process.argv.indexOf('--dsh');
   if (argIdx !== -1 && process.argv[argIdx + 1]) {
