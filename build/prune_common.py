@@ -70,6 +70,28 @@ def index_pnpm(pnpm):
     return name2dirs
 
 
+def pkg_exact_runtime_deps(full):
+    """精确运行期依赖 = **node_modules 目录列表 − 该包自己的 devDependencies**。
+
+    为什么这样取（2026-10-03 两次实测教训）：
+      · 纯目录列表：含 optional/peer/hoisted 及 dev 噪声 → 闭包 490→1654 ≈ 整棵 .pnpm
+        → target 5.5G → SPK 2GB 撞 600MB 门禁 ✗
+      · 纯 package.json dependencies：漏掉 optional/peer/未声明但已安装的运行期包
+        → 实测 fontkit / is-plain-obj / @sindresorhus/is 被删 → DSH 启动即 ERR_MODULE_NOT_FOUND ✗
+      · 本函数：目录列表（= pnpm 实际放置的解析结果）减去该包 package.json 的 devDependencies
+        → 既保留运行期全集，又剔除构建期噪声 ✓
+    """
+    import json as _json
+    names = pkg_deps(full)          # 目录列表（含 optional/peer/hoisted）
+    try:
+        with open(os.path.join(full, 'package.json'), encoding='utf-8') as _f:
+            _pj = _json.load(_f)
+    except Exception:
+        return names
+    devs = set((_pj.get('devDependencies') or {}).keys())
+    return names - devs
+
+
 def pkg_runtime_deps(full):
     """只取**运行期**依赖名（package.json 的 dependencies + optionalDependencies）。
 
@@ -110,7 +132,7 @@ def expand_closure(whitelist, pnpm, runtime_only=False):
             continue
         seen.add(n)
         for d in name2dirs.get(n, []):
-            for dep in (pkg_runtime_deps(d) if runtime_only else pkg_deps(d)):
+            for dep in pkg_exact_runtime_deps(d):
                 if dep not in seen:
                     stack.append(dep)
     return whitelist | seen, seen
