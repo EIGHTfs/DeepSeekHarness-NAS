@@ -59,6 +59,7 @@ echo "▶ 目标: $USER_SSH@$HOST   套件: $PKG"
 
 REMOTE_SCRIPT=$(cat <<'REMOTE_EOF'
 PKG="$1"
+KEEP_DATA="${2:-1}"   # 1=保留数据（默认，与套件向导一致）；0=连数据一起删
 echo "-- 1. 停止套件与进程 --"
 /usr/syno/bin/synopkg stop "$PKG" >/dev/null 2>&1
 /usr/syno/bin/synopkg uninstall "$PKG" >/dev/null 2>&1
@@ -93,11 +94,23 @@ _safe_rm_rf() {
     rm -rf --one-file-system "$d"
   done
 }
+# ── 数据保留策略（2026-10-04 用户要求：网页卸载必须能选"保留数据"）──────────
+#   套件自身的卸载向导**默认保留数据**（pack-spk.sh 的 wizard_keep_data /
+#   pack-fpk.sh 的"保留数据（推荐）"），而网页卸载此前**无条件**删
+#   @appdata/@apphome/@appshare —— 等于绕过用户选择直接清空数据（2026-10-03 事故亦由此放大）。
+#   现与套件口径对齐：
+#     KEEP_DATA=1（默认）→ 只删程序（@appstore/@appconf/@apptemp/@eaDir），**保留数据**
+#     KEEP_DATA=0         → 连数据一起删（@appdata/@apphome/@appshare + 卷根同名目录）
 rm -rf --one-file-system "/var/packages/$PKG" "/usr/syno/etc/packages/$PKG"
 for v in /volume1 /volume2 /volume3 /volume4; do
-  _safe_rm_rf "$v/@appstore/$PKG" "$v/@appconf/$PKG" "$v/@appdata/$PKG" \
-              "$v/@apphome/$PKG" "$v/@apptemp/$PKG" "$v/@appshare/$PKG" \
-              "$v/@eaDir/$PKG" "$v/$PKG"
+  _safe_rm_rf "$v/@appstore/$PKG" "$v/@appconf/$PKG" "$v/@apptemp/$PKG" "$v/@eaDir/$PKG"
+  if [ "${KEEP_DATA:-1}" = "1" ]; then
+    for d in "$v/@appdata/$PKG" "$v/@apphome/$PKG" "$v/@appshare/$PKG" "$v/$PKG"; do
+      [ -e "$d" ] && echo "  [保留数据] $d"
+    done
+  else
+    _safe_rm_rf "$v/@appdata/$PKG" "$v/@apphome/$PKG" "$v/@appshare/$PKG" "$v/$PKG"
+  fi
 done
 rm -rf --one-file-system "/usr/syno/synoman/webman/3rdparty/$PKG"
 
@@ -180,5 +193,5 @@ B64="$(printf '%s' "$REMOTE_SCRIPT" | base64 -w0)"
 
 sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 \
   "$USER_SSH@$HOST" \
-  "echo '$PASS' | sudo -S -p '' bash -c \"echo '$B64' | base64 -d | bash -s -- '$PKG'\"" \
+  "echo '$PASS' | sudo -S -p '' bash -c \"echo '$B64' | base64 -d | bash -s -- '$PKG' '$KEEP_DATA'\"" \
   2>&1 | grep -v 'chdir'
