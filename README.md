@@ -96,7 +96,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | `scripts/check-workflow-yaml.py` | **YAML 结构守卫**：拦 `.github/**` 里会导致 action 加载失败的写法（未加引号的值含 `: `、缩进用 Tab、action 必需键缺失），并断言 `needs`/`needs.X.result` 引用的 job **必须存在**（实测：job 重构后引用悬空 → 状态误判 fail → Release 正文被写成"❌ 缺失"） | `python3 scripts/check-workflow-yaml.py` |
 | `scripts/check-build-naming.py` | **命名与语法守卫**：job/action/脚本命名规范；**全部 `.sh` 跑 `bash -n`、全部 `.py` 跑 `ast.parse`**；`.sh/.py` 必须带可执行位（实测：`release-note.sh` 是 644 → CI 里 `./` 调用 exit 126）；排除 vendored `tools/` | `python3 scripts/check-build-naming.py` |
 | `scripts/clean-dsm-residue.sh` | **清理唯一实现**（web 端与套件端共用；内含挂载点硬保护，绝不跨挂载点删） | `scripts/clean-dsm-residue.sh <套件名> [主机] [SSH用户]` |
-| `scripts/gh-commit.py` | **无 git 提交推送**（GitHub Git Data API：blobs→tree→commit→更新 ref；原子多文件；author 固定 `EIGHTfs`；冲突自动重试） | `python3 scripts/gh-commit.py <仓库根> \"<提交信息>\" <文件...>` |
+| `scripts/gh-commit.py` | **备用提交通道**（GitHub Git Data API：blobs→tree→commit→更新 ref；原子多文件；author 固定 `EIGHTfs`；快进失败自动重取 HEAD 重试）。**不需要工作区写权限、不需要 git 二进制**，但**常规提交请优先用 git**（更快、有钩子与 diff 视图）——本机 `/bin/git` 已可用，故其定位是"git 不可用/无写权限时的备用通道"。token 取用顺序：`GH_TOKEN`/`GITHUB_TOKEN` → 候选 `config.json`（工作区 `config.json` 优先，可用 `DSH_GIT_PUSH_CONFIG` 指定其他路径）→ 全部失败则打印已尝试路径并以退出码 2 结束 | `python3 scripts/gh-commit.py <仓库根> "<提交信息>" <文件...>` |
 | `test/safe-rm-rf.test.sh` | **事故回归测试**：断言含挂载点的目录绝不被删（用 `/proc` 验证检出能力，无需 root） | `bash test/safe-rm-rf.test.sh` |
 | `scripts/prepare-build-env.sh` | 构建环境自动准备（幂等、只新增不删除、绝不 mount）：检测 noexec 挂载 / 补随包 node / 检查项目 pnpm / 补官方预编译 native 产物 / 拉官方源码快照 |
 
