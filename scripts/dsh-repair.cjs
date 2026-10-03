@@ -7,7 +7,7 @@
  * 原先有两份带外副本（dsh-repair.cjs 与 dsh-repair.js），已**合并为本文件一份**：
  *   保留 .js 的三通道自动定位（参数 / 脚本目录 / 进程扫描），
  *   并移植了 .cjs 的环境变量接口（DSH_REPAIR_*，与内嵌段同构）与 UID 隔离补丁；
- *   旧 dsh-repair.cjs 已删除。合并由用户指示（反正两文件都不被引用）。
+ *   旧 dsh-repair.cjs 已删除。合并依据：两文件都不被任何构建/运行时引用。
  *
  * 因此：
  *   · 改修复行为 → 改 build/start.sh.example 的内嵌段（权威）；
@@ -72,7 +72,7 @@ const DEFAULT_PROXY_PORT = 30800;
 const DEFAULT_CONTAINER_PORT = 30802;
 // --dry-run / DSH_REPAIR_DRY_RUN=1：破坏性动作（停旧实例、写 PID 文件、改权限、启动）
 // 只打印不执行。⚠ 加这个开关的直接原因：无参数运行时 findDshDir 会自动定位到**正在服务**的
-// DSH，随后 killOldProcesses() 会把它停掉 —— 实测把本会话的宿主进程杀过一次。
+// DSH，随后 killOldProcesses() 会把它停掉 —— 实测把宿主进程杀过一次。
 const DRY_RUN = process.argv.includes('--dry-run') || process.env.DSH_REPAIR_DRY_RUN === '1';
 // PID 文件名带 uid：同一台机器上多用户各跑一次时，共用 /tmp/dsh-repair.pid 会互相覆盖、
 // 进而被 killOldProcesses() 照着杀掉对方实例。dsh-repair.cjs 早有这个补丁，本文件此前没有。
