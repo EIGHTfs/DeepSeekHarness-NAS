@@ -63,11 +63,13 @@ def strip_heredocs(text):
     return "\n".join(keep)
 
 
-def main():
-    libs = lib_functions()
-    if not libs:
-        print("✗ 无法从 %s 解析出公共函数" % LIB)
-        return 1
+def _scan_duplicates(libs):
+    """遍历全仓库 .sh，找出「重复定义了公共库函数」的位置。
+
+    返回 (violations, hits)：violations 为可直接打印的违规说明，hits 供 --list 展示。
+    注意：比对前必须先 strip_heredocs —— heredoc 生成的目标机运行时脚本里出现同名函数
+    属**不同作用域**（见 common.sh 头部的「勿收口清单」），不算分叉。
+    """
     violations = []
     hits = []
     for base, dirs, files in os.walk(ROOT):
@@ -88,12 +90,23 @@ def main():
             stripped = strip_heredocs(raw)
             for i, line in enumerate(stripped.splitlines(), 1):
                 m = FUNC.match(line)
-                if m and m.group(1) in libs:
-                    if m.group(1) in EXEMPT.get(path.replace(os.sep, "/"), {}):
-                        continue
-                    violations.append("%s:%d 重复定义公共函数 %s()（应改为调用 scripts/lib/common.sh）"
-                                      % (path, i, m.group(1)))
-                    hits.append((path, i, m.group(1)))
+                if not (m and m.group(1) in libs):
+                    continue
+                if m.group(1) in EXEMPT.get(path.replace(os.sep, "/"), {}):
+                    continue
+                violations.append("%s:%d 重复定义公共函数 %s()（应改为调用 scripts/lib/common.sh）"
+                                  % (path, i, m.group(1)))
+                hits.append((path, i, m.group(1)))
+    return violations, hits
+
+
+def main():
+    libs = lib_functions()
+    if not libs:
+        print("✗ 无法从 %s 解析出公共函数" % LIB)
+        return 1
+    violations, hits = _scan_duplicates(libs)
+
     if "--list" in sys.argv:
         print("  公共库导出 %d 个函数：" % len(libs))
         for h in hits:
