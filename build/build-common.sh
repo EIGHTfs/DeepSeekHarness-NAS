@@ -59,10 +59,24 @@ node_has_headers() {  # $1=node 可执行文件路径 → 校验同级/上级 in
 }
 resolve_node_src() {
   local _c=""
+  # ① 首选 /usr/bin/node —— 但**必须可执行**才算数。
+  #    旧写法最后直接 echo /usr/bin/node，不校验存在性：本机（193）该路径不存在，
+  #    于是垫片被写死成 exec "/usr/bin/node" → 每次 pnpm install 都
+  #    "/usr/bin/node: No such file or directory"（实测 2026-10-03）。
+  #    用户口径：优先 /usr/bin/node，不可执行则自探测。
+  if [ -x /usr/bin/node ]; then echo "/usr/bin/node"; return 0; fi
+  # ② 自探测（先要带 headers 的：native 编译需要）
   _c="$(ls -d "$WS"/tools/node-dist/node-v*/bin/node 2>/dev/null | head -1)"
   if node_has_headers "$_c"; then echo "$_c"; return 0; fi
   _c="$(command -v node 2>/dev/null || true)"
   if node_has_headers "$_c"; then echo "$_c"; return 0; fi
+  # ③ 退一步：任何**可执行**的 node（不带 headers 也比写死不存在强）
+  for _c in /usr/local/bin/node \
+            "$(ls -d "$WS"/tools/node-dist/node-v*/bin/node 2>/dev/null | head -1)" \
+            "$(command -v node 2>/dev/null || true)" \
+            /volume1/@appstore/DeepSeekHarness-NAS/bin/node; do
+    [ -n "$_c" ] && [ -x "$_c" ] && { echo "$_c"; return 0; }
+  done
   echo "/usr/bin/node"
 }
 if [ -z "${NODE_SRC:-}" ]; then
@@ -432,17 +446,32 @@ mkdir -p "$_HOME_DIR"
 #      pnpm-workspace.yaml → 垫片每次调用前自动跑 tools/pnpm-bridge.py 做 json→yaml 转换。
 #   三者合一：所有 pnpm 调用（含上游 sh -c 子进程）都锁我们用自带的 pnpm 11 且配置已桥接。
 _PNPM_SHIM="$PNPM_BIN_DIR/pnpm"
-if [ ! -x "$_PNPM_SHIM" ] || ! grep -q "build-common pnpm shim v2" "$_PNPM_SHIM" 2>/dev/null; then
+if [ ! -x "$_PNPM_SHIM" ] || ! grep -q "build-common pnpm shim v3" "$_PNPM_SHIM" 2>/dev/null; then
   cat > "$_PNPM_SHIM" <<SHIMEOF
 #!/bin/sh
-# build-common pnpm shim v2 —— 由 build/build-common.sh 自动生成，勿手改
+# build-common pnpm shim v3 —— 由 build/build-common.sh 自动生成，勿手改
 # 包装职责：① 版本锁定（--pm-on-fail=ignore，禁用 pnpm 按 packageManager 自动换版本）
 #          ② pnpm10 json → pnpm11 yaml 配置桥接（每次调用前幂等执行）
 #          ③ 固定用项目自带 pnpm（$PNPM_BIN）+ 打包用 node（$NODE_SRC）
 if [ -f "$D_TOOLS/pnpm-bridge.py" ]; then
   python3 "$D_TOOLS/pnpm-bridge.py" --dir "\$PWD" >/dev/null 2>&1 || true
 fi
-exec "$NODE_SRC" "$PNPM_BIN" --pm-on-fail=ignore "\$@"
+# node 解析：生成期写死的优先，但**运行期再自愈一次** —— 生成期的 /usr/bin/node 可能
+# 在这台机上不存在（实测 193），写死路径会让所有 pnpm 调用直接失败。
+# ⚠ 本段处在**未加引号的 heredoc** 内：应在垫片里保持变量的写法必须转义 \$，
+#   否则会被生成期的 set -u 判为 unbound variable（实测踩坑）。
+_PNPM_NODE="$NODE_SRC"
+if [ ! -x "\$_PNPM_NODE" ]; then
+  for _c in /usr/bin/node /usr/local/bin/node; do
+    [ -x "\$_c" ] && { _PNPM_NODE="\$_c"; break; }
+  done
+fi
+[ -x "\$_PNPM_NODE" ] || _PNPM_NODE="\$(command -v node 2>/dev/null || true)"
+if [ -z "\$_PNPM_NODE" ] || [ ! -x "\$_PNPM_NODE" ]; then
+  echo "[pnpm-shim] 找不到可执行的 node（试过 $NODE_SRC、/usr/bin/node、/usr/local/bin/node、PATH）" >&2
+  exit 127
+fi
+exec "\$_PNPM_NODE" "$PNPM_BIN" --pm-on-fail=ignore "\$@"
 SHIMEOF
   chmod 755 "$_PNPM_SHIM"
   echo "✓ 已生成 pnpm 包装垫片: $_PNPM_SHIM（版本锁定 + json→yaml 桥接）"
