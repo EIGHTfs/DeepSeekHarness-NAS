@@ -265,10 +265,16 @@ function killOldProcesses(dshDir) {
     const oldPid = fs.readFileSync(PID_FILE, 'utf-8').trim();
     if (oldPid) {
       console.log(`[√] 停止旧实例 (PID ${oldPid})`);
-      try { process.kill(parseInt(oldPid, 10), 'SIGTERM'); } catch {}
-      try { process.kill(parseInt(oldPid, 10), 'SIGKILL'); } catch {}
+      try { process.kill(parseInt(oldPid, 10), 'SIGTERM'); } catch {
+        // 有意忽略：目标进程可能已自行退出（ESRCH）；下面还会补一次 SIGKILL
+      }
+      try { process.kill(parseInt(oldPid, 10), 'SIGKILL'); } catch {
+        // 有意忽略：同上，进程已不在
+      }
     }
-  } catch {}
+  } catch {
+    // 有意忽略：PID 文件不存在/不可读（首次运行或已被清理），此时无旧实例可停
+  }
   // 杀掉 cwd 匹配 dshDir 的 DSH web 进程（防孤儿占端口）
   if (dshDir) {
     try {
@@ -283,9 +289,14 @@ function killOldProcesses(dshDir) {
             console.log(`[√] 停止 DSH 子进程 (PID ${pid})`);
             process.kill(parseInt(pid, 10), 'SIGKILL');
           }
-        } catch {}
+        } catch {
+          // 有意忽略：读 /proc/<pid>/cwd 时该进程可能已退出（竞态），跳过即可
+        }
       }
-    } catch {}
+    } catch {
+      // 有意忽略：ps/execSync 本身可能失败（容器内无 ps 等）；此处是"防孤儿占端口"的补充手段，
+      // 前面基于 PID 文件的停法已经执行过，故失败不影响后续启动
+    }
   }
   // 额外清理：匹配脚本特征的 node 进程（排除自身与 shell）
   const selfPid = String(process.pid);
