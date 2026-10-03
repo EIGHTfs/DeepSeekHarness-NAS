@@ -574,10 +574,19 @@ async function main() {
   // ========== 优雅退出 ==========
   function shutdown(signal) {
     console.log(`\n[!] 收到 ${signal}，正在停止...`);
-    try { fs.unlinkSync(PID_FILE); } catch {}
-    try { if (dshProcess && !dshProcess.killed) dshProcess.kill('SIGKILL'); } catch {}
-    try { proxyServer.close(); } catch {}
-    try { containerServer.close(); } catch {}
+    // 以下四步都是尽力而为的收尾：任一失败都必须继续走完并 exit(0)，否则会卡在关停流程里。
+    try { fs.unlinkSync(PID_FILE); } catch {
+      // 有意忽略：PID 文件可能已被删除或不可写
+    }
+    try { if (dshProcess && !dshProcess.killed) dshProcess.kill('SIGKILL'); } catch {
+      // 有意忽略：子进程可能已自行退出（ESRCH）
+    }
+    try { proxyServer.close(); } catch {
+      // 有意忽略：服务端可能已关闭（ERR_SERVER_NOT_RUNNING）
+    }
+    try { containerServer.close(); } catch {
+      // 有意忽略：同上
+    }
     process.exit(0);
   }
   process.on('SIGTERM', () => shutdown('SIGTERM'));
@@ -587,6 +596,9 @@ async function main() {
 
 main().catch(err => {
   console.error('[!] 修复失败:', err.message);
-  try { fs.unlinkSync(PID_FILE); } catch {}
+  try { fs.unlinkSync(PID_FILE); } catch {
+    // 有意忽略：清理 PID 文件是收尾动作，文件可能本就不存在或不可写；
+    // 此处已在上行打印了真正的失败原因，不能因清理失败掩盖它
+  }
   process.exit(1);
 });
