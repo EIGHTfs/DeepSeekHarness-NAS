@@ -208,8 +208,18 @@ do_uninstall() {
     RSSH_TIMEOUT=120 _rssh \
       "echo '$PASS' | sudo -S bash -c '/usr/syno/bin/synopkg stop $APP_NAME >/dev/null 2>&1; /usr/syno/bin/synopkg uninstall $APP_NAME 2>&1 | tail -1'" 2>&1 \
       | grep -v "chdir" | head -2
-    echo "▶ 深度清理残留（clean-dsm-residue.sh）..."
-    DSM_PASS="$PASS" bash "$WS/scripts/clean-dsm-residue.sh" "$APP_NAME" "$HOST" "$USER" 2>&1 | tail -3
+    # ── 数据保留（2026-10-04 用户要求）：与套件卸载向导默认一致 ──
+    #   套件向导默认"保留数据"（pack-spk.sh 的 wizard_keep_data），网页卸载此前无条件
+    #   删 @appdata/@apphome/@appshare → 已改为默认保留；显式 DSH_KEEP_DATA=0 或
+    #   子命令带 --delete-data 才连数据一起删。
+    if [ "${KEEP_DATA:-1}" = "1" ]; then
+      echo "▶ 深度清理残留（clean-dsm-residue.sh，**保留数据**）..."
+      _kd="--keep-data"
+    else
+      echo "▶ 深度清理残留（clean-dsm-residue.sh，**连数据一起删** DSH_KEEP_DATA=0）..."
+      _kd="--delete-data"
+    fi
+    DSM_PASS="$PASS" bash "$WS/scripts/clean-dsm-residue.sh" "$APP_NAME" "$HOST" "$USER" "$_kd" 2>&1 | tail -4
   fi
   echo ""
   echo "完成。"

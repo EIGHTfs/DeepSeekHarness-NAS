@@ -485,11 +485,13 @@ def detect_system(host, port, username, password, timeout=20):
         return 'error', ['%s: %s' % (type(e).__name__, e)]
 
 
-def run_script(cmd, spk='', system='', note=''):
+def run_script(cmd, spk='', system='', note='', keep_data=True):
     """后台执行 install-remote-spk.sh <cmd> [spk] [system]。返回 run_id。
     参数位约定（见 install-remote-spk.sh 解析）:
       install     → bash SCRIPT install <spk> [host] [user] [app] [system]   system=$6
       uninstall/check → bash SCRIPT <cmd> [host] [user] [app] [system]       system=$5
+      uninstall 另可追加 --keep-data/--delete-data：**默认 --keep-data 保留数据**
+        （与套件卸载向导默认一致；keep_data=False 才连数据一起删）
     host/user/app 传空由脚本 ${N:-$(read_cfg)} 兜底；system 传空由脚本推断链兜底。
     note 为用户在网页填写的备注，随安装历史记录（不做任何远程传递，仅本地落盘）。
     """
@@ -506,8 +508,11 @@ def run_script(cmd, spk='', system='', note=''):
             cfg = read_config() or {}
             r_host = cfg.get('host') or cfg.get('ip') or ''
             r_user = cfg.get('user') or cfg.get('username') or cfg.get('account') or ''
+            # 2026-10-04：repair 的本意是清**程序残留**再重装，**默认保留数据**
+            #   （此前 clean-dsm-residue.sh 无条件删 @appdata/@apphome/@appshare，
+            #    2026-10-03 数据丢失事故即经此路径）。显式传 --keep-data 表明意图。
             argv_clean = ['bash', os.path.join(BASE_DIR, 'clean-dsm-residue.sh'),
-                          'DeepSeekHarness-NAS', r_host, r_user]
+                          'DeepSeekHarness-NAS', r_host, r_user, '--keep-data']
             try:
                 p0 = subprocess.run(argv_clean, capture_output=True, text=True, timeout=180)
                 with RUNS_LOCK:
@@ -528,6 +533,9 @@ def run_script(cmd, spk='', system='', note=''):
             argv += ['', '', '']
             if system:
                 argv.append(system)
+            if actual_cmd == 'uninstall':
+                # 默认保留数据（与套件卸载向导一致）；keep_data=False 才连数据一起删
+                argv.append('--keep-data' if keep_data else '--delete-data')
         try:
             p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                  text=True, errors='replace')
@@ -703,7 +711,9 @@ class Handler(BaseHTTPRequestHandler):
             if cmd not in ('install', 'uninstall', 'check', 'repair'):
                 self._json(400, {'success': False, 'error': 'cmd 必须是 install|uninstall|check|repair'})
                 return
-            run_id = run_script(cmd, spk, system, note)
+            _kd = body.get('keep_data', True)
+            keep_data = False if str(_kd).lower() in ('0', 'false', 'no') else True
+            run_id = run_script(cmd, spk, system, note, keep_data)
             log('RUN cmd=%s spk=%s system=%s note=%s -> run_id=%s' % (cmd, os.path.basename(spk) if spk else '', system, note, run_id))
             self._json(200, {'success': True, 'run_id': run_id, 'cmd': cmd})
         elif path == '/api/build':
