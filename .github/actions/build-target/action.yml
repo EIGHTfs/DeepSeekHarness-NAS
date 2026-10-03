@@ -96,7 +96,9 @@ runs:
       uses: actions/cache@v4
       with:
         path: ${{ runner.temp }}/reuse-target.tar.gz
-        key: dsh-target-${{ steps.tag.outputs.tag }}-${{ hashFiles('build/build-config.yaml','build/build-common.sh','build/prune-target.sh','build/prune_common.py','build/build-prune-whitelist.json','scripts/lib/common.sh') }}
+        # v2：修正了 tar 漏 .build-done 的问题；版本前缀保证旧缓存（可能不完整）不再被命中。
+        # 同时把 action 自身纳入指纹：打包/解包逻辑一变即换 key，避免命中语义已变的旧缓存。
+        key: dsh-target-v2-${{ steps.tag.outputs.tag }}-${{ hashFiles('build/build-config.yaml','build/build-common.sh','build/prune-target.sh','build/prune_common.py','build/build-prune-whitelist.json','scripts/lib/common.sh','.github/actions/build-target/action.yml','.github/actions/pack-with-target/action.yml') }}
         restore-keys: |
           dsh-target-${{ steps.tag.outputs.tag }}-
 
