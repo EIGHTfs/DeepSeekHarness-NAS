@@ -12,12 +12,6 @@ on:
 # 创建/更新 Release 需要写权限
 permissions:
   contents: write
-# 同一 workflow 只允许一个运行（2026-10-04）：实测 #63/#64 曾并行跑两遍完整构建，
-# 浪费 runner 且与本项目"禁并发"口径不符。用排队而非取消（cancel-in-progress: false），
-# 避免打断正在进行的构建（构建约 20 分钟，取消会白费）。
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: false
 
 
 # ── 构建开关（仓库变量 vars.* 控制；未设置均默认构建）───────────────────────
