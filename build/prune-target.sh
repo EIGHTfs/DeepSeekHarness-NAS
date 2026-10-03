@@ -225,6 +225,7 @@ force_exclude = {'@openai/codex', 'claude-agent-sdk', '@anthropic-ai/claude',
 
 deleted = kept = 0
 hoist_broken = 0
+hoist_kept = 0
 # ⚠ 特殊目录：.pnpm/node_modules 是 pnpm 的**提升链接目录**（非包目录、目录名不带
 #    版本号），按包名逻辑会被误判为"非白名单"而删除 → 破坏依赖提升解析。
 #    2026-10-02 修复：显式保留，并清理其中指向已删包的悬空软链。
@@ -251,8 +252,18 @@ if os.path.isdir(hoist):
         ep = os.path.join(hoist, entry)
         targets = [ep] if os.path.islink(ep) else (
             [os.path.join(ep, g) for g in os.listdir(ep)] if os.path.isdir(ep) and entry.startswith('@') else [])
+        # 2026-10-04 根因修：**白名单命中项的提升软链一律保留**，即便悬空。
+        #   背景：tsc/rollup 从**顶层** node_modules 解析（vite、@types/semver 等
+        #   传递依赖被 pnpm 提升到这里）。若此处按"悬空"删掉，构建期即报
+        #   TS2307 Cannot find module 'vite' / TS7016 semver（本地与 CI 同源复现）。
+        #   悬空只说明对应 .pnpm 实体被裁；白名单包应随实体一起保留，故不删。
+        _keep_name = entry if not entry.startswith('@') else None
         for tp in targets:
             if os.path.islink(tp) and not os.path.exists(tp):
+                _nm = _keep_name if _keep_name else '/'.join(os.path.relpath(tp, hoist).split(os.sep)[:2])
+                if _nm in whitelist:
+                    hoist_kept += 1
+                    continue
                 try:
                     os.unlink(tp); hoist_broken += 1
                 except OSError:
@@ -260,7 +271,7 @@ if os.path.isdir(hoist):
 print('  ✓ build 前裁剪: 保留 %d 个, 删除 %d 个 .pnpm 目录'
       '（白名单 %d 项 = 声明依赖 %d + 闭包 %d）%s'
       % (kept, deleted, len(whitelist), declared_n, len(build_closure),
-         ('；清理 %d 条悬空提升软链' % hoist_broken) if hoist_broken else ''))
+         ('；清理 %d 条悬空提升软链%s' % (hoist_broken, ('，按白名单保留 %d 条' % hoist_kept) if hoist_kept else '')) if (hoist_broken or hoist_kept) else ''))
 PYEOF
   echo "✓ build 前裁剪完成: $BUILD_SRC/node_modules（$(du -sh "$BUILD_SRC/node_modules" 2>/dev/null | cut -f1)）"
   exit 0
@@ -328,6 +339,7 @@ force_exclude = {'@openai/codex', 'claude-agent-sdk', '@anthropic-ai/claude',
 deleted = 0
 kept = 0
 hoist_broken = 0
+hoist_kept = 0
 # ⚠ 特殊目录同模式 C：.pnpm/node_modules 是 pnpm 提升链接目录（名不带版本号），
 #    必须保留，否则依赖提升解析被破坏（2026-10-02 修复）。
 SPECIAL_DIRS = {'node_modules'}
@@ -353,8 +365,18 @@ if os.path.isdir(hoist):
         ep = os.path.join(hoist, entry)
         targets = [ep] if os.path.islink(ep) else (
             [os.path.join(ep, g) for g in os.listdir(ep)] if os.path.isdir(ep) and entry.startswith('@') else [])
+        # 2026-10-04 根因修：**白名单命中项的提升软链一律保留**，即便悬空。
+        #   背景：tsc/rollup 从**顶层** node_modules 解析（vite、@types/semver 等
+        #   传递依赖被 pnpm 提升到这里）。若此处按"悬空"删掉，构建期即报
+        #   TS2307 Cannot find module 'vite' / TS7016 semver（本地与 CI 同源复现）。
+        #   悬空只说明对应 .pnpm 实体被裁；白名单包应随实体一起保留，故不删。
+        _keep_name = entry if not entry.startswith('@') else None
         for tp in targets:
             if os.path.islink(tp) and not os.path.exists(tp):
+                _nm = _keep_name if _keep_name else '/'.join(os.path.relpath(tp, hoist).split(os.sep)[:2])
+                if _nm in whitelist:
+                    hoist_kept += 1
+                    continue
                 try:
                     os.unlink(tp); hoist_broken += 1
                 except OSError:
@@ -363,7 +385,7 @@ if os.path.isdir(hoist):
 print('  ✓ 纯白名单裁剪: 保留 %d 个, 删除 %d 个 .pnpm 目录'
       '（白名单 %d 项 = 名单 %d + 闭包 %d）%s'
       % (kept, deleted, len(whitelist), len(whitelist) - len(runtime_closure), len(runtime_closure),
-         ('；清理 %d 条悬空提升软链' % hoist_broken) if hoist_broken else ''))
+         ('；清理 %d 条悬空提升软链%s' % (hoist_broken, ('，按白名单保留 %d 条' % hoist_kept) if hoist_kept else '')) if (hoist_broken or hoist_kept) else ''))
 
 # 源码/文档裁剪（native/ 保留）
 sourceDirs = ['packages/*/src', 'packages/*/docs', 'packages/*/benchmark*',
