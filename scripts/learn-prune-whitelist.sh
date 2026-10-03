@@ -248,6 +248,16 @@ elif mode == 'log':
             if not _tok or _tok.startswith(".") or _tok.startswith("node:"):
                 continue
             learned.add(_tok if (_tok.startswith("@") and _tok.count("/") == 1) else _tok.split("/")[0])
+    # pnpm install 摘要行：`+ <包> <版本>`（顶层被装上的包，含根 devDependencies）
+    #   2026-10-04 根因修：mode A（install 前裁剪）会剥掉"不在白名单里的根 devDeps"，
+    #   而它们拉进来的传递依赖随之不再安装 → tsc 顶层解析报 TS2307（实测 vitest → vite）。
+    #   故把安装摘要里的包一并学进白名单（仍是**自动学习**，非手工塞包）。
+    # 注意：CI 日志每行带时间戳前缀，故**不能**锚定行首
+    for _m in re.finditer(r"\+\s+(@?[A-Za-z0-9._/-]+)\s+[0-9]+\.[0-9]", text):
+        _tok = _m.group(1)
+        if _tok.startswith(".") or _tok.startswith("node:"):
+            continue
+        learned.add(_tok if (_tok.startswith("@") and _tok.count("/") == 1) else _tok.split("/")[0])
     source = f"日志反查 {target}"
 
 learned = {x for x in learned if x}  # 去空
