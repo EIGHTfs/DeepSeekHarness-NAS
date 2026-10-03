@@ -36,6 +36,11 @@
 # 防重  ：目标按 inode 去重——start.sh 与 build/start.sh.example 可能经软链指向
 #         同一份文件，不去重会往同一文件插两遍（实测踩过）。
 # ============================================================
+
+# ── 公共函数库（唯一实现：scripts/lib/common.sh；本文件不再自定义日志/工具函数）──
+_DSH_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/lib/common.sh"
+[ -f "$_DSH_LIB" ] && . "$_DSH_LIB"
+
 set -uo pipefail
 
 MODE="probe"                 # probe | check | patch | passwd
@@ -61,10 +66,6 @@ if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != "dumb" ]; then
   C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'; C_RED=$'\033[31m'
   C_DIM=$'\033[2m'; C_RESET=$'\033[0m'
 fi
-info() { printf '%s\n' "$*"; }
-ok()   { printf '%s[OK]%s %s\n' "$C_GREEN" "$C_RESET" "$*"; }
-warn() { printf '%s[!]%s %s\n' "$C_YELLOW" "$C_RESET" "$*"; }
-err()  { printf '%s[ERR]%s %s\n' "$C_RED" "$C_RESET" "$*" >&2; }
 dim()  { printf '%s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
 
 usage() {

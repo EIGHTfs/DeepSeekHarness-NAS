@@ -20,6 +20,11 @@
 #   bash scripts/prepare-build-env.sh --check         # 只检查不下载
 #   DSH_VERSION=0.2.1-alpha.1 bash scripts/prepare-build-env.sh
 # ==============================================================================
+
+# ── 公共函数库（唯一实现：scripts/lib/common.sh；本文件不再自定义日志/工具函数）──
+_DSH_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/lib/common.sh"
+[ -f "$_DSH_LIB" ] && . "$_DSH_LIB"
+
 set -u
 
 WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,10 +36,6 @@ GH_PROXY="${GH_PROXY:-https://gh-proxy.com}"
 CHECK_ONLY=0
 [ "${1:-}" = "--check" ] && CHECK_ONLY=1
 
-ok()   { echo "  ✓ $*"; }
-warn() { echo "  ⚠ $*"; }
-miss() { echo "  ✗ $*"; }
-info() { echo "▶ $*"; }
 
 echo "═══ 构建环境准备 ═══"
 echo "  工作区 : $WS"
