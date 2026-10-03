@@ -52,7 +52,7 @@ runs:
 
     - name: 记录镜像缓存命中情况
       shell: bash
-      run: echo "源码 git 镜像缓存命中: ${{ steps.cache-src-mirror.outputs.cache-hit }}（true=只拉增量）"
+      run: "echo \"源码 git 镜像缓存命中: ${{ steps.cache-src-mirror.outputs.cache-hit }}（true=只拉增量）\""
 
     - name: 拉取官方最新源码（增量）
       uses: ./.github/actions/fetch-latest
