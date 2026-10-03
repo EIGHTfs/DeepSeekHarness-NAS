@@ -1,4 +1,8 @@
 #!/bin/bash
+# ⚠ 2026-10-03 事故加固：本脚本的 rm -rf 一律加 --one-file-system。
+#   根因：rm -rf /volume1/@appdata/<PKG> 会**进入该目录下的挂载点并删光其中内容** ——
+#   本机上 @appdata/<PKG>/<版本>/工作区 正是用户工作区的 NFS 挂载点（.64 导出），
+#   导致工作区数据在**源端**被删。--one-file-system 保证不跨文件系统删除。
 # ============================================================
 #  群晖 DSM 套件卸载残留清理
 #
@@ -63,13 +67,13 @@ pkill -f "target/bin/node.*$PKG" 2>/dev/null
 sleep 2
 
 echo "-- 2. 删除目录 --"
-rm -rf "/var/packages/$PKG" "/usr/syno/etc/packages/$PKG"
+rm -rf --one-file-system "/var/packages/$PKG" "/usr/syno/etc/packages/$PKG"
 for v in /volume1 /volume2 /volume3 /volume4; do
-  rm -rf "$v/@appstore/$PKG" "$v/@appconf/$PKG" "$v/@appdata/$PKG" \
+  rm -rf --one-file-system "$v/@appstore/$PKG" "$v/@appconf/$PKG" "$v/@appdata/$PKG" \
          "$v/@apphome/$PKG" "$v/@apptemp/$PKG" "$v/@appshare/$PKG" \
          "$v/@eaDir/$PKG" "$v/$PKG"
 done
-rm -rf "/usr/syno/synoman/webman/3rdparty/$PKG"
+rm -rf --one-file-system "/usr/syno/synoman/webman/3rdparty/$PKG"
 
 echo "-- 3. 删除 systemd unit + 日志 + 锁 --"
 rm -f "/usr/local/lib/systemd/system/pkgctl-$PKG.service"
