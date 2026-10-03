@@ -70,7 +70,7 @@ function writeTmpFile(file, content) {
     const code = err && err.code;
     if (code !== 'EACCES' && code !== 'EPERM') throw err;
   }
-  try { fs.unlinkSync(file); } catch {}
+  try { fs.unlinkSync(file); } catch {} // 有意忽略：写入前先删旧文件，文件不存在属正常（首次写入）
   fs.writeFileSync(file, content, 'utf-8');
 }
 
@@ -82,7 +82,7 @@ function secureDshTree(dir) {
     fs.chmodSync(dir, 0o700);
     const walk = (d) => {
       let entries;
-      try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+      try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; } // 有意忽略：目录不可读（权限/竞态删除）就跳过该分支，权限收紧本就是尽力而为
       for (const ent of entries) {
         if (ent.name === '.' || ent.name === '..') continue;
         const p = require('path').join(d, ent.name);
@@ -90,7 +90,7 @@ function secureDshTree(dir) {
           if (ent.isSymbolicLink()) continue;
           if (ent.isDirectory()) { fs.chmodSync(p, 0o700); walk(p); }
           else { fs.chmodSync(p, 0o600); }
-        } catch {}
+        } catch {} // 有意忽略：单个条目 chmod 失败（非属主 EPERM / 已被删除）不影响其余条目；本函数整体是"尽力而为"，结束时只在函数级报一次警告
       }
     };
     walk(dir);
