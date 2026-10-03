@@ -160,7 +160,7 @@ function buildPolyfillScript() {
   }
   try {
     var g = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : this;
-    if (!g.crypto) { try { g.crypto = {}; } catch(e){} }
+    if (!g.crypto) { try { g.crypto = {}; } catch(e){} } // 有意忽略：浏览器里 crypto 可能是只读属性，赋值失败也不影响后续 randomUUID 兜底
     if (g.crypto) {
       try { if (!g.crypto.randomUUID) { Object.defineProperty(g.crypto, 'randomUUID', { value: createUUID, writable: true, configurable: true, enumerable: true }); } }
       catch(e) { g.crypto.randomUUID = createUUID; }
@@ -206,7 +206,7 @@ async function main() {
   writeTmpFile(PID_FILE, String(process.pid));
 
   try { fs.mkdirSync(dshHome, { recursive: true, mode: 0o700 }); } catch (e) { console.error(`[!] mkdir DSH_HOME: ${e.message}`); }
-  try { fs.mkdirSync(home, { recursive: true, mode: 0o700 }); } catch (e) {}
+  try { fs.mkdirSync(home, { recursive: true, mode: 0o700 }); } catch (e) {} // 有意不记日志：HOME 只是给子进程用的环境值，创建失败不致命（子进程各自按需再建）；上一行 DSH_HOME 才是关键路径，故那条会报错
   secureDshTree(dshHome);
 
   let waitCount = 0;
