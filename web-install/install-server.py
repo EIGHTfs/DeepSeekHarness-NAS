@@ -170,34 +170,26 @@ def _release_note(kind, tag, mode=None, fname=None):
         return ''
 
 
-def publish_package_to_github(file_path, tag):
-    """将指定包文件发布到 GitHub Release。
-    1. 将文件复制到 release/<tag>/ 目录
-    2. 调 GitHub API 创建/更新 Release 并上传资产
-    返回 (success, message)。"""
-    token = _read_github_token()
-    if not token:
-        return False, '未找到 GitHub Token'
-
-    if not os.path.isfile(file_path):
-        return False, '文件不存在: %s' % file_path
-
+def _copy_to_release_dir(file_path, tag):
+    """把产物复制到 release/<tag>/（已在该目录则跳过）。返回 (ok, dst, message)。"""
     fname = os.path.basename(file_path)
     release_dir = os.path.join(WS_ROOT, 'release', tag)
-
-    # 复制到 release/<tag>/（如果文件已在该目录则跳过）
     os.makedirs(release_dir, exist_ok=True)
     dst = os.path.join(release_dir, fname)
-    if os.path.abspath(file_path) != os.path.abspath(dst):
-        import shutil
-        try:
-            shutil.copy2(file_path, dst)
-            log('RELEASE copy %s -> %s' % (fname, release_dir))
-        except Exception as e:
-            log('RELEASE copy failed: %s' % e)
-            return False, '复制产物失败: %s' % e
+    if os.path.abspath(file_path) == os.path.abspath(dst):
+        return True, dst, ''
+    import shutil
+    try:
+        shutil.copy2(file_path, dst)
+        log('RELEASE copy %s -> %s' % (fname, release_dir))
+        return True, dst, ''
+    except Exception as e:
+        log('RELEASE copy failed: %s' % e)
+        return False, dst, '复制产物失败: %s' % e
 
-    # GitHub API: 获取或创建 Release
+
+def _get_or_create_release(tag, fname, token):
+    """取同名 Release；不存在（404）则按官方 tag 创建。返回 (ok, rel, message)。"""
     status, rel = _github_api('GET', '/repos/%s/releases/tags/%s' % (GITHUB_REPO, tag), token)
     if status == 404:
         status, rel = _github_api('POST', '/repos/%s/releases' % GITHUB_REPO, token, {
@@ -208,34 +200,57 @@ def publish_package_to_github(file_path, tag):
             'prerelease': '-' in tag,
         })
         if status not in (200, 201):
-            return False, '创建 Release 失败: %s' % rel
+            return False, rel, '创建 Release 失败: %s' % rel
         log('RELEASE created %s (id=%s)' % (tag, rel.get('id')))
     elif status == 200:
         log('RELEASE found %s (id=%s)' % (tag, rel.get('id')))
     else:
-        return False, '查询 Release 失败: %s' % rel
+        return False, rel, '查询 Release 失败: %s' % rel
+    if not rel.get('upload_url', ''):
+        return False, rel, 'Release 缺少 upload_url'
+    return True, rel, ''
 
-    upload_url = rel.get('upload_url', '')
-    if not upload_url:
-        return False, 'Release 缺少 upload_url'
 
-    # 检查同名 asset 是否已存在
-    existing_assets = rel.get('assets', [])
-    for a in existing_assets:
+def _replace_asset(rel, token, dst, fname, tag):
+    """先删同名旧资产（GitHub 不允许重名），再上传。返回 (ok, message)。
+
+    先删后传是刻意的：同名资产不删会让上传拿到 422，而 Release 是"滚动刷新"语义，
+    每次发版都该是同一批文件名。
+    """
+    for a in rel.get('assets', []):
         if a.get('name') == fname:
             log('RELEASE asset already exists: %s (id=%s), deleting old' % (fname, a.get('id')))
             _github_api('DELETE', '/repos/%s/releases/assets/%s' % (GITHUB_REPO, a['id']), token)
-
-    # 上传
     fsize = os.path.getsize(dst)
-    log('RELEASE upload %s (%.1f MB)' % (fname, fsize / 1048576.0))
-    status, resp = _upload_release_asset(upload_url, token, dst, fname)
+    log('RELEASE upload %s (%.1f MB)' % (fname, fsize / _CHUNK_1MIB))
+    status, resp = _upload_release_asset(rel.get('upload_url', ''), token, dst, fname)
     if status in (200, 201):
         log('RELEASE upload OK: %s' % fname)
         return True, '✅ 已发布 %s 到 %s' % (fname, tag)
-    else:
-        log('RELEASE upload FAILED: %s -> %s' % (fname, resp))
-        return False, '上传失败: %s' % resp
+    log('RELEASE upload FAILED: %s -> %s' % (fname, resp))
+    return False, '上传失败: %s' % resp
+
+
+def publish_package_to_github(file_path, tag):
+    """将指定包文件发布到 GitHub Release。
+    1. 将文件复制到 release/<tag>/ 目录
+    2. 调 GitHub API 创建/更新 Release 并上传资产
+    返回 (success, message)。"""
+    token = _read_github_token()
+    if not token:
+        return False, '未找到 GitHub Token'
+    if not os.path.isfile(file_path):
+        return False, '文件不存在: %s' % file_path
+
+    fname = os.path.basename(file_path)
+    ok, dst, msg = _copy_to_release_dir(file_path, tag)
+    if not ok:
+        return False, msg
+
+    ok, rel, msg = _get_or_create_release(tag, fname, token)
+    if not ok:
+        return False, msg
+    return _replace_asset(rel, token, dst, fname, tag)
 
 
 def _find_package_file(package_name):

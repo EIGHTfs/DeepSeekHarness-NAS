@@ -107,18 +107,22 @@ def _check_no_fork(violations):
 
 
 def _check_no_untracked(violations):
-    """③ web-install 不得有未跟踪文件（防本地-only 文件静默丢失/自由漂移）。"""
+    """③ web-install 不得有「该入库却漏了」的文件（防本地-only 文件静默丢失/自由漂移）。
+
+    ⚠ 必须尊重 .gitignore：用 `git ls-files --others --exclude-standard` 拿「未跟踪且未被忽略」
+    的文件。早期版本用 os.listdir 对比 tracked 列表，把**有意忽略的日志**（如
+    web-install/install-server.log）误报成漏入库 —— 该误报由一次单测导入模块触发日志而暴露。
+    """
     web = os.path.join(ROOT, "web-install")
     if not os.path.isdir(web):
         return
     try:
-        out = subprocess.run(["git", "ls-files", "web-install"], cwd=ROOT,
-                             capture_output=True, text=True, timeout=30)
-        if out.returncode == 0:
-            tracked = {os.path.basename(x) for x in out.stdout.split() if x}
-            for f in sorted(os.listdir(web)):
-                if os.path.isfile(os.path.join(web, f)) and f not in tracked:
-                    violations.append("web-install/%s 未被 git 跟踪（会静默丢失，请入库）" % f)
+        out = subprocess.run(["git", "ls-files", "--others", "--exclude-standard", "web-install"],
+                             cwd=ROOT, capture_output=True, text=True, timeout=30)
+        if out.returncode != 0:
+            return
+        for rel in sorted(x for x in out.stdout.split() if x):
+            violations.append("%s 未被 git 跟踪（会静默丢失，请入库；若属有意忽略请写进 .gitignore）" % rel)
     except Exception:
         pass
 
