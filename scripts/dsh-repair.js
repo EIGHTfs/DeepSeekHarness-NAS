@@ -48,7 +48,9 @@ function writeTmpFile(file, content) {
     const code = err && err.code;
     if (code !== 'EACCES' && code !== 'EPERM') throw err;
   }
-  try { fs.unlinkSync(file); } catch {}
+  try { fs.unlinkSync(file); } catch {
+    // 有意忽略：写入前先删旧文件，文件不存在属正常（首次写入）
+  }
   fs.writeFileSync(file, content, 'utf-8');
 }
 
@@ -72,7 +74,10 @@ function findDshDir() {
       const p = path.join(scriptDir, ent.name);
       if (isDshDir(p)) return p;
     }
-  } catch {}
+  } catch {
+    // 有意忽略：这是"脚本所在目录及其同级子目录"的启发式搜索，目录不可读就表示此处没有候选，
+    // 继续走下面的进程扫描即可，不是错误
+  }
 
   // ③ 扫描运行中 DSH 进程
   const procDir = '/proc';
@@ -86,9 +91,15 @@ function findDshDir() {
           const cwd = fs.readlinkSync(path.join(procDir, pid, 'cwd'));
           if (isDshDir(cwd)) return cwd;
         }
-      } catch {}
+      } catch {
+        // 有意忽略：读 /proc/<pid>/{cmdline,cwd} 时该进程可能刚退出或属其他用户（EACCES），
+        // 单个进程失败不影响继续扫描其余进程
+      }
     }
-  } catch {}
+  } catch {
+    // 有意忽略：/proc 不可读（非 Linux 或受限容器）时整段进程扫描跳过；
+    // 此时仍可用 --dsh 参数或同级目录定位，属于"三条定位通道之一不可用"，非致命
+  }
 
   console.error('[!] 未找到 DSH 目录。尝试：\n' +
     '  1. 将脚本放到 DSH 目录同级\n' +
