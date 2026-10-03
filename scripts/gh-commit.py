@@ -1,36 +1,75 @@
 #!/usr/bin/env python3
 #===============================================================================
-# /tmp/gh_commit.py — 无 git 的原子提交推送（GitHub Git Data API）
+# scripts/gh-commit.py — 不依赖工作区写权限的原子提交推送（GitHub Git Data API）
 #
-# 背景（2026-10-04）：
-#   本机（.64）对工作区无权限、sudo 密码未知；.193 的 git 包已损坏
-#   （/var/packages/git/target → /volume1/@appstore/git 内容被删）。
-#   故改用 GitHub API 直接提交：blobs → tree → commit → 更新 ref。
+# 【它解决什么问题】
+#   blobs → tree → commit → 更新 ref，全程走 GitHub REST API，**只需要能读到文件内容**，
+#   不需要在本机拥有可用的 git 二进制，也不需要对该仓库目录有写权限。
 #
-# 特点：
+# 【当初为什么写它（历史背景，条件已变，保留以便理解设计取舍）】
+#   当时本机对工作区无权限、sudo 密码未知，而另一台机器（.193）的 git 包已损坏
+#   （/var/packages/git/target → /volume1/@appstore/git 内容被删），两条常规路子都走不通。
+#   ⚠ 现在这两个前提**都不再成立**：工作区已授权可写，本机 /bin/git（2.39.1）可用。
+#   因此本脚本的定位从"唯一出路"变为"**备用通道**"：
+#     · 常规提交推送请优先用 git（更快、有完整钩子与 diff 视图）；
+#     · 当 git 不可用/无写权限/需要一次性原子提交多文件时，再用本脚本。
+#
+# 【特点】
 #   · 不需要 git 二进制、不需要工作区写权限（读文件即可）
 #   · **原子多文件提交**（一次 commit 覆盖全部改动）
-#   · author/committer 固定为 EIGHTfs（用户 2026-10-04 口径）
+#   · author/committer 固定为 EIGHTfs（用户口径）
 #   · 快进失败（远端有新提交）时自动重取 HEAD 重试
 #
-# 用法：
-#   python3 /tmp/gh_commit.py <仓库根目录> "<提交信息>" <文件1> [文件2 ...]
-#   例：python3 /tmp/gh_commit.py "/volume13/.../DeepSeekHarness-NAS" "feat: x" scripts/lib/common.sh
+# 【用法】
+#   python3 scripts/gh-commit.py <仓库根目录> "<提交信息>" <文件1> [文件2 ...]
+#   例：python3 scripts/gh-commit.py "/volume13/.../DeepSeekHarness-NAS" "feat: x" scripts/lib/common.sh
+#
+# 【token 来源】见下方 token()：优先环境变量 GH_TOKEN / GITHUB_TOKEN，其次读本文件所在仓库
+#   同级的 config.json 的 githubToken 字段（该文件由用户维护，不入库）。
 #===============================================================================
 import base64, json, os, sys, time, urllib.request, urllib.error
 
 OWNER, REPO, BRANCH = "EIGHTfs", "DeepSeekHarness-NAS", "main"
 AUTHOR_NAME = "EIGHTfs"
 AUTHOR_EMAIL = "EIGHTfs@users.noreply.github.com"
-CONFIG = "/volume1/VirtualDSM/DeepSeekHarness/.dsh/git-push/config.json"
 
 
 def token():
+    """取 GitHub token：先环境变量，再依次尝试若干候选 config.json。
+
+    候选路径按"当前真实布局"优先排列（早期写死过 /volume1/VirtualDSM/... 的旧路径，
+    该路径现已不存在；写死单一路径会让脚本在目录搬迁后静默失效，故改为候选列表 + 明确报错）。
+    """
     t = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
     if t:
         return t.strip()
-    with open(CONFIG, encoding="utf-8") as f:
-        return json.load(f)["githubToken"].strip()
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidates = [
+        os.environ.get("DSH_GIT_PUSH_CONFIG", ""),
+        os.path.join(os.path.dirname(repo_root), "config.json"),          # 工作区/config.json（用户维护）
+        "/volume13/Artificial Intelligence/DeepSeek/DeepSeekHarness/工作区/config.json",
+        "/volume1/VirtualDSM/DeepSeekHarness/.dsh/git-push/config.json",  # 历史路径（可能已不存在）
+    ]
+    tried = []
+    for path in candidates:
+        if not path:
+            continue
+        tried.append(path)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                tok = (json.load(f).get("githubToken") or "").strip()
+        except Exception as e:
+            sys.stderr.write("⚠ 读取 %s 失败：%s\n" % (path, e))
+            continue
+        if tok:
+            return tok
+    sys.stderr.write(
+        "✗ 未找到 githubToken。请设置 GH_TOKEN / GITHUB_TOKEN 环境变量，"
+        "或把含 githubToken 的 config.json 放到下列任一位置：\n  - "
+        + "\n  - ".join([p for p in tried if p]) + "\n")
+    raise SystemExit(2)
 
 
 def api(path, method="GET", payload=None, tok=None):
