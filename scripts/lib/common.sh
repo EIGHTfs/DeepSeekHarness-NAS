@@ -18,6 +18,19 @@
 #   3. 所有破坏性删除必须走 safe_rm_rf()：强制 --one-file-system 且逐级检测
 #      挂载点（2026-10-03 数据丢失事故的直接防线）。
 #
+# 【哪些【不要】收口（2026-10-04 审计纠错，务必先读）】
+#   按"函数名重复"做的审计会**误报**：同名但**作用域不同**的代码不能抽，硬抽会破坏生成物。
+#   已确认的误报（保留各自实现，勿动）：
+#     · log_msg —— build/FPK/build-fpk.sh 里出现两次，但都在 **heredoc 生成的 fnOS 运行时
+#       脚本**内（写 ${LOG_FILE}/${TRIM_PKGVAR} 日志），与构建侧日志**不是一回事**。
+#     · load_variables_from_file —— build-fpk.sh:364 是 fnOS 运行时要求的**空桩**，
+#       :479 才是打包器自己的实现；二者同名不同作用域。
+#     · preinst/postinst/preuninst/postuninst/start/status（DSM 专有）与
+#       install_callback/service_*（fnOS 专有）—— 平台专有，保留各自实现。
+#     · scripts/migrate-session.sh、fix-login-shell.sh、fetch-release-mt.sh 的领域逻辑。
+#   → 因此 scripts/check-common-functions.sh（第 7 步守卫）必须**先剔除 heredoc 生成区段**
+#     再做"唯一性"判定，否则会误伤上述代码。
+#
 # 【本文件收口的重复项（原散落位置）】
 #   日志/文案 info ok warn miss err die log_msg …… prepare-build-env.sh、
 #        fix-login-shell.sh、sync-github-release.sh、web-install/* 等 6+ 处
