@@ -667,7 +667,72 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return {}
 
+    def _api_config(self):
+        return 200, {'success': True, 'config': read_config()}
+
+    def _api_packages(self):
+        return 200, {'success': True, **list_packages()}
+
+    def _api_log(self, query):
+        lines = int(parse_qs(query).get('lines', ['100'])[0])
+        try:
+            with open(LOG_FILE, 'r', encoding='utf-8') as f:
+                all_lines = f.readlines()
+            tail = all_lines[-lines:] if len(all_lines) > lines else all_lines
+            return 200, {'success': True, 'log': ''.join(tail), 'total': len(all_lines)}
+        except FileNotFoundError:
+            return 200, {'success': True, 'log': '', 'total': 0}
+        except Exception as e:
+            return 500, {'success': False, 'error': str(e)}
+
+    def _api_run_status(self, query):
+        run_id = parse_qs(query).get('run_id', [''])[0]
+        with RUNS_LOCK:
+            info = dict(RUNS.get(run_id, {}))
+        if not info:
+            return 404, {'success': False, 'error': f'未找到任务 {run_id}'}
+        return 200, {'success': True, **info}
+
+    def _api_tasks(self, query):
+        # 安装历史（install-tasks.jsonl，最新在前；纯标准库读尾部）
+        limit = min(int(parse_qs(query).get('limit', ['50'])[0]), 500)
+        tasks = []
+        try:
+            with open(TASKS_FILE, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            for ln in lines[-limit:]:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    tasks.append(json.loads(ln))
+                except Exception:
+                    continue
+            tasks.reverse()
+            return 200, {'success': True, 'tasks': tasks, 'total': len(lines)}
+        except FileNotFoundError:
+            return 200, {'success': True, 'tasks': [], 'total': 0}
+        except Exception as e:
+            return 500, {'success': False, 'error': str(e)}
+
+    def _api_build_status(self, query):
+        build_id = parse_qs(query).get('build_id', [''])[0]
+        with BUILDS_LOCK:
+            info = dict(BUILDS.get(build_id, {}))
+        if not info:
+            return 404, {'success': False, 'error': '未找到构建任务 %s' % build_id}
+        return 200, {'success': True, **info}
+
+    def _api_builds(self):
+        with BUILDS_LOCK:
+            builds = sorted(BUILDS.values(), key=lambda b: b.get('started', ''), reverse=True)
+        return 200, {'success': True, 'builds': list(builds)}
+
     def do_GET(self):
+        """GET 路由：静态页面直接写字节（必须留在本方法），API 走下面的 (状态码, 载荷) 小函数。
+
+        API 小函数只返回数据、不碰 socket，因此可脱离服务器单测（见本次重构的验证方式）。
+        """
         parsed = urlparse(self.path)
         path = parsed.path
         if path in ('/', '/install.html', '/install-fpk.html'):
@@ -676,64 +741,22 @@ class Handler(BaseHTTPRequestHandler):
             if self._html(HTML_FILE_LEGACY):
                 return
             self._json(404, {'success': False, 'error': '前端页面缺失（install.html / install-fpk.html）'})
-        elif path == '/api/config':
-            self._json(200, {'success': True, 'config': read_config()})
-        elif path == '/api/packages':
-            self._json(200, {'success': True, **list_packages()})
-        elif path == '/api/log':
-            lines = int(parse_qs(parsed.query).get('lines', ['100'])[0])
-            try:
-                with open(LOG_FILE, 'r', encoding='utf-8') as f:
-                    all_lines = f.readlines()
-                tail = all_lines[-lines:] if len(all_lines) > lines else all_lines
-                self._json(200, {'success': True, 'log': ''.join(tail), 'total': len(all_lines)})
-            except FileNotFoundError:
-                self._json(200, {'success': True, 'log': '', 'total': 0})
-            except Exception as e:
-                self._json(500, {'success': False, 'error': str(e)})
-        elif path == '/api/run-status':
-            run_id = parse_qs(parsed.query).get('run_id', [''])[0]
-            with RUNS_LOCK:
-                info = dict(RUNS.get(run_id, {}))
-            if not info:
-                self._json(404, {'success': False, 'error': f'未找到任务 {run_id}'})
-            else:
-                self._json(200, {'success': True, **info})
-        elif path == '/api/tasks':
-            # 安装历史（install-tasks.jsonl，最新在前；纯标准库读尾部）
-            limit = min(int(parse_qs(parsed.query).get('limit', ['50'])[0]), 500)
-            tasks = []
-            try:
-                with open(TASKS_FILE, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
-                for ln in lines[-limit:]:
-                    ln = ln.strip()
-                    if not ln:
-                        continue
-                    try:
-                        tasks.append(json.loads(ln))
-                    except Exception:
-                        continue
-                tasks.reverse()
-                self._json(200, {'success': True, 'tasks': tasks, 'total': len(lines)})
-            except FileNotFoundError:
-                self._json(200, {'success': True, 'tasks': [], 'total': 0})
-            except Exception as e:
-                self._json(500, {'success': False, 'error': str(e)})
-        elif path == '/api/build-status':
-            build_id = parse_qs(parsed.query).get('build_id', [''])[0]
-            with BUILDS_LOCK:
-                info = dict(BUILDS.get(build_id, {}))
-            if not info:
-                self._json(404, {'success': False, 'error': '未找到构建任务 %s' % build_id})
-            else:
-                self._json(200, {'success': True, **info})
-        elif path == '/api/builds':
-            with BUILDS_LOCK:
-                builds = sorted(BUILDS.values(), key=lambda b: b.get('started', ''), reverse=True)
-            self._json(200, {'success': True, 'builds': list(builds)})
-        else:
+            return
+        routes = {
+            '/api/config': lambda: self._api_config(),
+            '/api/packages': lambda: self._api_packages(),
+            '/api/log': lambda: self._api_log(parsed.query),
+            '/api/run-status': lambda: self._api_run_status(parsed.query),
+            '/api/tasks': lambda: self._api_tasks(parsed.query),
+            '/api/build-status': lambda: self._api_build_status(parsed.query),
+            '/api/builds': lambda: self._api_builds(),
+        }
+        handler = routes.get(path)
+        if handler is None:
             self._json(404, {'success': False, 'error': f'未知路径: {path}'})
+            return
+        status, payload = handler()
+        self._json(status, payload)
 
     def do_POST(self):
         path = urlparse(self.path).path
