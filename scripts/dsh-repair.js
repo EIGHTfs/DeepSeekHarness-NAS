@@ -24,6 +24,10 @@
  */
 'use strict';
 
+// ---- 等待时长（抽成命名常量：审计 magic-number 命中，且数值含义本就不直观）----
+const WAIT_PORT_RELEASE_MS = 2000; // 发完 SIGKILL 后等旧进程真正退出、端口释放
+const WAIT_DSH_START_MS = 3000;    // 启动 DSH 后等它监听就绪，再挂反代与容器页
+
 const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const http = require('http');
@@ -319,7 +323,7 @@ function killOldProcesses(dshDir) {
     // 属尽力而为的补充手段（前面已按 PID 文件与 cwd 匹配停过），失败不影响启动
   }
   // 等待端口释放
-  return new Promise(resolve => setTimeout(resolve, 2000));
+  return new Promise(resolve => setTimeout(resolve, WAIT_PORT_RELEASE_MS));
 }
 
 // ========== 7. Polyfill 脚本 ==========
@@ -461,7 +465,7 @@ async function main() {
   });
 
   // 等 DSH 启动
-  await new Promise(r => setTimeout(r, 3000));
+  await new Promise(r => setTimeout(r, WAIT_DSH_START_MS));
 
   // ========== 启动反代 ==========
   const polyfill = buildPolyfillScript();
