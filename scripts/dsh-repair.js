@@ -458,6 +458,16 @@ async function main() {
 
   // 先停止旧实例（必须在自己写 PID 文件之前，否则会 kill 自己）
   await killOldProcesses(dshDir);
+  if (DRY_RUN) {
+    // 到此为止：killOldProcesses 已在 dry-run 下只打印将停的 PID，未真停；
+    // 后面的写 PID 文件 / 改权限 / 启动 DSH / 挂反代与容器一律不做。
+    console.log('═══════════════════════════════════════');
+    console.log('  [dry-run] 到此为止');
+    console.log(`  目标 DSH 目录: ${dshDir}`);
+    console.log('  未做：写 PID 文件、收紧权限、启动 DSH、挂反代与容器页面');
+    console.log('═══════════════════════════════════════');
+    return;
+  }
   // 再写入本实例 PID
   writeTmpFile(PID_FILE, String(process.pid));
 
