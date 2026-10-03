@@ -90,6 +90,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | `scripts/fetch-official-docs.py` | 抓官方文档快照到本地（离线查阅/比对用） | `python3 scripts/fetch-official-docs.py` |
 | `scripts/fix-dsh-bundle-patch-insert.py` | 修复官方 bundle 的 patch 声明插入问题（升级后内置插件加载异常时用） | `python3 scripts/fix-dsh-bundle-patch-insert.py <目标树>` |
 | `scripts/check-readme-coverage.py` | **README 覆盖度守卫**：代码里的开关名/脚本名必须在 README 出现，否则退出码 1（CI 拦截「机制只活在注释里」） | `--list` 只列不失败 |
+| `scripts/prepare-build-env.sh` | 构建环境自动准备（幂等、只新增不删除、绝不 mount）：检测 noexec 挂载 / 补随包 node / 检查项目 pnpm / 补官方预编译 native 产物 / 拉官方源码快照 |
 
 ### 手工构建示例（开发调试用）
 
@@ -197,6 +198,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | `DSH_PROXY_PORT` | `30800` | 反代端口覆盖（等价 `--proxy-port`） |
 | `DSH_SLIM_SKIP_NATIVE` | `0` | 置 1 跳过 native 构建（`first-build-logic.sh` 留档脚本用） |
 | `DSH_TOKEN_FILE` | 自动探测 | GitHub token 文件路径覆盖（`fetch-release-mt.sh` 下载本仓 Release 资产时用） |
+| `DSH_VERSION` |  | 官方源码版本覆盖（`prepare-build-env.sh` / `fetch-dsh-latest.sh` 用；决定拉取 `src/deepseek-ai/dsh-v<ver>`） |
 
 **失败症状对照**（先查白名单，再怀疑"没装"）：
 
