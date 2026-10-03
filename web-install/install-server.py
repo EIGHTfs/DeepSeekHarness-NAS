@@ -500,6 +500,82 @@ def detect_system(host, port, username, password, timeout=20):
         return 'error', ['%s: %s' % (type(e).__name__, e)]
 
 
+def _repair_clean_first(run_id):
+    """repair 的前置步骤：先远程清残留，再按 install 走。返回实际要执行的子命令。
+
+    host/user 从已保存配置读（clean-dsm-residue.sh 支持 [主机] [SSH用户]）。
+    默认 --keep-data：repair 的本意是清**程序残留**再重装，不该动用户数据
+    （此前 clean-dsm-residue.sh 无条件删 @appdata/@apphome/@appshare，数据丢失事故即经此路径）。
+    清理失败不中断：把失败写进输出后仍继续重装（让用户看到原因，而不是整条任务卡住）。
+    """
+    cfg = read_config() or {}
+    r_host = cfg.get('host') or cfg.get('ip') or ''
+    r_user = cfg.get('user') or cfg.get('username') or cfg.get('account') or ''
+    argv_clean = ['bash', os.path.join(BASE_DIR, 'clean-dsm-residue.sh'),
+                  'DeepSeekHarness-NAS', r_host, r_user, '--keep-data']
+    try:
+        p0 = subprocess.run(argv_clean, capture_output=True, text=True, timeout=180)
+        with RUNS_LOCK:
+            RUNS[run_id]['output'] = '── 清残留 ──\n' + (p0.stdout or '') + (p0.stderr or '') + '\n── 重装 ──\n'
+    except Exception as e:
+        with RUNS_LOCK:
+            RUNS[run_id]['output'] = '清残留失败: %s\n── 重装 ──\n' % e
+    return 'install'
+
+
+def _build_argv(actual_cmd, spk, system, keep_data):
+    """按 install-remote-spk.sh 的位置约定拼 argv。
+
+    install 走 install <spk> [host] [user] [app] [system]（system 是第 6 位），
+    uninstall/check 走 <cmd> [host] [user] [app] [system]（system 是第 5 位），
+    host/user/app 一律留空由脚本 ${N:-$(read_cfg)} 兜底。
+    uninstall 额外追加 --keep-data/--delete-data：默认保留数据（与套件卸载向导一致）。
+    """
+    argv = ['bash', SCRIPT, actual_cmd]
+    if actual_cmd == 'install':
+        argv += [spk, '', '', '']
+        if system:
+            argv.append(system)
+    else:
+        argv += ['', '', '']
+        if system:
+            argv.append(system)
+        if actual_cmd == 'uninstall':
+            argv.append('--keep-data' if keep_data else '--delete-data')
+    return argv
+
+
+def _stream_and_record(run_id, argv, actual_cmd, spk, system, note):
+    """执行子进程、边跑边刷新输出（只留尾部 80 行）、结束后落安装历史。
+
+    成败都记录；repair 已折算为 install，故记录用 actual_cmd。
+    """
+    try:
+        p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True, errors='replace')
+        out_lines = []
+        for line in p.stdout:
+            out_lines.append(line)
+            with RUNS_LOCK:
+                RUNS[run_id]['output'] = ''.join(out_lines[-80:])  # 只留尾部
+        p.wait()
+        with RUNS_LOCK:
+            RUNS[run_id]['output'] = ''.join(out_lines)
+            RUNS[run_id]['exit_code'] = p.returncode
+            RUNS[run_id]['status'] = 'done' if p.returncode == 0 else 'error'
+            RUNS[run_id]['finished'] = time.strftime('%H:%M:%S')
+            log('DONE run_id=%s cmd=%s exit=%d' % (run_id, actual_cmd, p.returncode))
+        record_task(actual_cmd, spk, system or '', p.returncode,
+                    'success' if p.returncode == 0 else 'failed', run_id, note or '')
+    except Exception as e:
+        with RUNS_LOCK:
+            RUNS[run_id]['output'] = '执行失败: %s' % e
+            RUNS[run_id]['status'] = 'error'
+            RUNS[run_id]['exit_code'] = 1
+            RUNS[run_id]['finished'] = time.strftime('%H:%M:%S')
+        record_task(actual_cmd, spk, system or '', 1, 'failed', run_id, note or '')
+
+
 def run_script(cmd, spk='', system='', note='', keep_data=True):
     """后台执行 install-remote-spk.sh <cmd> [spk] [system]。返回 run_id。
     参数位约定（见 install-remote-spk.sh 解析）:
@@ -517,67 +593,10 @@ def run_script(cmd, spk='', system='', note='', keep_data=True):
                         'note': note}
 
     def _work():
-        # repair = 清残留 + 重装（先调 clean-dsm-residue.sh，再 install）
-        if cmd == 'repair':
-            # 远程真清理：host/user 从已保存配置读（clean-dsm-residue.sh 支持 [主机] [SSH用户]）
-            cfg = read_config() or {}
-            r_host = cfg.get('host') or cfg.get('ip') or ''
-            r_user = cfg.get('user') or cfg.get('username') or cfg.get('account') or ''
-            # 2026-10-04：repair 的本意是清**程序残留**再重装，**默认保留数据**
-            #   （此前 clean-dsm-residue.sh 无条件删 @appdata/@apphome/@appshare，
-            #    2026-10-03 数据丢失事故即经此路径）。显式传 --keep-data 表明意图。
-            argv_clean = ['bash', os.path.join(BASE_DIR, 'clean-dsm-residue.sh'),
-                          'DeepSeekHarness-NAS', r_host, r_user, '--keep-data']
-            try:
-                p0 = subprocess.run(argv_clean, capture_output=True, text=True, timeout=180)
-                with RUNS_LOCK:
-                    RUNS[run_id]['output'] = '── 清残留 ──\n' + (p0.stdout or '') + (p0.stderr or '') + '\n── 重装 ──\n'
-            except Exception as e:
-                with RUNS_LOCK:
-                    RUNS[run_id]['output'] = '清残留失败: %s\n── 重装 ──\n' % e
-            # 继续走 install 流程
-            actual_cmd = 'install'
-        else:
-            actual_cmd = cmd
-        argv = ['bash', SCRIPT, actual_cmd]
-        if actual_cmd == 'install':
-            argv += [spk, '', '', '']
-            if system:
-                argv.append(system)
-        else:
-            argv += ['', '', '']
-            if system:
-                argv.append(system)
-            if actual_cmd == 'uninstall':
-                # 默认保留数据（与套件卸载向导一致）；keep_data=False 才连数据一起删
-                argv.append('--keep-data' if keep_data else '--delete-data')
-        try:
-            p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                 text=True, errors='replace')
-            out_lines = []
-            for line in p.stdout:
-                out_lines.append(line)
-                with RUNS_LOCK:
-                    RUNS[run_id]['output'] = ''.join(out_lines[-80:])  # 只留尾部
-            p.wait()
-            with RUNS_LOCK:
-                RUNS[run_id]['output'] = ''.join(out_lines)
-                RUNS[run_id]['exit_code'] = p.returncode
-                RUNS[run_id]['status'] = 'done' if p.returncode == 0 else 'error'
-                RUNS[run_id]['finished'] = time.strftime('%H:%M:%S')
-                log('DONE run_id=%s cmd=%s exit=%d' % (run_id, cmd, p.returncode))
-            # 安装历史落盘（成败都记；repair 已折算为 install，记录用实际执行的命令）
-            record_task(actual_cmd, spk, system or '', p.returncode,
-                        'success' if p.returncode == 0 else 'failed', run_id,
-                        note or '')
-        except Exception as e:
-            with RUNS_LOCK:
-                RUNS[run_id]['output'] = '执行失败: %s' % e
-                RUNS[run_id]['status'] = 'error'
-                RUNS[run_id]['exit_code'] = 1
-                RUNS[run_id]['finished'] = time.strftime('%H:%M:%S')
-            record_task(actual_cmd, spk, system or '', 1, 'failed', run_id,
-                        note or '')
+        # repair = 清残留 + 重装；其余命令原样执行
+        actual_cmd = _repair_clean_first(run_id) if cmd == 'repair' else cmd
+        argv = _build_argv(actual_cmd, spk, system, keep_data)
+        _stream_and_record(run_id, argv, actual_cmd, spk, system, note)
 
     threading.Thread(target=_work, daemon=True).start()
     return run_id
