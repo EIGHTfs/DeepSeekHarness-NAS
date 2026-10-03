@@ -287,7 +287,20 @@ echo "commit     : $COMMIT_HASH"
 #===============================================================================
 # 一、工作目录 + target 校验/复用
 #===============================================================================
-WORK="$WORK_ROOT/build-${SPK_VERSION}"
+# ── 构建目录：**单一复用**（用户口径 2026-10-03：「旧产物可以复用，别分 build 版本」）──
+#   旧写法 build-<SPK_VERSION>：每换一个版本就新建整树 → 实测堆出约 10G 重复
+#   （build-0.1.5 / build-0.2.0 / build-0.2.1 / npm-app-*），且每次都要全量 pnpm install
+#   （install 阶段光完整性校验就 539s）。
+#   现在：跨版本**复用同一目录**，source/node_modules 由 pnpm 增量 reconcile（秒~分钟级）；
+#   配合既有的 SKIP_BUILD=1（复用 target）与 BUILD_STAGE=build|prune（跳过 install）实现"改哪跑哪"。
+#   需要全新构建时显式 FRESH_BUILD=1：旧目录**带时间戳归档**（不直接删，可回溯）。
+WORK_NAME="${WORK_NAME:-build}"
+WORK="$WORK_ROOT/$WORK_NAME"
+if [ "${FRESH_BUILD:-0}" = "1" ] && [ -d "$WORK" ]; then
+  _work_bak="$WORK_ROOT/${WORK_NAME}.bak-$(date +%Y%m%d-%H%M%S)"
+  echo "▶ FRESH_BUILD=1：归档旧构建目录 → $_work_bak"
+  mv "$WORK" "$_work_bak"
+fi
 BUILD_SRC="$WORK/source"
 TARGET="$WORK/target"
 ASSEMBLE="$WORK/assemble"
