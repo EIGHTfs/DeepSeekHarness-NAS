@@ -179,7 +179,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
   - ⚠ 缓存 tar **必须包含 `.build-done`**：`build-common.sh` 的复用判据是 `[ -f "$WORK/.build-done" ] && [ -d "$TARGET" ] && [ -f "$TARGET/package.json" ]`，漏了它解包后判据不成立，会**静默完整重编**
 - **为何用 tar 单文件**：`upload-artifact@v4` 逐文件处理，745M+ 海量文件会爆 4GB 堆（实测 `FATAL ERROR: Ineffective mark-compacts near heap limit`）；先 `tar -czf` 再上传单文件即根治（`compression-level: 0`，因为已是 `.tar.gz`）
 - **产物开关**：仓库变量 `vars.BUILD_SPK` / `vars.BUILD_FPK`（`'false'` 跳过对应产物；缺省都构建）
-- **npm 链路自 2026-10-04 起留档、CI 不执行**：`build/FPK/build-npm-fpk-app.sh` 头部写明本地手动命令（`./build/build-npm-app.sh && ./build/FPK/pack-fpk.sh --npm`）与恢复自动执行的方法
+- **npm 链路自 2026-10-04 起留档、CI 不执行**：`build/build-npm-app.sh` 头部写明本地手动命令（`./build/build-npm-app.sh && ./build/FPK/pack-fpk.sh --npm`）与恢复自动执行的方法
 - **自动发布（与官方同 tag）**：tag 取官方最新 dsh tag（`scripts/fetch-dsh-latest.sh --print-tag`，形如 `dsh-v<版本>`）；同名 Release 已存在则**覆盖资产与正文**（滚动刷新）；统一发正式 Release，不标 prerelease
 - **不再"部分失败容忍"**（2026-10-04 用户口径）：构建失败即**不打包、不发布**（此前 `release` job 的 `if: always()` 已移除）——避免发出缺项 Release；Release 正文的状态徽标由「检查产物」步骤给出（源码链路两个产物在本 job 依赖成功时即 `success`）
 - **artifact**：`build-target`（**tar 单文件**，供 pack 复用）+ `build-target-debug-log` / `pack-and-release-debug-log`（完整 `pnpm-build.log`，因 GitHub 偶尔不归档该 job 日志）
