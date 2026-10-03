@@ -453,33 +453,45 @@ def list_packages():
     return pkgs
 
 
-def detect_system(host, port, username, password, timeout=20):
-    """SSH 探测远端系统类型。返回 (system, features)。system ∈ dsm|fnos|unknown|error。"""
-    if not (host and username and password):
-        return 'error', []
-    checks = ' ; '.join('test -e %s && echo YES:%s || echo NO:%s' % (p, p, p) for p in DSM_FEATURES + FNOS_FEATURES)
-    cmd = [
+def _build_detect_cmd(host, port, username, password, timeout):
+    """拼出「一条 SSH 命令里把所有特征路径都 test 一遍」的 argv。
+
+    一次连接就探完 DSM/FNOS 全部特征路径，避免逐个路径重连（探测慢且易触发失败计数）。
+    """
+    checks = ' ; '.join('test -e %s && echo YES:%s || echo NO:%s' % (p, p, p)
+                        for p in DSM_FEATURES + FNOS_FEATURES)
+    return [
         SSHPASS, '-p', password, 'ssh',
         '-o', 'PreferredAuthentications=password', '-o', 'PubkeyAuthentication=no',
         '-o', 'ConnectTimeout=%d' % timeout, '-o', 'StrictHostKeyChecking=no',
         '-p', str(port), '%s@%s' % (username, host),
         'echo __DSH_DETECT_START__; %s' % checks,
     ]
+
+
+def _classify_system(features):
+    """按命中的特征路径判定系统类型：命中 DSM 特征即 dsm，其次 fnos，都没有则 unknown。
+
+    注意顺序：先判 DSM —— 两种系统可能有同名路径，以先命中者为准（与历史行为一致）。
+    """
+    dsm_hits = [f for f in features if f in DSM_FEATURES]
+    if dsm_hits:
+        return 'dsm'
+    if [f for f in features if f in FNOS_FEATURES]:
+        return 'fnos'
+    return 'unknown'
+
+
+def detect_system(host, port, username, password, timeout=20):
+    """SSH 探测远端系统类型。返回 (system, features)。system ∈ dsm|fnos|unknown|error。"""
+    if not (host and username and password):
+        return 'error', []
+    cmd = _build_detect_cmd(host, port, username, password, timeout)
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 10)
         out = p.stdout or ''
-        features = []
-        for m in re.finditer(r'YES:(\S+)', out):
-            features.append(m.group(1))
-        dsm_hits = [f for f in features if f in DSM_FEATURES]
-        fnos_hits = [f for f in features if f in FNOS_FEATURES]
-        if dsm_hits:
-            system = 'dsm'
-        elif fnos_hits:
-            system = 'fnos'
-        else:
-            system = 'unknown'
-        return system, features
+        features = [m.group(1) for m in re.finditer(r'YES:(\S+)', out)]
+        return _classify_system(features), features
     except subprocess.TimeoutExpired:
         return 'error', ['SSH 超时']
     except FileNotFoundError:
