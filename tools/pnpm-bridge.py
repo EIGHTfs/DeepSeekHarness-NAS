@@ -64,22 +64,21 @@ def find_project_root(start):
         d = parent
 
 
-def merge(start, dry_run=False):
-    if yaml is None:
-        sys.stderr.write('[pnpm-bridge] PyYAML 不可用，跳过\n')
-        return 0
-    root = find_project_root(start)
-    if root is None:
-        return 0
+def _load_inputs(root):
+    """读取 package.json 的 pnpm 字段与 pnpm-workspace.yaml。返回 (pm, doc, ws_path)。
+
+    任何一步拿不到可用数据都返回 (None, {}, ws)，由调用方直接返回 0（保持原行为：
+    本工具是"能合就合"的尽力而为，不因缺文件而报错）。
+    """
     pj = os.path.join(root, 'package.json')
     ws = os.path.join(root, 'pnpm-workspace.yaml')
     try:
         data = json.load(open(pj, encoding='utf-8'))
     except Exception:
-        return 0
+        return None, {}, ws
     pm = data.get('pnpm')
     if not isinstance(pm, dict) or not pm:
-        return 0
+        return None, {}, ws
 
     doc = {}
     if os.path.isfile(ws):
@@ -90,29 +89,54 @@ def merge(start, dry_run=False):
             doc = {}
     if not isinstance(doc, dict):
         doc = {}
+    return pm, doc, ws
 
-    changed = False
-    # onlyBuiltDependencies: [pkg] -> allowBuilds: {pkg: true}
+
+def _merge_only_built(pm, doc):
+    """onlyBuiltDependencies: [pkg] → allowBuilds: {pkg: true}。返回是否有改动。"""
     obd = pm.get('onlyBuiltDependencies')
-    if isinstance(obd, list) and obd:
-        if 'allowBuilds' not in doc or not isinstance(doc.get('allowBuilds'), dict):
-            doc['allowBuilds'] = {}
-        for p in obd:
-            if p not in doc['allowBuilds']:
-                doc['allowBuilds'][p] = True
-                changed = True
+    if not (isinstance(obd, list) and obd):
+        return False
+    if 'allowBuilds' not in doc or not isinstance(doc.get('allowBuilds'), dict):
+        doc['allowBuilds'] = {}
+    changed = False
+    for p in obd:
+        if p not in doc['allowBuilds']:
+            doc['allowBuilds'][p] = True
+            changed = True
+    return changed
 
-    # 其余字段同名透传（若 yaml 缺失）
+
+def _merge_passthrough(pm, doc):
+    """其余 pnpm 字段同名透传（仅当 yaml 里缺失时）。返回是否有改动。"""
     passthrough = ('ignoredBuiltDependencies', 'neverBuiltDependencies',
                    'onlyBuiltDependenciesFile', 'allowNonAppliedPatches',
                    'peerDependencyRules', 'overrides', 'patchedDependencies',
                    'patchDir', 'nodeVersion', 'registry',
                    'strictDepBuilds', 'packageImportMethod')
+    changed = False
     for key in passthrough:
         if key in pm and key not in doc:
             doc[key] = pm[key]
             changed = True
+    return changed
 
+
+def merge(start, dry_run=False):
+    if yaml is None:
+        sys.stderr.write('[pnpm-bridge] PyYAML 不可用，跳过\n')
+        return 0
+    root = find_project_root(start)
+    if root is None:
+        return 0
+
+    pm, doc, ws = _load_inputs(root)
+    if pm is None:
+        return 0
+
+    changed = _merge_only_built(pm, doc)
+    if _merge_passthrough(pm, doc):
+        changed = True
     if not changed:
         return 0
 
