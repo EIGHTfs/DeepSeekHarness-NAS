@@ -237,11 +237,25 @@ check_pkg_size() {
   ok "体积门禁通过: ${sz}MB < ${limit_mb}MB"
 }
 
-# DSH 是否在跑（SPK/FPK 卸载前检查共用）
+# DSH 是否在跑（SPK/FPK 共用，**唯一实现**）
+#    = DSH 端口（必传：SPK 用 SPK_DSH_PORT，FPK 用 FPK_DSH_PORT）
+#    = 本应用 start.sh 的**绝对路径**（可选，用于进程兜底）
+#   ⚠ 禁止宽松的 ps -ef | grep start.sh：会命中命令行含 start.sh 的无关进程
+#     （含诊断命令自身），实测导致 status 恒判「运行中」→ 系统不再拉起服务
+#     （2026-09-13 教训，原 FPK 实现注释）。故只认：端口在听，或绝对路径精确匹配。
 running_dsh() {
-  local pid
-  pid="$(pgrep -f 'deepseek-harness|dsh-server|/bin/dsh' 2>/dev/null | head -1)"
-  [ -n "$pid" ]
+  local port="$1" startsh="$2"
+  if [ -n "$port" ]; then
+    if command -v netstat >/dev/null 2>&1; then
+      netstat -tln 2>/dev/null | grep -q ":${port} " && return 0
+    elif command -v ss >/dev/null 2>&1; then
+      ss -tln 2>/dev/null | grep -q ":${port} " && return 0
+    fi
+  fi
+  if [ -n "$startsh" ] && command -v pgrep >/dev/null 2>&1; then
+    pgrep -f "$(printf %s "$startsh" | sed "s/\./\\./g")" >/dev/null 2>&1 && return 0
+  fi
+  return 1
 }
 
 # 套件操作封装（DSM；fnOS 侧如需可自行包一层，不硬套）

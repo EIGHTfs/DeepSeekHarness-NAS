@@ -378,11 +378,6 @@ if [ -z "${PROXY_PORT}" ] || [ -z "${DSH_PORT}" ] || [ -z "${CONTAINER_PORT}" ];
   exit 1
 fi
 
-running_dsh() {
-  netstat -tln 2>/dev/null | grep -q ":${DSH_PORT} " && return 0
-  ps -ef 2>/dev/null | grep "start.sh" | grep -v grep | grep -q . && return 0
-  return 1
-}
 
 stop() {
   "${START_SCRIPT}" stop --proxy-port "$PROXY_PORT" --dsh-port "$DSH_PORT" --container-port "$CONTAINER_PORT" 2>/dev/null || true
@@ -403,14 +398,14 @@ start() {
     --container-port "$CONTAINER_PORT" \
     > "${PACKAGE_BASE}/var/logs/start.log" 2>&1 &
   sleep 5
-  if ! running_dsh; then
+  if ! running_dsh "$SPK_DSH_PORT" ; then
     return 1
   fi
   return 0
 }
 
 status() {
-  if running_dsh; then
+  if running_dsh "$SPK_DSH_PORT" ; then
     echo "running"
     exit 0
   else

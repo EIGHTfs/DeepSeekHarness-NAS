@@ -288,20 +288,6 @@ if [ -z "${PROXY_PORT:-}" ] || [ -z "${DSH_PORT:-}" ] || [ -z "${CONTAINER_PORT:
 fi
 
 # ── 运行检测：DSH 端口在听 或 start.sh 进程在（两者其一即视为运行）──
-running_dsh() {
-  # 判定顺序：① DSH 端口在听（最可靠）→ ② 本应用 start.sh 进程在（按绝对路径精确匹配）
-  # ⚠ 禁止宽松的 `ps -ef | grep start.sh`：会命中任何命令行里含 "start.sh" 的无关进程
-  #   （含诊断命令自身），实测导致 status 恒判「运行中」→ 系统不再拉起服务（2026-09-13）。
-  if command -v netstat >/dev/null 2>&1; then
-    netstat -tln 2>/dev/null | grep -q ":${DSH_PORT} " && return 0
-  elif command -v ss >/dev/null 2>&1; then
-    ss -tln 2>/dev/null | grep -q ":${DSH_PORT} " && return 0
-  fi
-  if command -v pgrep >/dev/null 2>&1; then
-    pgrep -f "${TRIM_APPDEST}/bin/start\.sh" >/dev/null 2>&1 && return 0
-  fi
-  return 1
-}
 
 start_process() {
   log_msg "Starting ${APPNAME}... (proxy=${PROXY_PORT} dsh=${DSH_PORT} container=${CONTAINER_PORT})"
@@ -319,7 +305,7 @@ start_process() {
   local rc=$?
   log_msg "start.sh rc=${rc}"
   sleep 3
-  if ! running_dsh; then
+  if ! running_dsh "$FPK_DSH_PORT" "${TRIM_APPDEST}/bin/start.sh" ; then
     log_msg "启动后运行检测未通过（端口 ${DSH_PORT} 未监听）"
     return 1
   fi
@@ -357,8 +343,7 @@ stop_process() {
 status_process() {
   export TRIM_APPDEST="${TRIM_APPDEST}" TRIM_PKGVAR="${TRIM_PKGVAR}"
   "${TRIM_APPDEST}/bin/start.sh" status > /dev/null 2>&1 && return 0
-  running_dsh
-}
+  running_dsh "$FPK_DSH_PORT" "${TRIM_APPDEST}/bin/start.sh" }
 
 case "$1" in
   start)   start_process && { echo "✓ 启动成功"; exit 0; } || { echo "✗ 启动失败（运行检测未通过）"; exit 1; } ;;
