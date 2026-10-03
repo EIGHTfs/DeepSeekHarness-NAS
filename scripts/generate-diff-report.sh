@@ -1,6 +1,11 @@
 #!/bin/bash
 # 差分生成脚本 - 对比正式版和测试版 FPK
 
+
+# ── 公共函数库（safe_rm_rf：强制 --one-file-system + 挂载点检测）──
+_DSH_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/lib/common.sh"
+[ -f "$_DSH_LIB" ] && . "$_DSH_LIB"
+
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,7 +22,7 @@ TEST_DIR="fpk-test"
 
 # 1. 解压两个 FPK
 echo "解压官方 FPK..."
-rm -rf "$OFFICIAL_DIR" "$TEST_DIR"
+safe_rm_rf "$OFFICIAL_DIR" "$TEST_DIR"
 mkdir -p "$OFFICIAL_DIR" "$TEST_DIR"
 
 gzip -d -c "$OFFICIAL_FPK" | tar -xf - -C "$OFFICIAL_DIR"
@@ -106,7 +111,7 @@ echo "=== 差分报告 ==="
 cat "$REPORT"
 
 # 5. 清理
-rm -rf "$OFFICIAL_DIR" "$TEST_DIR"
+safe_rm_rf "$OFFICIAL_DIR" "$TEST_DIR"
 
 echo ""
 echo "报告已保存到: $REPORT"
