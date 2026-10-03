@@ -4,27 +4,38 @@
  *   （母版第 12 行明写「全部逻辑内嵌于本文件，无需外部 dsh-repair」；
  *     内嵌段是母版里一段 heredoc 包裹的 node 代码，输入走 DSH_REPAIR_* 环境变量）。
  * 本文件**不被任何构建/运行时调用**（全仓库引用仅 README 的目录树），属于**带外副本**。
+ * 原先有两份带外副本（dsh-repair.cjs 与 dsh-repair.js），已**合并为本文件一份**：
+ *   保留 .js 的三通道自动定位（参数 / 脚本目录 / 进程扫描），
+ *   并移植了 .cjs 的环境变量接口（DSH_REPAIR_*，与内嵌段同构）与 UID 隔离补丁；
+ *   旧 dsh-repair.cjs 已删除。合并由用户指示（反正两文件都不被引用）。
  *
  * 因此：
  *   · 改修复行为 → 改 build/start.sh.example 的内嵌段（权威）；
  *   · 改本文件 → 不会影响产物，只影响手工执行本文件的人；
  *   · 两者若不一致，**以母版内嵌段为准**。
- * 另一份 scripts/dsh-repair.js（534 行）是更早的独立工具世代，同样不被调用。
- * 是否需要保留这两份副本，待用户决定（本注释只固化权威关系，不删代码）。
+ *   · 手工执行前建议先 --dry-run（只打印将停的 PID，不真停；见 DRY_RUN）。
  *────────────────────────────────────────────────────────────────────────── */
 
-/* 独立运行版 dsh-repair（从 start.sh 内嵌代码抽取，含 UID 隔离补丁）。
- * 用法（三选一）：
- *   node dsh-repair.cjs --dsh <DSH目录> --dsh-home <数据区> --home <HOME> [--dsh-port 30801 --proxy-port 30800 --container-port 30802]
- *   DSH_REPAIR_DIR=... DSH_REPAIR_HOME=... node dsh-repair.cjs
- *   node dsh-repair.cjs            # 自动扫描运行中 DSH 进程定位（脚本目录/同级优先）
- * start.sh 内嵌的是同一份逻辑（走环境变量），本文件为独立维护版。
+/**
+ * DSH 全自动修复脚本
+ * 功能：扫描 DSH 目录 → 权限修复 → 启动 DSH（runner 模式）→ 反代 + 容器页面
+ * 定位通道（按优先级）：
+ *   1. --dsh <path> 参数
+ *   2. 脚本所在目录搜索（默认，脚本放在 DSH 同级）
+ *   3. 扫描运行中 DSH 进程（/proc/<pid>/cwd + environ）
+ * 端口：DSH=30801, PROXY=30800, CONTAINER=30802（可 --dsh-port 覆盖）
  */
+'use strict';
+
 // ---- 等待时长（抽成命名常量：审计 magic-number 命中，且数值含义本就不直观）----
 const WAIT_PORT_RELEASE_MS = 2000; // 发完 SIGKILL 后等旧进程真正退出、端口释放
 const WAIT_DSH_START_MS = 3000;    // 启动 DSH 后等它监听就绪，再挂反代与容器页
 
-// ---- standalone CLI shim：把 --xxx 参数映射为 DSH_REPAIR_* 环境变量 ----
+// ---- standalone CLI shim（自 dsh-repair.cjs 移植）----
+// 把 --xxx 参数映射为 DSH_REPAIR_* 环境变量，使本文件与 build/start.sh.example 内嵌的
+// REPAIR_CODE **同构**（内嵌段就是靠这些环境变量驱动的）。已存在的 DSH_REPAIR_* 不覆盖，
+// 因此"环境变量驱动"优先级高于命令行参数 —— 与 .cjs 原有语义一致。
+// ⚠ 必须放在读取配置之前执行。
 (function shim() {
   const argv = process.argv;
   const get = (name) => { const i = argv.indexOf(name); return i !== -1 && argv[i + 1] ? argv[i + 1] : undefined; };
@@ -49,23 +60,29 @@ const WAIT_DSH_START_MS = 3000;    // 启动 DSH 后等它监听就绪，再挂�
   if (get('--tsx') !== undefined) process.env.DSH_REPAIR_TSX = '1';
 })();
 
-'use strict';
 const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const http = require('http');
 const net = require('net');
+const path = require('path');
 
-const dshDir = process.env.DSH_REPAIR_DIR;
-const dshHome = process.env.DSH_REPAIR_HOME;
-const home = process.env.DSH_REPAIR_HOME_PARENT;
-const nodeBin = process.env.DSH_REPAIR_NODE;
-const entry = process.env.DSH_REPAIR_ENTRY;
-const tsx = process.env.DSH_REPAIR_TSX === '1';
-const dshPort = parseInt(process.env.DSH_REPAIR_DSH_PORT || '30801', 10);
-const proxyPort = parseInt(process.env.DSH_REPAIR_PROXY_PORT || '30800', 10);
-const containerPort = parseInt(process.env.DSH_REPAIR_CONTAINER_PORT || '30802', 10);
-const PID_FILE = process.env.DSH_REPAIR_PID_FILE;
+// ========== 配置 ==========
+const DEFAULT_DSH_PORT = 30801;
+const DEFAULT_PROXY_PORT = 30800;
+const DEFAULT_CONTAINER_PORT = 30802;
+// --dry-run / DSH_REPAIR_DRY_RUN=1：破坏性动作（停旧实例、写 PID 文件、改权限、启动）
+// 只打印不执行。⚠ 加这个开关的直接原因：无参数运行时 findDshDir 会自动定位到**正在服务**的
+// DSH，随后 killOldProcesses() 会把它停掉 —— 实测把本会话的宿主进程杀过一次。
+const DRY_RUN = process.argv.includes('--dry-run') || process.env.DSH_REPAIR_DRY_RUN === '1';
+// PID 文件名带 uid：同一台机器上多用户各跑一次时，共用 /tmp/dsh-repair.pid 会互相覆盖、
+// 进而被 killOldProcesses() 照着杀掉对方实例。dsh-repair.cjs 早有这个补丁，本文件此前没有。
+const _uid = typeof process.getuid === 'function' && process.getuid() !== undefined ? process.getuid() : 'x';
+const PID_FILE = process.env.DSH_REPAIR_PID_FILE || `/tmp/dsh-repair-${_uid}.pid`;
+const RUNNER_LOG = '/tmp/dsh-repair-runner.log';
+const CONTAINER_LOG = '/tmp/dsh-repair-container.log';
 
+// sticky /tmp + fs.protected_regular=1：root 也不能 truncate 他人创建的普通文件。
+// 失败则 unlink 再写（sticky 目录里所有者/root 可删）。
 function writeTmpFile(file, content) {
   try {
     fs.writeFileSync(file, content, 'utf-8');
@@ -80,21 +97,211 @@ function writeTmpFile(file, content) {
   fs.writeFileSync(file, content, 'utf-8');
 }
 
-// 权限修复（尽力而为；非属主时 EPERM 仅警告）
-function secureDshTree(dir) {
-  console.log(`[√] 收紧权限: ${dir}`);
+// ========== 1. 定位 DSH 目录 ==========
+function findDshDir() {
+  // ⓪ 环境变量（start.sh 内嵌版走这条；shim 也把 --dsh 映射到这里）
+  if (process.env.DSH_REPAIR_DIR) {
+    const d = path.resolve(process.env.DSH_REPAIR_DIR);
+    if (isDshDir(d)) return d;
+    console.error(`[!] DSH_REPAIR_DIR 指定的路径不是 DSH 目录: ${d}`);
+    process.exit(1);
+  }
+  // ① 参数
+  const argIdx = process.argv.indexOf('--dsh');
+  if (argIdx !== -1 && process.argv[argIdx + 1]) {
+    const d = path.resolve(process.argv[argIdx + 1]);
+    if (isDshDir(d)) return d;
+    console.error(`[!] 参数 --dsh 指定的路径不是 DSH 目录: ${d}`);
+    process.exit(1);
+  }
+
+  // ② 脚本所在目录 / 同级子目录
+  const scriptDir = __dirname;
+  if (isDshDir(scriptDir)) return scriptDir;
   try {
-    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    fs.chmodSync(dir, 0o700);
-    const walk = (d) => {
-      let entries;
-      try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch {
-        // 有意忽略：目录不可读（权限不足/竞态删除）就跳过该分支；权限收紧本就是尽力而为
-        return;
+    for (const ent of fs.readdirSync(scriptDir, { withFileTypes: true })) {
+      if (!ent.isDirectory() || ent.name.startsWith('.')) continue;
+      const p = path.join(scriptDir, ent.name);
+      if (isDshDir(p)) return p;
+    }
+  } catch {
+    // 有意忽略：这是"脚本所在目录及其同级子目录"的启发式搜索，目录不可读就表示此处没有候选，
+    // 继续走下面的进程扫描即可，不是错误
+  }
+
+  // ③ 扫描运行中 DSH 进程
+  const procDir = '/proc';
+  try {
+    for (const pid of fs.readdirSync(procDir)) {
+      if (!/^\d+$/.test(pid)) continue;
+      try {
+        const cmdline = fs.readFileSync(path.join(procDir, pid, 'cmdline'), 'utf-8').replace(/\0/g, ' ');
+        if (!cmdline.includes('bin.ts web') && !cmdline.includes('bin.js web') && !cmdline.includes('dsh web')) continue;
+        if (cmdline.includes('-port') || cmdline.includes('--port')) {
+          const cwd = fs.readlinkSync(path.join(procDir, pid, 'cwd'));
+          if (isDshDir(cwd)) return cwd;
+        }
+      } catch {
+        // 有意忽略：读 /proc/<pid>/{cmdline,cwd} 时该进程可能刚退出或属其他用户（EACCES），
+        // 单个进程失败不影响继续扫描其余进程
       }
+    }
+  } catch {
+    // 有意忽略：/proc 不可读（非 Linux 或受限容器）时整段进程扫描跳过；
+    // 此时仍可用 --dsh 参数或同级目录定位，属于"三条定位通道之一不可用"，非致命
+  }
+
+  console.error('[!] 未找到 DSH 目录。尝试：\n' +
+    '  1. 将脚本放到 DSH 目录同级\n' +
+    '  2. node dsh-repair.js --dsh <DSH目录>\n' +
+    '  3. 先启动 DSH 再运行脚本（自动扫进程）');
+  process.exit(1);
+}
+
+function isDshDir(dir) {
+  if (!dir) return false;
+  try {
+    return fs.existsSync(path.join(dir, 'apps/cli/src/bin.ts')) ||
+           fs.existsSync(path.join(dir, 'lib/bin.js')) ||
+           fs.existsSync(path.join(dir, 'node_modules/@deepseek-ai/dsh/lib/bin.js')) ||
+           fs.existsSync(path.join(dir, 'apps/cli/package.json'));
+  } catch { return false; }
+}
+
+// ========== 2. 检测 DSH 入口和 node ==========
+function detectEntry(dshDir) {
+  // ⓪ 环境变量优先（start.sh 内嵌版走这条；shim 也把 --entry 映射到这里）
+  if (process.env.DSH_REPAIR_ENTRY) {
+    const rel = process.env.DSH_REPAIR_ENTRY;
+    if (fs.existsSync(path.join(dshDir, rel))) {
+      return { entry: rel, tsx: rel.endsWith('.ts'), exists: rel };
+    }
+    throw new Error(`DSH_REPAIR_ENTRY 指定的入口不存在: ${rel}`);
+  }
+  const checks = [
+    { entry: 'apps/cli/src/bin.ts',          tsx: true,  exists: 'apps/cli/src/bin.ts' },
+    { entry: 'node_modules/@deepseek-ai/dsh/lib/bin.js', tsx: false, exists: 'node_modules/@deepseek-ai/dsh/lib/bin.js' },
+    { entry: 'lib/bin.js',                    tsx: false, exists: 'lib/bin.js' },
+    { entry: 'apps/cli/lib/bin.js',           tsx: false, exists: 'apps/cli/lib/bin.js' },
+  ];
+  for (const c of checks) {
+    if (fs.existsSync(path.join(dshDir, c.exists))) return c;
+  }
+  throw new Error('未找到 DSH 启动入口（apps/cli/src/bin.ts / lib/bin.js）');
+}
+
+function findNode(dshDir) {
+  // ⓪ 环境变量优先（start.sh 内嵌版走这条；shim 也把 --node 映射到这里）
+  if (process.env.DSH_REPAIR_NODE) {
+    const n = process.env.DSH_REPAIR_NODE;
+    if (fs.existsSync(n)) return n;
+    throw new Error(`DSH_REPAIR_NODE 指定的 node 不存在: ${n}`);
+  }
+  // 1) 本实例自带 node（相对路径，与包名无关）
+  // 2) 系统标准路径（/usr/local/bin /usr/bin）
+  // 3) PATH 兜底
+  const cands = [
+    path.join(dshDir, 'bin', 'node'),
+    '/usr/local/bin/node',
+    '/usr/bin/node',
+  ];
+  for (const c of cands) if (fs.existsSync(c)) return c;
+  try {
+    const out = execSync('command -v node 2>/dev/null || which node 2>/dev/null', { encoding: 'utf8' }).trim();
+    if (out) return out;
+  } catch {
+    // 有意忽略：这是"在 PATH 里找 node"的兜底手段，command/which 都可能不存在或返回非零；
+    // 找不到就让下面的 throw 给出统一报错，不在此处单独报错以免重复
+  }
+  throw new Error('未找到 node 可执行文件');
+}
+
+// ========== 3. 探测 DSH_HOME 和数据区 ==========
+function resolveDshHome(dshDir) {
+  // ⓪ 环境变量优先（start.sh 内嵌版走这条；shim 也把 --dsh-home/--home 映射到这里）：
+  //    DSH_REPAIR_HOME = .dsh 目录；DSH_REPAIR_HOME_PARENT = 其上级（HOME）；后者未设时取上级目录。
+  if (process.env.DSH_REPAIR_HOME) {
+    const dshHome = path.resolve(process.env.DSH_REPAIR_HOME);
+    const home = process.env.DSH_REPAIR_HOME_PARENT
+      ? path.resolve(process.env.DSH_REPAIR_HOME_PARENT)
+      : path.dirname(dshHome);
+    fs.mkdirSync(dshHome, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+    console.log(`[√] 环境变量指定 DSH_HOME=${dshHome}`);
+    return { dshHome, home };
+  }
+  // 最高优先级：--dsh-home <路径> 显式指定（home 自动取其上级）
+  const dhIdx = process.argv.indexOf('--dsh-home');
+  if (dhIdx !== -1 && process.argv[dhIdx + 1]) {
+    const dshHome = path.resolve(process.argv[dhIdx + 1]);
+    const hmIdx = process.argv.indexOf('--home');
+    const home = hmIdx !== -1 && process.argv[hmIdx + 1]
+      ? path.resolve(process.argv[hmIdx + 1])
+      : path.dirname(dshHome);
+    fs.mkdirSync(dshHome, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+    console.log(`[√] 显式指定 DSH_HOME=${dshHome}`);
+    return { dshHome, home };
+  }
+  // 优先：从进程 environ 读取（cwd 必须匹配 dshDir，防止扫到其他实例）
+  try {
+    const procDir = '/proc';
+    for (const pid of fs.readdirSync(procDir)) {
+      if (!/^\d+$/.test(pid)) continue;
+      try {
+        const cmdline = fs.readFileSync(path.join(procDir, pid, 'cmdline'), 'utf-8').replace(/\0/g, ' ');
+        if (!cmdline.includes('bin.ts web') && !cmdline.includes('bin.js web')) continue;
+        // 只匹配 cwd 与 dshDir 一致的进程（避免误扫其他实例）
+        const cwd = fs.readlinkSync(path.join(procDir, pid, 'cwd'));
+        if (cwd !== dshDir) continue;
+        const environ = fs.readFileSync(path.join(procDir, pid, 'environ'), 'utf-8').split('\0');
+        for (const env of environ) {
+          if (env.startsWith('DSH_HOME=')) {
+            const dshHome = env.slice('DSH_HOME='.length);
+            if (fs.existsSync(dshHome)) {
+              const homeEnv = environ.find(e => e.startsWith('HOME='));
+              const home = homeEnv ? homeEnv.slice('HOME='.length) : path.dirname(dshHome);
+              console.log(`[√] 从进程 ${pid} 探测到 DSH_HOME=${dshHome}`);
+              return { dshHome, home };
+            }
+          }
+        }
+      } catch {
+        // 有意忽略：读 /proc/<pid>/{cmdline,environ} 时该进程可能刚退出或属其他用户（EACCES）；
+        // 单个进程读不到就换下一个，不影响整体探测
+      }
+    }
+  } catch {
+    // 有意忽略：/proc 不可读（非 Linux 或受限容器）时整段"从进程探测"跳过，
+    // 下面还有按标准路径推断的兜底分支，故不视为错误
+  }
+
+  // 默认：按标准路径推断
+  const runDotDsh = path.join(dshDir, '.dsh-home', 'run', '.dsh');
+  const runDir = path.join(dshDir, '.dsh-home', 'run');
+  if (fs.existsSync(runDotDsh)) return { dshHome: runDotDsh, home: runDir };
+  const dshDirDotDsh = path.join(dshDir, '.dsh');
+  if (fs.existsSync(dshDirDotDsh) && fs.statSync(dshDirDotDsh).isDirectory()) {
+    return { dshHome: dshDirDotDsh, home: dshDir };
+  }
+  // 不存在则创建 .dsh-home/run/.dsh
+  fs.mkdirSync(runDotDsh, { recursive: true, mode: 0o700 });
+  fs.mkdirSync(runDir, { recursive: true, mode: 0o700 });
+  return { dshHome: runDotDsh, home: runDir };
+}
+
+// ========== 4. 权限修复（secureDshTree） ==========
+function secureDshTree(dshHome) {
+  console.log(`[√] 收紧权限: ${dshHome}`);
+  try {
+    fs.mkdirSync(dshHome, { recursive: true, mode: 0o700 });
+    fs.chmodSync(dshHome, 0o700);
+    const walk = (dir) => {
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
       for (const ent of entries) {
         if (ent.name === '.' || ent.name === '..') continue;
-        const p = require('path').join(d, ent.name);
+        const p = path.join(dir, ent.name);
         try {
           if (ent.isSymbolicLink()) continue;
           if (ent.isDirectory()) { fs.chmodSync(p, 0o700); walk(p); }
@@ -105,10 +312,21 @@ function secureDshTree(dir) {
         }
       }
     };
-    walk(dir);
+    walk(dshHome);
   } catch (error) {
     console.error(`[!] 权限修复警告: ${error.message}`);
   }
+}
+
+// ========== 5. 端口选择 ==========
+function parsePortArg(name, defaultVal) {
+  const idx = process.argv.indexOf(name);
+  if (idx !== -1 && process.argv[idx + 1]) {
+    const p = parseInt(process.argv[idx + 1], 10);
+    if (p > 0 && p < 65536) return p;
+    console.error(`[!] 无效端口: ${process.argv[idx + 1]}`);
+  }
+  return defaultVal;
 }
 
 async function isPortInUse(port) {
@@ -119,44 +337,80 @@ async function isPortInUse(port) {
   });
 }
 
-function killOldProcesses() {
+// ========== 6. 停止旧进程 ==========
+function killOldProcesses(dshDir) {
+  // 读取 PID 文件（旧 runner）
   try {
     const oldPid = fs.readFileSync(PID_FILE, 'utf-8').trim();
-    if (oldPid && String(oldPid) !== String(process.pid)) {
-      console.log(`[√] 停止旧实例 (PID ${oldPid})`);
-      try { process.kill(parseInt(oldPid, 10), 'SIGTERM'); } catch {
-        // 有意忽略：目标进程可能已自行退出（ESRCH）；下面还会补一次 SIGKILL
-      }
-      try { process.kill(parseInt(oldPid, 10), 'SIGKILL'); } catch {
-        // 有意忽略：同上，进程已不在
+    if (oldPid) {
+      if (DRY_RUN) {
+        console.log(`[dry-run] 将停止旧实例 (PID ${oldPid})`);
+      } else {
+        console.log(`[√] 停止旧实例 (PID ${oldPid})`);
+        try { process.kill(parseInt(oldPid, 10), 'SIGTERM'); } catch {
+          // 有意忽略：目标进程可能已自行退出（ESRCH）；下面还会补一次 SIGKILL
+        }
+        try { process.kill(parseInt(oldPid, 10), 'SIGKILL'); } catch {
+          // 有意忽略：同上，进程已不在
+        }
       }
     }
   } catch {
     // 有意忽略：PID 文件不存在/不可读（首次运行或已被清理），此时无旧实例可停
   }
+  // 杀掉 cwd 匹配 dshDir 的 DSH web 进程（防孤儿占端口）
+  if (dshDir) {
+    try {
+      const out = execSync(
+        "ps -eo pid,args | grep -E 'bin\\.ts web|bin\\.js web' | grep -v grep | awk '{print $1}'",
+        { encoding: 'utf8' }
+      );
+      for (const pid of out.trim().split('\n').filter(Boolean)) {
+        try {
+          const cwd = fs.readlinkSync(path.join('/proc', pid, 'cwd'));
+          if (cwd === dshDir) {
+            if (DRY_RUN) {
+              console.log(`[dry-run] 将停止 DSH 子进程 (PID ${pid})`);
+            } else {
+              console.log(`[√] 停止 DSH 子进程 (PID ${pid})`);
+              process.kill(parseInt(pid, 10), 'SIGKILL');
+            }
+          }
+        } catch {
+          // 有意忽略：读 /proc/<pid>/cwd 时该进程可能已退出（竞态），跳过即可
+        }
+      }
+    } catch {
+      // 有意忽略：ps/execSync 本身可能失败（容器内无 ps 等）；此处是"防孤儿占端口"的补充手段，
+      // 前面基于 PID 文件的停法已经执行过，故失败不影响后续启动
+    }
+  }
+  // 额外清理：匹配脚本特征的 node 进程（排除自身与 shell）
+  const selfPid = String(process.pid);
   try {
     const out = execSync(
-      "ps -eo pid,args | grep -E 'bin\\.ts web|bin\\.js web' | grep -v grep | awk '{print $1}'",
+      "ps -eo pid,args | grep 'dsh-repair' | grep -v grep | awk '{print $1, $2}' | grep 'node' | awk '{print $1}'",
       { encoding: 'utf8' }
     );
     for (const pid of out.trim().split('\n').filter(Boolean)) {
-      try {
-        const cwd = fs.readlinkSync(require('path').join('/proc', pid, 'cwd'));
-        if (cwd === dshDir) {
-          console.log(`[√] 停止 DSH 子进程 (PID ${pid})`);
-          process.kill(parseInt(pid, 10), 'SIGKILL');
+      if (pid === selfPid) continue;
+      if (DRY_RUN) {
+        console.log(`[dry-run] 将停止 dsh-repair 进程 (PID ${pid})`);
+      } else {
+        try { process.kill(parseInt(pid, 10), 'SIGTERM'); } catch {
+          // 有意忽略：该进程可能已退出（ESRCH），继续处理列表里的下一个
         }
-      } catch {
-        // 有意忽略：读 /proc/<pid>/cwd 时该进程可能已退出（竞态），跳过即可
       }
     }
   } catch {
-    // 有意忽略：ps/execSync 本身可能失败（容器内无 ps 等）；此处是"尽力多停几个旧实例"的补充手段，
-    // 前面基于 PID 文件的停法已经执行过，故失败不影响后续启动
+    // 有意忽略：ps/execSync 可能失败；本段是"额外清理匹配 dsh-repair 特征的 node 进程"，
+    // 属尽力而为的补充手段（前面已按 PID 文件与 cwd 匹配停过），失败不影响启动
   }
+  // 等待端口释放
   return new Promise(resolve => setTimeout(resolve, WAIT_PORT_RELEASE_MS));
 }
 
+// ========== 7. Polyfill 脚本 ==========
 function buildPolyfillScript() {
   return `<script>
 (function() {
@@ -197,7 +451,8 @@ function buildPolyfillScript() {
 </script>`;
 }
 
-function buildContainerHtml() {
+// ========== 8. 容器页面 HTML ==========
+function buildContainerHtml(proxyPort) {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -220,25 +475,57 @@ document.write('<iframe src="http://' + host + ':' + ${proxyPort} + '/" id="dshF
 </html>`;
 }
 
+// ========== 9. 主流程 ==========
 async function main() {
   console.log('═══════════════════════════════════════');
-  console.log('  DSH 修复/守护（内嵌于 start.sh）');
+  console.log('  DSH 全自动修复脚本');
   console.log('═══════════════════════════════════════');
-  console.log(`[√] DSH 目录: ${dshDir}`);
-  console.log(`[√] 启动入口: ${entry} (tsx=${tsx})`);
-  console.log(`[√] Node: ${nodeBin}`);
-  console.log(`[√] DSH_HOME: ${dshHome}`);
 
-  await killOldProcesses();
+  // 定位 DSH 目录（先定位，killOldProcesses 需要它来清理孤儿 DSH 进程）
+  const dshDir = findDshDir();
+  console.log(`[√] DSH 目录: ${dshDir}`);
+
+  // 先停止旧实例（必须在自己写 PID 文件之前，否则会 kill 自己）
+  await killOldProcesses(dshDir);
+  // 端口：环境变量优先（与 .cjs / 内嵌段同构），命令行参数兜底。
+  // ⚠ 必须在 DRY_RUN 提前退出【之前】解析：退出分支要打印端口，且它只依赖 env 与 parsePortArg。
+  const dshPort = parseInt(process.env.DSH_REPAIR_DSH_PORT || '', 10) || parsePortArg('--dsh-port', DEFAULT_DSH_PORT);
+  const proxyPort = parseInt(process.env.DSH_REPAIR_PROXY_PORT || '', 10) || parsePortArg('--proxy-port', DEFAULT_PROXY_PORT);
+  const containerPort = parseInt(process.env.DSH_REPAIR_CONTAINER_PORT || '', 10) || parsePortArg('--container-port', DEFAULT_CONTAINER_PORT);
+  if (DRY_RUN) {
+    // 到此为止：killOldProcesses 已在 dry-run 下只打印将停的 PID，未真停；
+    // 后面的写 PID 文件 / 改权限 / 启动 DSH / 挂反代与容器一律不做。
+    console.log('═══════════════════════════════════════');
+    console.log('  [dry-run] 到此为止');
+    console.log(`  目标 DSH 目录: ${dshDir}`);
+    console.log(`  端口: DSH=${dshPort} 反代=${proxyPort} 容器=${containerPort}`);
+    console.log('  未做：写 PID 文件、收紧权限、启动 DSH、挂反代与容器页面');
+    console.log('═══════════════════════════════════════');
+    return;
+  }
+  // 再写入本实例 PID
   writeTmpFile(PID_FILE, String(process.pid));
 
-  try { fs.mkdirSync(dshHome, { recursive: true, mode: 0o700 }); } catch (e) { console.error(`[!] mkdir DSH_HOME: ${e.message}`); }
-  try { fs.mkdirSync(home, { recursive: true, mode: 0o700 }); } catch (e) {
-    // 有意不记日志：HOME 只是给子进程用的环境值，创建失败不致命（子进程各自按需再建）；
-    // 上一行 DSH_HOME 才是关键路径，故那条会报错
-  }
+  // 检测入口
+  const entryInfo = detectEntry(dshDir);
+  console.log(`[√] 启动入口: ${entryInfo.entry} (tsx=${entryInfo.tsx})`);
+
+  // 找 node（实例自带优先，相对 dshDir）
+  const nodeBin = findNode(dshDir);
+  console.log(`[√] Node: ${nodeBin}`);
+
+  // 探测 DSH_HOME
+  const { dshHome, home } = resolveDshHome(dshDir);
+  console.log(`[√] DSH_HOME: ${dshHome}`);
+  console.log(`[√] HOME: ${home}`);
+
+  // 权限修复
   secureDshTree(dshHome);
 
+  // 端口
+  // （端口已在上方 DRY_RUN 分支之前解析）
+
+  // 等端口释放
   let waitCount = 0;
   while (waitCount < 10) {
     const d = await isPortInUse(dshPort);
@@ -250,10 +537,11 @@ async function main() {
   }
   console.log(`[√] 端口: DSH=${dshPort}, 反代=${proxyPort}, 容器=${containerPort}`);
 
+  // ========== 启动 DSH ==========
   console.log(`[>] 启动 DSH (127.0.0.1:${dshPort})`);
-  const dshArgs = tsx
-    ? ['--import', 'tsx/esm', entry, 'web', '--host', '127.0.0.1', '--port', String(dshPort), '--no-open']
-    : [entry, 'web', '--host', '127.0.0.1', '--port', String(dshPort), '--no-open'];
+  const dshArgs = entryInfo.tsx
+    ? ['--import', 'tsx/esm', entryInfo.entry, 'web', '--host', '127.0.0.1', '--port', String(dshPort), '--no-open']
+    : [entryInfo.entry, 'web', '--host', '127.0.0.1', '--port', String(dshPort), '--no-open'];
 
   const dshProcess = spawn(nodeBin, dshArgs, {
     cwd: dshDir,
@@ -274,12 +562,15 @@ async function main() {
     setTimeout(() => process.exit(code || 0), 1000);
   });
 
+  // 等 DSH 启动
   await new Promise(r => setTimeout(r, WAIT_DSH_START_MS));
 
+  // ========== 启动反代 ==========
   const polyfill = buildPolyfillScript();
   const proxyServer = http.createServer((clientReq, clientRes) => {
     // 不设置 x-forwarded-for / x-real-ip / forwarded：
-    // 插件的重启接口要求 "loopback 直连且无代理转发痕迹"（trustedRestartRequest）
+    // dsh-market 等插件的重启接口要求"loopback 直连且无代理转发痕迹"
+    // （trustedRestartRequest），带这些头会被判定为代理转发而拒绝。
     const headers = {
       ...clientReq.headers,
       'x-forwarded-proto': 'http',
@@ -348,7 +639,8 @@ async function main() {
     console.log(`[√] 反代: http://0.0.0.0:${proxyPort} -> http://127.0.0.1:${dshPort}`);
   });
 
-  const containerHtml = buildContainerHtml();
+  // ========== 启动容器页面 ==========
+  const containerHtml = buildContainerHtml(proxyPort);
   const containerServer = http.createServer((req, res) => {
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
@@ -361,12 +653,14 @@ async function main() {
     console.log(`[√] 容器: http://0.0.0.0:${containerPort}/`);
   });
 
+  // 等 DSH 输出 token（最多 8 秒）
   let tokenWait = 0;
-  while (!dshToken && tokenWait < 40) {
+  while (!dshToken && tokenWait < 16) {
     await new Promise(r => setTimeout(r, 500));
     tokenWait++;
   }
 
+  // ========== 输出访问信息 ==========
   console.log('═══════════════════════════════════════');
   console.log('  DSH 修复完成');
   console.log('═══════════════════════════════════════');
@@ -379,9 +673,10 @@ async function main() {
   console.log(`  容器页面: http://<NAS-IP>:${containerPort}/`);
   console.log('═══════════════════════════════════════');
 
+  // ========== 优雅退出 ==========
   function shutdown(signal) {
     console.log(`\n[!] 收到 ${signal}，正在停止...`);
-    // 以下四步都是"尽力而为的收尾"：任一失败都必须继续走完并 exit(0)，否则会卡在关停流程里。
+    // 以下四步都是尽力而为的收尾：任一失败都必须继续走完并 exit(0)，否则会卡在关停流程里。
     try { fs.unlinkSync(PID_FILE); } catch {
       // 有意忽略：PID 文件可能已被删除或不可写
     }
