@@ -30,43 +30,70 @@ TARGETS = [".github/workflows/build.yml"] + [
 KEYVAL = re.compile(r"^(\s*)(?:-\s+)?([A-Za-z_][\w.\-]*):\s+(\S.*)$")
 
 
-def check(path):
+def _check_scalars(path, text):
+    """① 缩进含 Tab；② 未加引号的值里含 ': '。
+
+    为什么是②：`run: echo "…命中: ${{ … }}"` 这种**未加引号的标量里含 ": "**，
+    YAML 会把 `: ` 当映射分隔符 → GitHub 报 Mapping values are not allowed，
+    而且**错误发生在 action 加载阶段**，CI 里排在后面的守卫根本跑不到，必须在推送前本地拦下。
+    块标量（`|` / `>`）的行本身不带值，故不会进入下面的判断。
+    """
     out = []
-    full = os.path.join(ROOT, path)
-    if not os.path.isfile(full):
-        return out
-    text = open(full, encoding="utf-8", errors="replace").read()
-    seen = {}
     for i, line in enumerate(text.split("\n"), 1):
         if "\t" in line[:len(line) - len(line.lstrip())]:
             out.append("%s:%d 缩进含 Tab（YAML 禁止）" % (path, i))
         m = KEYVAL.match(line)
         if not m:
             continue
-        indent, key, val = m.group(1), m.group(2), m.group(3)
-        # 1) 未加引号的值里含 ": "（块标量 | 或 > 已排除，因为那种行不带值）
-        if not (val.startswith('"') or val.startswith("'") or val.startswith("${{") and val.endswith("}}")):
+        _, _, val = m.group(1), m.group(2), m.group(3)
+        # 已加引号，或整个值就是一个 ${{ }} 表达式时，允许其中出现 ": "
+        if not (val.startswith('"') or val.startswith("'") or (val.startswith("${{") and val.endswith("}}"))):
             if ": " in val:
                 out.append("%s:%d 未加引号的值里含 ': '（YAML 会当映射分隔符）→ %s"
                            % (path, i, line.strip()[:70]))
-    if path.endswith("build.yml") or path.endswith("workflows/build.yml"):
-        # 4) needs.* 引用的 job 必须真实存在（2026-10-04 实测踩坑：job 重构后
-        #    needs.build-spk.result 求值为空 → 状态落到 fail → Release 正文写成"❌ 缺失"）
-        import re as _re
-        _jobs = set(_re.findall(r"^  ([a-z0-9-]+):\s*$", text, _re.M)) - {"on", "jobs", "env", "permissions", "concurrency"}
-        for _m in _re.finditer(r"needs:\s*\[([^\]]+)\]", text):
-            for _j in _m.group(1).split(","):
-                _j = _j.strip()
-                if _j and _j not in _jobs:
-                    out.append("%s needs 引用了不存在的 job: %s（现有: %s）" % (path, _j, sorted(_jobs)))
-        for _m in _re.finditer(r"needs\.([a-z0-9-]+)\.result", text):
-            if _m.group(1) not in _jobs:
-                out.append("%s needs.%s.result 引用了不存在的 job（会求值为空 → 状态误判 fail）" % (path, _m.group(1)))
+    return out
 
+
+def _check_needs(path, text):
+    """③ needs / needs.X.result 引用的 job 必须真实存在。
+
+    实测踩坑：job 重构后 needs.build-spk.result 求值为空 → 状态落到 fail →
+    Release 正文被写成「❌ 缺失」。这类"重构后引用悬空"必须在 CI 前拦下。
+    """
+    out = []
+    jobs = set(re.findall(r"^  ([a-z0-9-]+):\s*$", text, re.M)) - {
+        "on", "jobs", "env", "permissions", "concurrency"}
+    for m in re.finditer(r"needs:\s*\[([^\]]+)\]", text):
+        for j in m.group(1).split(","):
+            j = j.strip()
+            if j and j not in jobs:
+                out.append("%s needs 引用了不存在的 job: %s（现有: %s）" % (path, j, sorted(jobs)))
+    for m in re.finditer(r"needs\.([a-z0-9-]+)\.result", text):
+        if m.group(1) not in jobs:
+            out.append("%s needs.%s.result 引用了不存在的 job（会求值为空 → 状态误判 fail）" % (path, m.group(1)))
+    return out
+
+
+def _check_action_keys(path, text):
+    """④ 复合 action 的必需键必须齐全（缺 runs/using 会导致 action 无法加载）。"""
+    out = []
+    for req in ("name:", "description:", "runs:", "using: composite", "steps:"):
+        if req not in text:
+            out.append("%s 缺少必需键: %s" % (path, req))
+    return out
+
+
+def check(path):
+    """按文件类型分派到各子检查，汇总返回。"""
+    full = os.path.join(ROOT, path)
+    if not os.path.isfile(full):
+        return []
+    text = open(full, encoding="utf-8", errors="replace").read()
+    out = _check_scalars(path, text)
+    if path.endswith("workflows/build.yml") or path.endswith("build.yml"):
+        out += _check_needs(path, text)
     if path.endswith("action.yml"):
-        for req in ("name:", "description:", "runs:", "using: composite", "steps:"):
-            if req not in text:
-                out.append("%s 缺少必需键: %s" % (path, req))
+        out += _check_action_keys(path, text)
     return out
 
 
