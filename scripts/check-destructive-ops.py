@@ -25,6 +25,9 @@ SENSITIVE = re.compile(r"@app(data|store|conf|home|temp|share)\b|/volume[0-9]")
 RM = re.compile(r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f|\brm\s+-[a-zA-Z]*f[a-zA-Z]*r")
 SAFE_FLAG = "--one-file-system"
 SKIP_DIRS = {".git", "node_modules", "build/master-build", "dist", ".trash"}
+# 分叉指纹（②用）：web-install 下若出现这些，说明它又自带了一套清理/挂载检测实现
+FORK_FN = re.compile(r"^\s*(_?)(safe_rm_rf|has_mount_under)\s*\(\)")
+FORK_LIB = re.compile(r"/proc/mounts|findmnt\b")
 
 
 def scan_files():
@@ -40,9 +43,18 @@ def scan_files():
     return sorted(out)
 
 
-def main():
-    violations = []
-    listing = []
+def _check_one_file_system(violations, listing):
+    """① 敏感路径的 rm -rf 必须带 --one-file-system。
+
+    为什么是这条：历史上对 @appdata/<PKG> 的递归删除会**跨过挂载点**继续往下删
+    （本机 @appdata/<PKG>/<版本>/工作区 正是工作区挂载点，源端数据不可恢复）。
+    --one-file-system 是阻止跨设备递归的那一道保险。
+    注意：本函数注释里刻意不写出完整的危险命令字面量 —— 本守卫会扫描自己，
+    带反引号的示例行会被判为真实调用（见下方字符串豁免规则）。
+
+    不视为真实调用的情形：整行注释；以及字符串里的文字（如 log 出来的示例命令），
+    但含反引号的行除外（命令替换里可能真的在执行）。
+    """
     for rel in scan_files():
         try:
             text = open(os.path.join(ROOT, rel), encoding="utf-8", errors="replace").read()
@@ -65,32 +77,40 @@ def main():
             violations.append("%s:%d 敏感路径 rm -rf 缺少 %s：%s" % (rel, i, SAFE_FLAG, stripped[:100]))
             listing.append((rel, i, "违规"))
 
-    # 2) web-install 不得**自定义**清理/挂载检测实现（分叉指纹）。
-    #    允许：带 --one-file-system 的 inline rm -rf（如卸载路径）；
-    #    禁止：自己定义 safe_rm_rf / has_mount_under 之类，或自带 /proc/mounts、findmnt 解析
-    #          —— 那意味着与 scripts/clean-dsm-residue.sh 分叉（2026-10-03 事故根因）。
-    FORK_FN = re.compile(r"^\s*(_?)(safe_rm_rf|has_mount_under)\s*\(\)")
-    FORK_LIB = re.compile(r"/proc/mounts|findmnt\b")
-    web = os.path.join(ROOT, "web-install")
-    if os.path.isdir(web):
-        for f in sorted(os.listdir(web)):
-            p = os.path.join(web, f)
-            if not os.path.isfile(p) or not f.endswith((".sh", ".py")):
-                continue
-            try:
-                t = open(p, encoding="utf-8", errors="replace").read()
-            except OSError:
-                continue
-            for i, line in enumerate(t.splitlines(), 1):
-                if line.strip().startswith("#"):
-                    continue
-                if FORK_FN.search(line) or FORK_LIB.search(line):
-                    violations.append(
-                        "web-install/%s:%d 自定义清理/挂载检测实现（与唯一实现 scripts/clean-dsm-residue.sh 分叉）"
-                        % (f, i))
-                    break
 
-    # 3) web-install 不得有未跟踪文件
+def _check_no_fork(violations):
+    """② web-install 不得自定义清理/挂载检测实现（分叉指纹）。
+
+    允许：带 --one-file-system 的 inline rm -rf（如卸载路径）；
+    禁止：自己定义 safe_rm_rf / has_mount_under 之类，或自带 /proc/mounts、findmnt 解析
+          —— 那意味着与 scripts/clean-dsm-residue.sh 分叉（事故根因）。
+    """
+    web = os.path.join(ROOT, "web-install")
+    if not os.path.isdir(web):
+        return
+    for f in sorted(os.listdir(web)):
+        p = os.path.join(web, f)
+        if not os.path.isfile(p) or not f.endswith((".sh", ".py")):
+            continue
+        try:
+            t = open(p, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        for i, line in enumerate(t.splitlines(), 1):
+            if line.strip().startswith("#"):
+                continue
+            if FORK_FN.search(line) or FORK_LIB.search(line):
+                violations.append(
+                    "web-install/%s:%d 自定义清理/挂载检测实现（与唯一实现 scripts/clean-dsm-residue.sh 分叉）"
+                    % (f, i))
+                break
+
+
+def _check_no_untracked(violations):
+    """③ web-install 不得有未跟踪文件（防本地-only 文件静默丢失/自由漂移）。"""
+    web = os.path.join(ROOT, "web-install")
+    if not os.path.isdir(web):
+        return
     try:
         out = subprocess.run(["git", "ls-files", "web-install"], cwd=ROOT,
                              capture_output=True, text=True, timeout=30)
@@ -101,6 +121,15 @@ def main():
                     violations.append("web-install/%s 未被 git 跟踪（会静默丢失，请入库）" % f)
     except Exception:
         pass
+
+
+def main():
+    """三项检查各自收集违规，最后统一报告（拆开是为了让失败信息对应到明确的一项）。"""
+    violations = []
+    listing = []
+    _check_one_file_system(violations, listing)
+    _check_no_fork(violations)
+    _check_no_untracked(violations)
 
     if "--list" in sys.argv:
         for rel, i, st in listing:
