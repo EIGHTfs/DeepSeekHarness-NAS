@@ -4,6 +4,7 @@
   "workspaceRuntimeDeps": true,
   "_wsNote": "动态收集：扫描 target/packages/**/package.json 的 dependencies 全名进白名单（279 个运行时依赖，2026-09-12 实测）",
   "extra": [
+    "@keyv/serialize",
     "@modelcontextprotocol/core",
     "@sec-ant/readable-stream",
     "@sindresorhus/is",
@@ -31,6 +32,7 @@
     "human-signals",
     "is-plain-obj",
     "is-stream",
+    "is-unicode-supported",
     "jsbi",
     "jsdom",
     "keyv",
@@ -50,6 +52,9 @@
     "parse-ms",
     "pretty-ms",
     "publint",
+    "quick-lru",
+    "resolve-alpn",
+    "responselike",
     "restructure",
     "signal-exit",
     "smol-toml",
@@ -64,9 +69,10 @@
     "unicode-trie",
     "unicorn-magic",
     "vite-tsconfig-paths",
-    "which-command"
+    "which-command",
+    "yoctocolors"
   ],
-  "_extraNote": "native 不是 .pnpm 包，由黑名单 sourceDirs 保护逻辑单独处理；typescript/tsx/tsdown/vite-tsconfig-paths/lightningcss/execa/smol-toml 为 build/run 必需工具（install 前裁剪 devDeps 时保护，否则 build 阶段缺工具失败；2026-09-14 手动追加，gen-prune-whitelist.sh 自动更新只动 lockfileDeps 不覆盖此处）；learn-prune-whitelist.sh 自动并入 1 个构建必需包: lefthook；learn-prune-whitelist.sh 自动并入 5 个构建必需包: fast-check, mdast, mdast-util-from-markdown, mdast-util-gfm, micromark-extension-gfm；learn-prune-whitelist.sh 自动并入 2 个构建必需包: publint, spdx-expression-parse；2026-09-22 官方 0.1.7-alpha.1 新增 scripts/primary-runtime/prepare.ts（import extract-zip/tar），不保护则 tsc 报 TS2307，手动追加 extract-zip、tar；2026-10-03 手动追加 vite, @types/semver：vite 被 workspace 包 packages/experimental/inspector/scripts/devtools/vite.ts import、@types/semver 被 scripts/release/publish.ts 类型检查需要；二者原先都不在白名单 → install 前裁剪剥掉 → tsc 报 TS2307/TS7016。（待 learn-prune-whitelist.sh 学习面扩到 workspace 构建期依赖 + @types 派生后自动学到）；learn-prune-whitelist.sh 自动并入 2 个构建必需包: @types/semver, vite；learn-prune-whitelist.sh 自动并入 2 个构建必需包: @types/semver, vite；2026-10-03 移除我手工添加的 vite, @types/semver（学习器已自动学到，见 _autoLearned；出货只认白名单，不手工塞包）；learn-prune-whitelist.sh 自动并入 37 个构建必需包: @modelcontextprotocol/core, @sec-ant/readable-stream, @sindresorhus/is, @sindresorhus/merge-streams, @swc/helpers, brotli, byte-counter, cacheable-lookup, cacheable-request, clone, decompress-response, dfa, fontkit, form-data-encoder, get-stream, http-cache-semantics, http2-wrapper, human-signals, is-plain-obj, is-stream, jsbi, keyv, lowercase-keys, mimic-response, normalize-url, npm-run-path, p-cancelable, parse-ms, pretty-ms, restructure, signal-exit, strip-final-newline, tiny-inflate, unicode-properties, unicode-trie, unicorn-magic, which-command",
+  "_extraNote": "native 不是 .pnpm 包，由黑名单 sourceDirs 保护逻辑单独处理；typescript/tsx/tsdown/vite-tsconfig-paths/lightningcss/execa/smol-toml 为 build/run 必需工具（install 前裁剪 devDeps 时保护，否则 build 阶段缺工具失败；2026-09-14 手动追加，gen-prune-whitelist.sh 自动更新只动 lockfileDeps 不覆盖此处）；learn-prune-whitelist.sh 自动并入 1 个构建必需包: lefthook；learn-prune-whitelist.sh 自动并入 5 个构建必需包: fast-check, mdast, mdast-util-from-markdown, mdast-util-gfm, micromark-extension-gfm；learn-prune-whitelist.sh 自动并入 2 个构建必需包: publint, spdx-expression-parse；2026-09-22 官方 0.1.7-alpha.1 新增 scripts/primary-runtime/prepare.ts（import extract-zip/tar），不保护则 tsc 报 TS2307，手动追加 extract-zip、tar；2026-10-03 手动追加 vite, @types/semver：vite 被 workspace 包 packages/experimental/inspector/scripts/devtools/vite.ts import、@types/semver 被 scripts/release/publish.ts 类型检查需要；二者原先都不在白名单 → install 前裁剪剥掉 → tsc 报 TS2307/TS7016。（待 learn-prune-whitelist.sh 学习面扩到 workspace 构建期依赖 + @types 派生后自动学到）；learn-prune-whitelist.sh 自动并入 2 个构建必需包: @types/semver, vite；learn-prune-whitelist.sh 自动并入 2 个构建必需包: @types/semver, vite；2026-10-03 移除我手工添加的 vite, @types/semver（学习器已自动学到，见 _autoLearned；出货只认白名单，不手工塞包）；learn-prune-whitelist.sh 自动并入 37 个构建必需包: @modelcontextprotocol/core, @sec-ant/readable-stream, @sindresorhus/is, @sindresorhus/merge-streams, @swc/helpers, brotli, byte-counter, cacheable-lookup, cacheable-request, clone, decompress-response, dfa, fontkit, form-data-encoder, get-stream, http-cache-semantics, http2-wrapper, human-signals, is-plain-obj, is-stream, jsbi, keyv, lowercase-keys, mimic-response, normalize-url, npm-run-path, p-cancelable, parse-ms, pretty-ms, restructure, signal-exit, strip-final-newline, tiny-inflate, unicode-properties, unicode-trie, unicorn-magic, which-command；learn-prune-whitelist.sh 自动并入 6 个构建必需包: @keyv/serialize, is-unicode-supported, quick-lru, resolve-alpn, responselike, yoctocolors",
   "lockfileDeps": [
     "@agentclientprotocol/sdk",
     "@anthropic-ai/sdk",
@@ -606,6 +612,12 @@
     "unicode-properties",
     "unicode-trie",
     "unicorn-magic",
-    "which-command"
+    "which-command",
+    "@keyv/serialize",
+    "is-unicode-supported",
+    "quick-lru",
+    "resolve-alpn",
+    "responselike",
+    "yoctocolors"
   ]
 }
