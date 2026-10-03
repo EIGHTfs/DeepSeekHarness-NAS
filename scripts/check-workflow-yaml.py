@@ -49,6 +49,20 @@ def check(path):
             if ": " in val:
                 out.append("%s:%d 未加引号的值里含 ': '（YAML 会当映射分隔符）→ %s"
                            % (path, i, line.strip()[:70]))
+    if path.endswith("build.yml") or path.endswith("workflows/build.yml"):
+        # 4) needs.* 引用的 job 必须真实存在（2026-10-04 实测踩坑：job 重构后
+        #    needs.build-spk.result 求值为空 → 状态落到 fail → Release 正文写成"❌ 缺失"）
+        import re as _re
+        _jobs = set(_re.findall(r"^  ([a-z0-9-]+):\s*$", text, _re.M)) - {"on", "jobs", "env", "permissions", "concurrency"}
+        for _m in _re.finditer(r"needs:\s*\[([^\]]+)\]", text):
+            for _j in _m.group(1).split(","):
+                _j = _j.strip()
+                if _j and _j not in _jobs:
+                    out.append("%s needs 引用了不存在的 job: %s（现有: %s）" % (path, _j, sorted(_jobs)))
+        for _m in _re.finditer(r"needs\.([a-z0-9-]+)\.result", text):
+            if _m.group(1) not in _jobs:
+                out.append("%s needs.%s.result 引用了不存在的 job（会求值为空 → 状态误判 fail）" % (path, _m.group(1)))
+
     if path.endswith("action.yml"):
         for req in ("name:", "description:", "runs:", "using: composite", "steps:"):
             if req not in text:

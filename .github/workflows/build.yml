@@ -109,11 +109,15 @@ jobs:
           fi
           # 状态徽标数据：拆分后每条链各自 job 的结果，互不牵连
           _status() { case "$1" in success) echo success ;; skipped) echo skipped ;; *) echo fail ;; esac; }
-          echo "SPK_STATUS=$(_status '${{ needs.build-spk.result }}')" >> "$GITHUB_ENV"
+          # 2026-10-04 修正：job 重构后已无 build-spk/build-fpk-source 等旧 job，
+          #   needs.*.result 求值为空 → _status 落到 *) fail → 正文被写成"❌ 缺失"。
+          #   本 job 依赖 build-target 成功才会运行，故源码链路两个产物即 success；
+          #   npm 链路按用户口径留档不执行 → skipped。
+          echo "SPK_STATUS=success" >> "$GITHUB_ENV"
           echo "SPK_DESC=源码链路" >> "$GITHUB_ENV"
-          echo "FPK_SOURCE_STATUS=$(_status '${{ needs.build-fpk-source.result }}')" >> "$GITHUB_ENV"
+          echo "FPK_SOURCE_STATUS=success" >> "$GITHUB_ENV"
           echo "FPK_SOURCE_DESC=源码构建,x86" >> "$GITHUB_ENV"
-          echo "FPK_NPM_STATUS=$(_status '${{ needs.build-fpk-npm.result }}')" >> "$GITHUB_ENV"
+          echo "FPK_NPM_STATUS=skipped" >> "$GITHUB_ENV"
           echo "FPK_NPM_DESC=npm 链路,x86" >> "$GITHUB_ENV"
           # 产物 SHA256 校验值（发布描述自带，作验证依据）
           for _d in dist-main dist-npm; do
