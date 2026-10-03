@@ -842,6 +842,35 @@ sudo synopkg stop deepseek-harness-nas
 
 ---
 
+## 🧭 已知待办（有意未做，留档）
+
+> 这些是代码审计（git-sluice）逐条判定后**有意不做**的项：改动会触及运行时行为，或缺少验证条件。
+> 记录在此以便接手，**不是遗漏**。
+
+### 1. 网页安装页的 8 处 `innerHTML`（审计 blocker：`security/script-unsafe-inline`）
+
+`web-install/install.html` 有 8 处把服务端返回的数据拼进 `innerHTML`，例如：
+
+```js
+log.innerHTML += (new Date().toLocaleTimeString() + ' ' + msg + '\n');   // 追加执行日志
+detectResult.innerHTML = '<b>' + data.hint + '</b><br>' + …;             // 显示探测结果
+tbody.innerHTML = '<tr>…' + data.error + …;                              // 列表与错误提示
+```
+
+**为什么没改**：
+
+- 改成 `textContent` + 转义会**改变渲染结果**（现有实现支持 `<b>`/`<br>` 这类简单标签），属**行为变更**；
+- 配套应当加 **CSP**，但页面目前依赖**内联 `<script>`**，需要一并重构；
+- **本机没有可用的目标机**（.193 已关机），**无法实机验证**安装页 —— 属"改了但验不了"，按项目口径只记录不动。
+
+**建议的改法**（等有人能实机验证时再做）：
+
+1. 所有插值统一走一个 `esc()` 转义函数，或改用 `textContent` + 显式 DOM 构建；
+2. 给页面加 `Content-Security-Policy`，并把内联脚本外移成独立文件；
+3. 在真实 NAS 上跑一遍**安装 / 卸载 / 构建**全流程回归，确认界面无回退。
+
+---
+
 ## 📄 许可证
 
 MIT License - Copyright (c) 2026 DeepSeek AI
