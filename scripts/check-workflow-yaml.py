@@ -40,7 +40,10 @@ def _check_scalars(path, text):
     """
     out = []
     for i, line in enumerate(text.split("\n"), 1):
-        if "\t" in line[:len(line) - len(line.lstrip())]:
+        # 注意：只能用 lstrip(" ") 计算缩进前缀。若用无参 lstrip()，它会把 Tab 也剥掉，
+        # 于是「以 Tab 开头的行」前缀为空 → 永远检测不到（此 bug 由反向测试暴露并已修）。
+        indent_prefix = line[:len(line) - len(line.lstrip(" "))]
+        if "\t" in indent_prefix or line.startswith("\t"):
             out.append("%s:%d 缩进含 Tab（YAML 禁止）" % (path, i))
         m = KEYVAL.match(line)
         if not m:
