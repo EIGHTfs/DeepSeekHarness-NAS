@@ -343,7 +343,7 @@ stop_process() {
 status_process() {
   export TRIM_APPDEST="${TRIM_APPDEST}" TRIM_PKGVAR="${TRIM_PKGVAR}"
   "${TRIM_APPDEST}/bin/start.sh" status > /dev/null 2>&1 && return 0
-  running_dsh "$FPK_DSH_PORT" "${TRIM_APPDEST}/bin/start.sh" }
+  running_dsh "$FPK_DSH_PORT" "${TRIM_APPDEST}/bin/start.sh"; }
 
 case "$1" in
   start)   start_process && { echo "✓ 启动成功"; exit 0; } || { echo "✗ 启动失败（运行检测未通过）"; exit 1; } ;;
