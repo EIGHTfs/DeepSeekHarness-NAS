@@ -117,8 +117,8 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 **参数与配置来源**（已精简，去掉「套件类型 / 套件说明 / 品牌名」三个参数）：
 
 > 🎯 **FPK 双链路现状（2026-09-15 更新）**：**默认源码构建（与 SPK 同源），npm 链路保留可选**。
-> - **源码构建**（默认，build-common.sh target → pack-fpk.sh）：品牌 **DeepSeekHarness-NAS**，与 SPK 同一套源码/裁剪/白名单；软链问题已修复（`tar --hard-dereference` 复制替代 `cp -a`），本地实测 **114MB 实机可装、三端口在听**；CI 默认走此链路（`vars.FPK_MODE` 未设置 = 源码构建）。
-> - **npm 链路**（`--npm`，官方 npm 包，`build-npm-app.sh`）：品牌 DeepSeek Harness，体积更小（94M）；CI 设 `vars.FPK_MODE = 'npm'` 时启用，或本地手动跑。
+> - **源码构建**（默认，build-common.sh target → pack-fpk.sh）：品牌 **DeepSeekHarness-NAS**，与 SPK 同一套源码/裁剪/白名单；软链问题已修复（`tar --hard-dereference` 复制替代 `cp -a`），本地实测 **114MB 实机可装、三端口在听**；**CI 默认且当前唯一自动执行的链路**。
+> - **npm 链路**（`--npm`，官方 npm 包，`build-npm-app.sh`）：品牌 DeepSeek Harness，体积更小（94M）；**自 2026-10-04 起 CI 留档不执行**，仅本地手动跑（`./build/build-npm-app.sh && ./build/FPK/pack-fpk.sh --npm`）。
 > - 体积基线：源码 114MB ≈ 120MiB 以内（白名单裁剪后达标）；npm 94M ≈ 100MiB。
 
 - `SRC` 源码目录：缺省通配扫描 `src/deepseek-ai/*`（不硬编码版本目录名），其次 `build/master-build/master-build`
@@ -151,13 +151,13 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | 运行环境 | 群晖 NAS。**必须从可执行挂载启动**：`@appdata/.../工作区`（`VirtualDSM/...` 是 **noexec**，构建会失败） | `ubuntu-latest` runner（无 noexec 限制） |
 | 前置准备 | `scripts/prepare-build-env.sh`（随包 node / 官方预编译 native / 官方源码快照，幂等、绝不 mount） | `./.github/actions/setup-node-env` + `./.github/actions/fetch-latest` |
 | 源码获取 | 本地快照 `src/deepseek-ai/<tag>`，可跨构建**复用** | `scripts/fetch-dsh-latest.sh`（优先本地 git 镜像**增量**拉取，退化到 clone/zipball） |
-| 缓存复用 | pnpm store + **单一复用构建目录** `build/`（`SKIP_BUILD=1` 复用 target、`BUILD_STAGE=build\|prune` 分阶段续跑、`FRESH_BUILD=1` 时间戳归档） | 目前**无缓存**（runner 每次全新）→ 计划加 `actions/cache`（源码 git 镜像 + pnpm store） |
+| 缓存复用 | pnpm store + **单一复用构建目录** `build/`（`SKIP_BUILD=1` 复用 target、`BUILD_STAGE=build\|prune` 分阶段续跑、`FRESH_BUILD=1` 时间戳归档） | **三层缓存**：源码 git 镜像 ✓ + pnpm store ✓ + **已构建 target**（tar 单文件，key=官方 tag+构建逻辑指纹）✓ → 实测命中后日志打印 `✓ 复用 target: …（未重新构建）`，**跳过约 20 分钟编译** |
 | 产物 | `build/staging/*.spk\|*.fpk` → `scripts/promote-release.sh` → `release/` | Actions artifacts + GitHub Release |
-| 链路数 | 按需（通常单链路调试） | **4 产物**：SPK/FPK × 源码/npm |
-| 发布 | 手动 `promote-release.sh` | `release` job 自动发 2 个 Release（正文含**官方同 tag 更新日志**，由 `build/release-note.sh` 统一渲染） |
+| 链路数 | 按需（通常单链路调试；npm 链路可手动跑） | **2 产物**：SPK + FPK（均源码链路）；npm 链路**留档不执行** |
+| 发布 | 手动 `promote-release.sh` | `pack-and-release` job 自动发/更新 **1 个** Release（正文含**官方同 tag 更新日志**，由 `build/release-note.sh` 统一渲染）；构建失败则不发布 |
 | 安装 | `web-install/install-remote-spk.sh` / `install-remote-fpk.sh` 远程装到目标机 | 不含安装 |
-| 并发 | Web API 单入口（**禁并发**，同刻只允许一个构建） | 多 job 并行 |
-| 特有坑 | noexec 挂载、中文路径编码易被破坏、`rm -rf` 跨挂载点（2026-10-03 事故） | 无 store 缓存导致下载慢；无 noexec 问题 |
+| 并发 | Web API 单入口（**禁并发**，同刻只允许一个构建） | `concurrency` 组 **cancel-in-progress: true** —— 新构建开始前停掉上一个（同刻只有一个） |
+| 特有坑 | noexec 挂载、中文路径编码易被破坏、`rm -rf` 跨挂载点（2026-10-03 事故） | `upload-artifact` 逐文件压缩会 OOM（用 tar 单文件规避）；缓存 tar 漏 `.build-done` 会让复用静默失效；`needs.*` 重构后悬空会让 Release 正文误写"❌ 缺失" |
 
 > 两条链路**都必须**遵守同一套守卫（`scripts/check-*.py`）与公共库（`scripts/lib/common.sh`），
 > 任何"只在本地能过"的环境变量覆盖都应视为**根因未修**，修进脚本而不是绕过。
@@ -166,19 +166,28 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 
 ```yaml
 # .github/workflows/build.yml —— 触发: 定时(每日04:00 UTC) / workflow_dispatch(手动) / tag推送
-# jobs: build-spk（源码链路）∥ build-fpk（源码构建，vars.FPK_MODE='npm' 时切 npm 链路）→ release（自动发布，与官方同 tag）
+# jobs（2026-10-04 重构后共 2 个）:
+#   build-target      唯一构建：setup → fetch → ci-clean → ./build/build-common.sh → 上传 target
+#   pack-and-release  复用 target → 打 SPK + FPK → 解析官方 tag → 发 Release（含官方更新日志）
 # 产物命名: <APP_NAME>_<平台>-<版本>.<spk|fpk>
 ```
 
-- 触发：①每日 04:00 UTC（北京 12:00）定时自动拉官方最新源并构建；②Actions 页手动 `workflow_dispatch`；③推送 tag（`dsh-v<版本>` 形式）
-- **fpk/spk 构建开关（2026-09-14，2026-09-15 FPK 恢复）**：仓库变量 `vars.BUILD_SPK` / `vars.BUILD_FPK` 分别控制两个产物是否构建（`'true'` 构建 / `'false'` 跳过；缺省都构建）；`vars.FPK_MODE` 控制 FPK 构建方式（缺省 = 源码构建，`'npm'` = npm 链路）；设置路径：仓库 Settings → Secrets and variables → Actions → Variables（或 API PATCH）；Release 说明会标注 `⏭️ 跳过`
-- **自动发布（与官方同 tag）**：三个触发方式都会自动建/更新 Release——tag 名取官方最新 dsh tag（`scripts/fetch-dsh-latest.sh --print-tag` 解析，形如 `dsh-v<版本>`），同名 Release 已存在则**覆盖资产**（滚动刷新），不存在则自动创建；**统一发正式 Release，不标 prerelease**（2026-09-16 起，含 rc/alpha tag 也一样）
-- **部分失败容忍**：`release` job 用 `always()`，源码链路 SPK 失败时仍发布 FPK，并在 Release 说明中标注 `SPK: ❌ 缺失`（实测：双产物发布，FPK 源码构建）
-- 产物同时上传 artifact（`spk-dist` / `fpk-dist`，保留 14 天）；构建失败时额外上传 `build-spk-debug-log` / `build-fpk-debug-log`（完整 `pnpm-build.log`，因 GitHub 偶尔不归档该 job 日志）
-- **Release 自带 SHA256**（2026-09-15）：发布描述含每个产物的 `sha256sum` 校验值，下载后 `sha256sum <文件>` 对照验证完整性
-- **公共预编译单步（2026-09-14 后合并，2026-09-15 定稿）**：最初为定位死点拆过 `BUILD_STAGE`（`install`/`build`/`prune`）三步，但拆步后 step 被 OOM/磁盘杀时结论 `None` 不触发 `if: failure()`，日志 blob 又常丢失 → 排查不出去向。定稿：**CI 单步 `./build/build-common.sh`（默认 `BUILD_STAGE=all`）**，失败时 `failure()` 捕获 + artifact 兜底完整 `pnpm-build.log`
-- **install 前白名单裁剪（2026-09-14，SPK CI 磁盘爆盘修复）**：annotation 实测根因 = `pnpm install/build` 阶段把 runner 磁盘写满（`No space left on device` → worker 被杀 → step 永久 in_progress）。官方 monorepo 依赖树约 1.78 万包，install 阶段下载全部 devDeps（vitest/jsdom/mermaid 等巨大传递依赖）拉满磁盘峰值。修复：`prune-target.sh --before-install` 在 `pnpm install` **前**用纯白名单剥离根 package.json 中**非白名单 devDeps**，install 不再下载它们；构建必需工具（typescript/tsx/tsdown/lightningcss/execa/smol-toml/**extract-zip/tar**）手动追加进白名单 `extra`（`gen-prune-whitelist.sh` 自动生成只动 `lockfileDeps`，不覆盖手动部分），install 保留、build 不裂
-- 本地等效：按「本地构建」段落逐脚本跑（同一套 fetch → build → 打包 流程）
+- 触发：①每日 04:00 UTC（北京 12:00）定时拉官方最新源构建；②Actions 页手动 `workflow_dispatch`；③推送 tag
+- **并发控制**：`concurrency: group=<workflow>-<ref>, cancel-in-progress: true` —— **新构建开始前会停掉上一个**（用户口径：同一时刻只有一个构建，也比两个并行更省 runner 分钟）
+- **构建只做一次（本次重构核心）**：只有 `build-target` 跑 `./build/build-common.sh`；打包在 `pack-and-release` 内完成，**复用 target 而非重编**（旧结构里 `build-spk` 与 `build-fpk-source` 各跑一遍完整构建，每次白烧约 20 分钟）
+- **target 复用缓存**：`build-target` 内按 **官方 tag + 构建逻辑指纹**（`build-config.yaml`/`build-common.sh`/`prune-target.sh`/`prune_common.py`/白名单 json/`scripts/lib/common.sh`/两个 action 文件）缓存 `build/master-build/build`，命中即解包 → `build-common.sh` 走 `SKIP_BUILD` **跳过编译**（日志会打印 `✓ 复用 target: …（未重新构建）`）
+  - ⚠ 缓存 tar **必须包含 `.build-done`**：`build-common.sh` 的复用判据是 `[ -f "$WORK/.build-done" ] && [ -d "$TARGET" ] && [ -f "$TARGET/package.json" ]`，漏了它解包后判据不成立，会**静默完整重编**
+- **为何用 tar 单文件**：`upload-artifact@v4` 逐文件处理，745M+ 海量文件会爆 4GB 堆（实测 `FATAL ERROR: Ineffective mark-compacts near heap limit`）；先 `tar -czf` 再上传单文件即根治（`compression-level: 0`，因为已是 `.tar.gz`）
+- **产物开关**：仓库变量 `vars.BUILD_SPK` / `vars.BUILD_FPK`（`'false'` 跳过对应产物；缺省都构建）
+- **npm 链路自 2026-10-04 起留档、CI 不执行**：`build/FPK/build-npm-fpk-app.sh` 头部写明本地手动命令（`./build/build-npm-app.sh && ./build/FPK/pack-fpk.sh --npm`）与恢复自动执行的方法
+- **自动发布（与官方同 tag）**：tag 取官方最新 dsh tag（`scripts/fetch-dsh-latest.sh --print-tag`，形如 `dsh-v<版本>`）；同名 Release 已存在则**覆盖资产与正文**（滚动刷新）；统一发正式 Release，不标 prerelease
+- **不再"部分失败容忍"**（2026-10-04 用户口径）：构建失败即**不打包、不发布**（此前 `release` job 的 `if: always()` 已移除）——避免发出缺项 Release；Release 正文的状态徽标由「检查产物」步骤给出（源码链路两个产物在本 job 依赖成功时即 `success`）
+- **artifact**：`build-target`（**tar 单文件**，供 pack 复用）+ `build-target-debug-log` / `pack-and-release-debug-log`（完整 `pnpm-build.log`，因 GitHub 偶尔不归档该 job 日志）
+- **Release 自带 SHA256**：正文含每个产物的 `sha256sum`，下载后 `sha256sum <文件>` 对照
+- **守卫套件（构建前先跑，任一失败即红）**：`scripts/check-workflow-yaml.py`（YAML 结构 + `needs` 悬空引用）、`check-readme-coverage.py`、`check-common-functions.py`、`check-destructive-ops.py`、`check-build-naming.py`（含 `.sh/.py` 可执行位）、`test/safe-rm-rf.test.sh`（事故回归）
+- **install 前白名单裁剪**（2026-09-14，SPK CI 磁盘爆盘修复）：官方 monorepo 依赖树约 1.78 万包，install 阶段会拉满 runner 磁盘；`prune-target.sh --before-install` 在 `pnpm install` **前**用纯白名单剥离根 `package.json` 中**非白名单 devDependencies**
+  - ⚠ 2026-10-04 教训：被剥掉的**根 devDep** 若正是某个构建期解析入口的**唯一来源**，其传递依赖会随之不再安装 → 构建期 `TS2307`（实测 `vitest` 被剥 → 传递依赖 `vite` 缺失 → `vite.ts(5,55): Cannot find module 'vite'`）。故白名单必须完整：学习器已支持解析 **pnpm 安装摘要**（`+ <包> <版本>`）自动补齐这类根 devDep
+- **本地等效**：按「本地构建」段落逐脚本跑（同一套 fetch → build → 打包 流程）
 
 ### 打包模式：预构建产物包（唯一模式）
 
@@ -785,7 +794,7 @@ sudo synopkg stop deepseek-harness-nas
 | 功能 | 说明 |
 |------|------|
 | 完整日志落盘 | pnpm build 失败打尾 80 行（原 tail-20 会截掉真实报错） |
-| Debug artifact | 失败上传 `build-spk-debug-log` artifact（GitHub 偶尔不归档 job 日志） |
+| Debug artifact | 失败上传 `build-target-debug-log` artifact（GitHub 偶尔不归档 job 日志） |
 | 脚本执行位修正 | git 索引 100755，解决 CI Permission denied |
 
 > 历史发布版已清理，今后发版统一走 GitHub Actions 自动构建（tag 推送即出 spk+fpk 双产物）。仓库历史已 squash 重建。
