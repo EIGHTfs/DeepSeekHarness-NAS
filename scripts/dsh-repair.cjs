@@ -84,7 +84,10 @@ function secureDshTree(dir) {
     fs.chmodSync(dir, 0o700);
     const walk = (d) => {
       let entries;
-      try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch { return; } // 有意忽略：目录不可读（权限/竞态删除）就跳过该分支，权限收紧本就是尽力而为
+      try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch {
+        // 有意忽略：目录不可读（权限不足/竞态删除）就跳过该分支；权限收紧本就是尽力而为
+        return;
+      }
       for (const ent of entries) {
         if (ent.name === '.' || ent.name === '..') continue;
         const p = require('path').join(d, ent.name);
@@ -92,7 +95,10 @@ function secureDshTree(dir) {
           if (ent.isSymbolicLink()) continue;
           if (ent.isDirectory()) { fs.chmodSync(p, 0o700); walk(p); }
           else { fs.chmodSync(p, 0o600); }
-        } catch {} // 有意忽略：单个条目 chmod 失败（非属主 EPERM / 已被删除）不影响其余条目；本函数整体是"尽力而为"，结束时只在函数级报一次警告
+        } catch {
+          // 有意忽略：单个条目 chmod 失败（非属主 EPERM / 已被删除）不影响其余条目；
+          // 本函数整体是"尽力而为"，结束时只在函数级报一次警告
+        }
       }
     };
     walk(dir);
@@ -114,10 +120,16 @@ function killOldProcesses() {
     const oldPid = fs.readFileSync(PID_FILE, 'utf-8').trim();
     if (oldPid && String(oldPid) !== String(process.pid)) {
       console.log(`[√] 停止旧实例 (PID ${oldPid})`);
-      try { process.kill(parseInt(oldPid, 10), 'SIGTERM'); } catch {}
-      try { process.kill(parseInt(oldPid, 10), 'SIGKILL'); } catch {}
+      try { process.kill(parseInt(oldPid, 10), 'SIGTERM'); } catch {
+        // 有意忽略：目标进程可能已自行退出（ESRCH）；下面还会补一次 SIGKILL
+      }
+      try { process.kill(parseInt(oldPid, 10), 'SIGKILL'); } catch {
+        // 有意忽略：同上，进程已不在
+      }
     }
-  } catch {}
+  } catch {
+    // 有意忽略：PID 文件不存在/不可读（首次运行或已被清理），此时无旧实例可停
+  }
   try {
     const out = execSync(
       "ps -eo pid,args | grep -E 'bin\\.ts web|bin\\.js web' | grep -v grep | awk '{print $1}'",
@@ -130,9 +142,14 @@ function killOldProcesses() {
           console.log(`[√] 停止 DSH 子进程 (PID ${pid})`);
           process.kill(parseInt(pid, 10), 'SIGKILL');
         }
-      } catch {}
+      } catch {
+        // 有意忽略：读 /proc/<pid>/cwd 时该进程可能已退出（竞态），跳过即可
+      }
     }
-  } catch {}
+  } catch {
+    // 有意忽略：ps/execSync 本身可能失败（容器内无 ps 等）；此处是"尽力多停几个旧实例"的补充手段，
+    // 前面基于 PID 文件的停法已经执行过，故失败不影响后续启动
+  }
   return new Promise(resolve => setTimeout(resolve, 2000));
 }
 
@@ -142,7 +159,9 @@ function buildPolyfillScript() {
   // ownsHost 声明：使 isLoopback=true → persistence='host' → settings 可用
   try {
     var g = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : this;
-    if (!g.__DSH_TRANSPORT__) { try { g.__DSH_TRANSPORT__ = {}; } catch(e){} } // 有意忽略：部分浏览器对全局属性赋值受限，失败时后面的 if 会跳过，polyfill 降级但不报错
+    if (!g.__DSH_TRANSPORT__) { try { g.__DSH_TRANSPORT__ = {}; } catch(e){
+      // 有意忽略：部分浏览器对全局属性赋值受限，失败时后面的 if 会跳过，polyfill 降级但不报错
+    } }
     if (g.__DSH_TRANSPORT__) {
       try { Object.defineProperty(g.__DSH_TRANSPORT__, 'ownsHost', { value: true, writable: false, configurable: false }); }
       catch(e) { g.__DSH_TRANSPORT__.ownsHost = true; }
@@ -162,7 +181,9 @@ function buildPolyfillScript() {
   }
   try {
     var g = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : this;
-    if (!g.crypto) { try { g.crypto = {}; } catch(e){} } // 有意忽略：浏览器里 crypto 可能是只读属性，赋值失败也不影响后续 randomUUID 兜底
+    if (!g.crypto) { try { g.crypto = {}; } catch(e){
+      // 有意忽略：浏览器里 crypto 可能是只读属性，赋值失败也不影响后续 randomUUID 兜底
+    } }
     if (g.crypto) {
       try { if (!g.crypto.randomUUID) { Object.defineProperty(g.crypto, 'randomUUID', { value: createUUID, writable: true, configurable: true, enumerable: true }); } }
       catch(e) { g.crypto.randomUUID = createUUID; }
@@ -208,7 +229,10 @@ async function main() {
   writeTmpFile(PID_FILE, String(process.pid));
 
   try { fs.mkdirSync(dshHome, { recursive: true, mode: 0o700 }); } catch (e) { console.error(`[!] mkdir DSH_HOME: ${e.message}`); }
-  try { fs.mkdirSync(home, { recursive: true, mode: 0o700 }); } catch (e) {} // 有意不记日志：HOME 只是给子进程用的环境值，创建失败不致命（子进程各自按需再建）；上一行 DSH_HOME 才是关键路径，故那条会报错
+  try { fs.mkdirSync(home, { recursive: true, mode: 0o700 }); } catch (e) {
+    // 有意不记日志：HOME 只是给子进程用的环境值，创建失败不致命（子进程各自按需再建）；
+    // 上一行 DSH_HOME 才是关键路径，故那条会报错
+  }
   secureDshTree(dshHome);
 
   let waitCount = 0;
@@ -353,12 +377,19 @@ async function main() {
 
   function shutdown(signal) {
     console.log(`\n[!] 收到 ${signal}，正在停止...`);
-    // 以下四步都是"尽力而为的收尾"：任一失败都必须继续走完并 exit(0)，
-    // 否则会卡在关停流程里。各自的预期失败原因：
-    try { fs.unlinkSync(PID_FILE); } catch {}                                    // PID 文件可能已被删除或不可写
-    try { if (dshProcess && !dshProcess.killed) dshProcess.kill('SIGKILL'); } catch {} // 子进程可能已自行退出（ESRCH）
-    try { proxyServer.close(); } catch {}                                        // 服务端可能已关闭（ERR_SERVER_NOT_RUNNING）
-    try { containerServer.close(); } catch {}                                    // 同上
+    // 以下四步都是"尽力而为的收尾"：任一失败都必须继续走完并 exit(0)，否则会卡在关停流程里。
+    try { fs.unlinkSync(PID_FILE); } catch {
+      // 有意忽略：PID 文件可能已被删除或不可写
+    }
+    try { if (dshProcess && !dshProcess.killed) dshProcess.kill('SIGKILL'); } catch {
+      // 有意忽略：子进程可能已自行退出（ESRCH）
+    }
+    try { proxyServer.close(); } catch {
+      // 有意忽略：服务端可能已关闭（ERR_SERVER_NOT_RUNNING）
+    }
+    try { containerServer.close(); } catch {
+      // 有意忽略：同上
+    }
     process.exit(0);
   }
   process.on('SIGTERM', () => shutdown('SIGTERM'));
@@ -368,6 +399,9 @@ async function main() {
 
 main().catch(err => {
   console.error('[!] 修复失败:', err.message);
-  try { fs.unlinkSync(PID_FILE); } catch {} // 有意忽略：清理 PID 文件是收尾动作，文件可能本就不存在或不可写；此处已在上行打印了真正的失败原因，不能再因清理失败掩盖它
+  try { fs.unlinkSync(PID_FILE); } catch {
+    // 有意忽略：清理 PID 文件是收尾动作，文件可能本就不存在或不可写；
+    // 此处已在上行打印了真正的失败原因，不能因清理失败掩盖它
+  }
   process.exit(1);
 });
