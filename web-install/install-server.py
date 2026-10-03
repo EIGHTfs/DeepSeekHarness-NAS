@@ -56,13 +56,16 @@ def log(msg):
         pass
 
 
+_CHUNK_1MIB = 1024 * 1024   # 流式读包的分块大小（1 MiB）：既避免整载入内存，也不至于调用过碎
+
+
 def file_md5(path):
     """本地计算包文件 MD5（历史记录用；大包流式读，不整载入内存）"""
     import hashlib
     h = hashlib.md5()
     try:
         with open(path, 'rb') as f:
-            for chunk in iter(lambda: f.read(1048576), b''):
+            for chunk in iter(lambda: f.read(_CHUNK_1MIB), b''):
                 h.update(chunk)
         return h.hexdigest()
     except Exception:
@@ -444,7 +447,7 @@ def list_packages():
                 pkgs[kind].append({
                     'path': path, 'name': fn, 'kind': kind,
                     'rel': rel,
-                    'size': '%.1f MB' % (size / 1048576.0),
+                    'size': '%.1f MB' % (size / _CHUNK_1MIB),
                     'full': size > 200 * 1048576,
                 })
     return pkgs
