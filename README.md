@@ -90,6 +90,12 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | `scripts/fetch-official-docs.py` | 抓官方文档快照到本地（离线查阅/比对用） | `python3 scripts/fetch-official-docs.py` |
 | `scripts/fix-dsh-bundle-patch-insert.py` | 修复官方 bundle 的 patch 声明插入问题（升级后内置插件加载异常时用） | `python3 scripts/fix-dsh-bundle-patch-insert.py <目标树>` |
 | `scripts/check-readme-coverage.py` | **README 覆盖度守卫**：代码里的开关名/脚本名必须在 README 出现，否则退出码 1（CI 拦截「机制只活在注释里」） | `--list` 只列不失败 |
+| `scripts/lib/common.sh` | **唯一公共函数库**（全仓库唯一实现，禁止各脚本再自定义）：日志文案 `info/ok/warn/miss/err/die/log_msg/section`、`safe_rm_rf`/`has_mount_under`（事故防线）、`rssh`/`rssh_remote_tmp`、`resolve_node`、`fetch_url`（断点续传 `-C -`）/`extract_tar`、`md5_of`/`b64_*`、`json_get`/`json_set`、`load_build_meta`、`resolve_pkg_version`、`check_pkg_size`、`running_dsh`、`pkg_*`、`gen_start_sh` | `. \"$ROOT/scripts/lib/common.sh\"` |
+| `scripts/check-common-functions.py` | **公共函数唯一性守卫**：从公共库派生函数清单，断言其它 `.sh` 不得再定义（**剔除 heredoc 生成区段**，否则误伤打包器生成的运行时同名函数）；带显式豁免表 | `python3 scripts/check-common-functions.py` |
+| `scripts/check-destructive-ops.py` | **破坏性操作守卫**：敏感路径（`@app*`/`/volume*`）的 `rm -rf` 必须带 `--one-file-system`；`web-install/` 不得自定义清理/挂载检测实现（分叉指纹）；`web-install/` 不得有未跟踪文件 | `python3 scripts/check-destructive-ops.py` |
+| `scripts/clean-dsm-residue.sh` | **清理唯一实现**（web 端与套件端共用；内含挂载点硬保护，绝不跨挂载点删） | `scripts/clean-dsm-residue.sh <套件名> [主机] [SSH用户]` |
+| `scripts/gh-commit.py` | **无 git 提交推送**（GitHub Git Data API：blobs→tree→commit→更新 ref；原子多文件；author 固定 `EIGHTfs`；冲突自动重试） | `python3 scripts/gh-commit.py <仓库根> \"<提交信息>\" <文件...>` |
+| `test/safe-rm-rf.test.sh` | **事故回归测试**：断言含挂载点的目录绝不被删（用 `/proc` 验证检出能力，无需 root） | `bash test/safe-rm-rf.test.sh` |
 | `scripts/prepare-build-env.sh` | 构建环境自动准备（幂等、只新增不删除、绝不 mount）：检测 noexec 挂载 / 补随包 node / 检查项目 pnpm / 补官方预编译 native 产物 / 拉官方源码快照 |
 
 ### 手工构建示例（开发调试用）
@@ -133,6 +139,28 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 - **小字完整版本号** ★`build-common.sh`：构建注入 `DSH_CLIENT_VERSION` / `DSH_CLIENT_COMMIT_HASH` / `DSH_CLIENT_TITLE`，界面显示 `<官方版本>-<commit>[-dirty]`（与官方版本同步）
 - **SPK 版本号** ★`build-spk.sh` = 官方版本前三位（`<版本>-<预发布>` → `<版本>`），无 build 后缀，同版本安装直接覆盖
 - **门户资源** ★`build-spk.sh` / `build-fpk.sh`：`ui/` + `spk-templates/ui-config.json` 打进 package.tgz，DSM 安装时自动建 `webman/3rdparty/deepseek-harness-nas` 链接，桌面出现套件图标
+
+### 本地构建 vs 在线构建（差异对照）
+
+两条链路**共用同一套构建脚本**（`build/build-common.sh` → 裁剪 → 打包器），差别只在**运行环境与编排**。
+下表为实测差异（2026-10-04）：
+
+| 维度 | 本地构建 | 在线构建（GitHub Actions） |
+|---|---|---|
+| 入口 | `web-install/install-server.py`（Web API `127.0.0.1:8765`）/ 直接跑 `build/build-common.sh` | `.github/workflows/build.yml` |
+| 运行环境 | 群晖 NAS。**必须从可执行挂载启动**：`@appdata/.../工作区`（`VirtualDSM/...` 是 **noexec**，构建会失败） | `ubuntu-latest` runner（无 noexec 限制） |
+| 前置准备 | `scripts/prepare-build-env.sh`（随包 node / 官方预编译 native / 官方源码快照，幂等、绝不 mount） | `./.github/actions/setup-node-env` + `./.github/actions/fetch-latest` |
+| 源码获取 | 本地快照 `src/deepseek-ai/<tag>`，可跨构建**复用** | `scripts/fetch-dsh-latest.sh`（优先本地 git 镜像**增量**拉取，退化到 clone/zipball） |
+| 缓存复用 | pnpm store + **单一复用构建目录** `build/`（`SKIP_BUILD=1` 复用 target、`BUILD_STAGE=build\|prune` 分阶段续跑、`FRESH_BUILD=1` 时间戳归档） | 目前**无缓存**（runner 每次全新）→ 计划加 `actions/cache`（源码 git 镜像 + pnpm store） |
+| 产物 | `build/staging/*.spk\|*.fpk` → `scripts/promote-release.sh` → `release/` | Actions artifacts + GitHub Release |
+| 链路数 | 按需（通常单链路调试） | **4 产物**：SPK/FPK × 源码/npm |
+| 发布 | 手动 `promote-release.sh` | `release` job 自动发 2 个 Release（正文含**官方同 tag 更新日志**，由 `build/release-note.sh` 统一渲染） |
+| 安装 | `web-install/install-remote-spk.sh` / `install-remote-fpk.sh` 远程装到目标机 | 不含安装 |
+| 并发 | Web API 单入口（**禁并发**，同刻只允许一个构建） | 多 job 并行 |
+| 特有坑 | noexec 挂载、中文路径编码易被破坏、`rm -rf` 跨挂载点（2026-10-03 事故） | 无 store 缓存导致下载慢；无 noexec 问题 |
+
+> 两条链路**都必须**遵守同一套守卫（`scripts/check-*.py`）与公共库（`scripts/lib/common.sh`），
+> 任何"只在本地能过"的环境变量覆盖都应视为**根因未修**，修进脚本而不是绕过。
 
 ### GitHub Actions 自动构建（发版走这里）
 
@@ -194,6 +222,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | `PRUNE_COMMON_DIR` | 脚本同级 | `prune_common.py` 所在目录（供内联 python 导入） |
 | `DRY_RUN` | `0` | 预演：只打印计划不执行（多数脚本支持 `--dry-run` 或该环境变量） |
 | `DSH_GIT_BIN` | 自探测 | git 可执行文件路径覆盖（群晖 git 在 `/var/packages/git/target/bin`，PATH 里常没有） |
+| `DSH_NODE_DIST` | 自探测 | node 发行版目录覆盖（`resolve_node()` 按 `/usr/bin/node` → `$DSH_NODE_DIST/node-v*/bin/node` → 随包 `tools/node-dist/` 顺序解析；公共库 `scripts/lib/common.sh` 提供） |
 | `DS_FETCH_GIT_URL` | 官方仓库 | `fetch-dsh-latest.sh` 的 git 远端覆盖（走镜像/内网时用） |
 | `DSH_PROXY_PORT` | `30800` | 反代端口覆盖（等价 `--proxy-port`） |
 | `DSH_SLIM_SKIP_NATIVE` | `0` | 置 1 跳过 native 构建（`first-build-logic.sh` 留档脚本用） |
