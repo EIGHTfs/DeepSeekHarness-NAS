@@ -41,7 +41,11 @@ PY
   [ -n "${CFG_RELEASE_DIR:-}" ] && D_REL="$(_resolve "$CFG_RELEASE_DIR")"
 fi
 
-die(){ echo "✗ $*" >&2; exit 1; }
+# ── 公共函数库（唯一实现：scripts/lib/common.sh）──
+#    die() 等一律由公共库提供，本文件不再自定义（2026-10-04 去重）。
+_DSH_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/lib/common.sh"
+[ -f "$_DSH_LIB" ] && . "$_DSH_LIB"
+command -v die >/dev/null 2>&1 || { echo "✗ 缺少公共函数库: $_DSH_LIB" >&2; exit 1; }
 
 [ -d "$D_STAGING" ] || die "暂存目录不存在: $D_STAGING（先跑 build/build-common.sh + build/SPK/build-spk.sh 或 build/FPK/build-fpk.sh）"
 mkdir -p "$D_REL"
