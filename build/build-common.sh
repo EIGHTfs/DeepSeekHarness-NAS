@@ -482,7 +482,10 @@ fi
 #   否则会被生成期的 set -u 判为 unbound variable（实测踩坑）。
 _PNPM_NODE="$NODE_SRC"
 if [ ! -x "\$_PNPM_NODE" ]; then
-  for _c in /usr/bin/node /usr/local/bin/node; do
+  # 兜底候选（含**相对垫片自身**的随包 node —— 生成期 NODE_SRC 可能为空，
+  #   垫片必须能自己探测；2026-10-03 修复）
+  for _c in /usr/bin/node /usr/local/bin/node \
+            "$(dirname "$0")"/../../node-dist/node-v*/bin/node; do
     [ -x "\$_c" ] && { _PNPM_NODE="\$_c"; break; }
   done
 fi
