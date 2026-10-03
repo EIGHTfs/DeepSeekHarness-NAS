@@ -19,7 +19,6 @@
 【用法】
   python3 scripts/check-readme-coverage.py          # CI：有缺口则退出码 1
   python3 scripts/check-readme-coverage.py --list   # 只列缺口，始终退出 0
-  python3 scripts/check-readme-coverage.py --json   # 机器可读（供插件/CI 消费）
 """
 import os
 import re
@@ -104,10 +103,11 @@ def main():
                    if k not in text and k not in EXEMPT), key=lambda kv: -kv[1])
     checked = len([k for k in ids if k not in EXEMPT])
 
-    # --json：供外部工具（如 dsh-git-push 的 doc-coverage 检查器）稳定消费
-    if --json in sys.argv:
-        print(json.dumps({ok: not gaps, checked: checked, exempt: len(EXEMPT),
-                          gaps: [{id: k, count: v, example: where[k]} for k, v in gaps]},
+    # --json：供外部工具（如 dsh-git-push 的 doc-coverage 检查器）稳定消费。
+    #   逻辑留在本仓库、插件只做封装调用（先例：tree-doc 封装 scripts/tree-doc.mjs）。
+    if '--json' in sys.argv:
+        print(json.dumps({'ok': not gaps, 'checked': checked, 'exempt': len(EXEMPT),
+                          'gaps': [{'id': k, 'count': v, 'example': where[k]} for k, v in gaps]},
                          ensure_ascii=False))
         return 0 if (not gaps or list_only) else 1
 
