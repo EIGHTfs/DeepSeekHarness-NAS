@@ -142,27 +142,83 @@ def wait_for_artifacts(home, session_id, timeout=120):
     return None
 
 
-def main():
+def _parse_args():
     ap = argparse.ArgumentParser(description="触发 DSH 会话迁移（WebSocket session/follow）")
     ap.add_argument("target", help="会话 id（或 all 表示全部未迁移会话）")
     ap.add_argument("home", help="DSH_HOME（.dsh 目录）")
     ap.add_argument("--port", type=int, default=30801)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--wait", type=int, default=90, help="等待迁移产物的秒数")
-    args = ap.parse_args()
+    return ap.parse_args()
 
-    home = os.path.abspath(args.home)
+
+def _acquire_auth(home, port, host):
+    """取 web token 并换 cookie。返回 (cookie, 退出码)：cookie 为空时退出码非 0。"""
     token, src = find_token(home)
     if not token:
         print("  ✗ 未找到 web token。请确认 DSH 正在运行，且实例根目录有启动日志。")
-        return 1
+        return None, 1
     print(f"  token 来源: {src}")
 
-    cookie = exchange_cookie(args.port, token, args.host)
+    cookie = exchange_cookie(port, token, host)
     if not cookie:
         print("  ✗ token 换 cookie 失败（token 可能已过期：DSH 重启会换新 token）")
-        return 1
+        return None, 1
     print(f"  cookie: {cookie[:36]}...")
+    return cookie, 0
+
+
+def _resolve_targets(target, sessions, home):
+    """解析要迁移的会话列表。返回 (targets, 退出码)：退出码非 0 表示无需继续。"""
+    if target != "all":
+        return [target], 0
+    targets = []
+    for it in sessions:
+        sid = it.get("sessionId")
+        found = None
+        for dirpath, dirnames, filenames in os.walk(os.path.join(home, "sessions")):
+            if os.path.basename(dirpath) == sid:
+                found = dirpath
+                break
+        if not found:
+            continue
+        # 已生成 v3 的会话无需迁移
+        if not os.path.exists(os.path.join(found, "session.v3.jsonl.zstd")):
+            targets.append(sid)
+    if not targets:
+        print("  没有待迁移的会话（都已生成 v3）")
+        return [], 0
+    return targets, 0
+
+
+def _follow_targets(targets, port, cookie, host, wait, home):
+    """逐个触发 follow 并等待产物落盘。返回退出码（任一失败即 1）。"""
+    rc = 0
+    for sid in targets:
+        print(f"\n── {sid}")
+        ok, ver, e = follow(port, cookie, sid, host, wait)
+        if not ok:
+            print(f"  ✗ follow 未取到 snapshot: {json.dumps(e, ensure_ascii=False) if e else '无响应'}")
+            rc = 1
+            continue
+        print(f"  ✓ follow 成功，服务端 header.version = v{ver}")
+
+        p = wait_for_artifacts(home, sid, wait)
+        if p:
+            print(f"  ✓ 迁移产物已落盘: {os.path.relpath(p, home)}  ({os.path.getsize(p)} 字节)")
+        else:
+            print(f"  ⚠ {wait}s 内未见 v3 落盘（可能仍在写，或该会话无需迁移）")
+            rc = 1
+    return rc
+
+
+def main():
+    args = _parse_args()
+    home = os.path.abspath(args.home)
+
+    cookie, rc = _acquire_auth(home, args.port, args.host)
+    if rc:
+        return rc
 
     sessions, err = list_sessions(args.port, cookie, args.host)
     if sessions is None:
@@ -170,45 +226,11 @@ def main():
         return 1
     print(f"  在线会话: {len(sessions)} 个")
 
-    # 解析目标
-    if args.target == "all":
-        targets = []
-        for it in sessions:
-            sid = it.get("sessionId")
-            found = None
-            for dirpath, dirnames, filenames in os.walk(os.path.join(home, "sessions")):
-                if os.path.basename(dirpath) == sid:
-                    found = dirpath
-                    break
-            if not found:
-                continue
-            has_v3 = os.path.exists(os.path.join(found, "session.v3.jsonl.zstd"))
-            if not has_v3:
-                targets.append(sid)
-        if not targets:
-            print("  没有待迁移的会话（都已生成 v3）")
-            return 0
-    else:
-        targets = [args.target]
-
+    targets, rc = _resolve_targets(args.target, sessions, home)
+    if not targets:
+        return rc
     print(f"  待迁移: {len(targets)} 个")
-    rc = 0
-    for sid in targets:
-        print(f"\n── {sid}")
-        ok, ver, e = follow(args.port, cookie, sid, args.host, args.wait)
-        if not ok:
-            print(f"  ✗ follow 未取到 snapshot: {json.dumps(e, ensure_ascii=False) if e else '无响应'}")
-            rc = 1
-            continue
-        print(f"  ✓ follow 成功，服务端 header.version = v{ver}")
-
-        p = wait_for_artifacts(home, sid, args.wait)
-        if p:
-            print(f"  ✓ 迁移产物已落盘: {os.path.relpath(p, home)}  ({os.path.getsize(p)} 字节)")
-        else:
-            print(f"  ⚠ {args.wait}s 内未见 v3 落盘（可能仍在写，或该会话无需迁移）")
-            rc = 1
-    return rc
+    return _follow_targets(targets, args.port, cookie, args.host, args.wait, home)
 
 
 if __name__ == "__main__":
