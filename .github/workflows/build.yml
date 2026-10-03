@@ -26,8 +26,7 @@ permissions:
 
 jobs:
   # ── 群晖 SPK：源码链路（需完整 pnpm install + build + 裁剪）──
-  build-spk:
-    if: ${{ vars.BUILD_SPK != 'false' }}
+  build-target:
     runs-on: ubuntu-latest
 
     steps:
@@ -42,25 +41,28 @@ jobs:
           python3 scripts/check-build-naming.py
           bash test/safe-rm-rf.test.sh
 
-      - uses: ./.github/actions/setup-node-env
-
-      - uses: ./.github/actions/fetch-latest
+      # 唯一构建：install + build + 裁剪一次做完，target 作为 artifact 传给各打包 job
+      - uses: ./.github/actions/build-target
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: ./.github/actions/ci-clean
+  # ── 打包：SPK · 源码链路（复用 build-target 的 artifact，不重复构建）──────────
+  pack-spk-source:
+    if: ${{ vars.BUILD_SPK != 'false' }}
+    needs: [build-target]
+    runs-on: ubuntu-latest
 
-      # ⚠ 该 job 的日志 GitHub 时常不归档（BlobNotFound）。单步构建（BUILD_STAGE=all）
-      #   保证失败时 failure() 能捕获；日志靠 artifact 兜底。
-      - name: 公共预编译 pnpm install + build + 裁剪
-        run: ./build/build-common.sh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/pack-with-target
+
+      - name: 打 SPK（消费复用的 target）
+        run: ./build/SPK/build-spk.sh
 
       - uses: ./.github/actions/upload-build-logs
         with:
-          artifact-name: build-spk-debug-log
-
-      - name: 打 SPK
-        run: ./build/SPK/build-spk.sh
+          artifact-name: pack-spk-source-debug-log
 
       - name: 上传 SPK 产物
         uses: actions/upload-artifact@v4
@@ -70,28 +72,16 @@ jobs:
             build/staging/*.spk
           retention-days: 14
 
-  # ── 飞牛 FPK · 源码链路（独立 job）────────────────────────────────────────
-  #    与 npm 链路**各自独立 job、独立 artifact、独立 Release**（2026-10-03）：
-  #    两条链失败互不阻塞、可并行；产物不再共用一个 fpk-dist 靠文件名分拣。
-  #    start.sh 母版、build-config.yaml 两边共用，改一处同步。
-  build-fpk-source:
+  pack-fpk-source:
+    needs: [build-target]
     if: ${{ vars.BUILD_FPK != 'false' }}
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: ./.github/actions/setup-node-env
-
-      - uses: ./.github/actions/fetch-latest
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
       # 源码链路需要完整源码编译（npm 链路只取版本号对齐）
-      - uses: ./.github/actions/ci-clean
-
-      - name: 公共预编译 pnpm install + build + 裁剪
-        run: ./build/build-common.sh
+      - uses: ./.github/actions/pack-with-target
 
       - name: 打 FPK（源码构建，消费 target）
         run: ./build/FPK/build-fpk.sh
@@ -109,7 +99,7 @@ jobs:
           retention-days: 14
 
   # ── 飞牛 FPK · npm 链路（独立 job，不需要源码编译）────────────────────────
-  build-fpk-npm:
+  pack-fpk-npm:
     if: ${{ vars.BUILD_FPK != 'false' }}
     runs-on: ubuntu-latest
 
@@ -149,7 +139,7 @@ jobs:
   #   文案/标题/更新日志统一由 build/release-note.sh 生成
   #   （MODE=main 源码链 / MODE=npm 独立链），workflow 不写任何中文文案。
   release:
-    needs: [build-spk, build-fpk-source, build-fpk-npm]
+    needs: [pack-spk-source, pack-fpk-source, pack-fpk-npm]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
