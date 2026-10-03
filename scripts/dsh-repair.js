@@ -145,7 +145,10 @@ function findNode(dshDir) {
   try {
     const out = execSync('command -v node 2>/dev/null || which node 2>/dev/null', { encoding: 'utf8' }).trim();
     if (out) return out;
-  } catch {}
+  } catch {
+    // 有意忽略：这是"在 PATH 里找 node"的兜底手段，command/which 都可能不存在或返回非零；
+    // 找不到就让下面的 throw 给出统一报错，不在此处单独报错以免重复
+  }
   throw new Error('未找到 node 可执行文件');
 }
 
@@ -187,9 +190,15 @@ function resolveDshHome(dshDir) {
             }
           }
         }
-      } catch {}
+      } catch {
+        // 有意忽略：读 /proc/<pid>/{cmdline,environ} 时该进程可能刚退出或属其他用户（EACCES）；
+        // 单个进程读不到就换下一个，不影响整体探测
+      }
     }
-  } catch {}
+  } catch {
+    // 有意忽略：/proc 不可读（非 Linux 或受限容器）时整段"从进程探测"跳过，
+    // 下面还有按标准路径推断的兜底分支，故不视为错误
+  }
 
   // 默认：按标准路径推断
   const runDotDsh = path.join(dshDir, '.dsh-home', 'run', '.dsh');
