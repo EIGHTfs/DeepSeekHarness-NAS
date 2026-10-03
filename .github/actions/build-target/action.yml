@@ -37,6 +37,11 @@ runs:
     - name: 随包 node / pnpm 环境
       uses: ./.github/actions/setup-node-env
 
+    - name: 解析官方最新 tag（作为 target 复用缓存的 key）
+      id: tag
+      shell: bash
+      run: echo "tag=$(./scripts/fetch-dsh-latest.sh --print-tag)" >> "$GITHUB_OUTPUT"
+
 
     # ── 缓存：官方源码 git 镜像（fetch-dsh-latest.sh 增量拉取的基础）──
     #   key 用仓库 + build-config.yaml 指纹；restore-keys 兜底到最近一次（镜像本身就是增量源，
@@ -81,6 +86,38 @@ runs:
         echo "pnpm store 缓存命中: ${{ steps.cache-pnpm-store.outputs.cache-hit }}"
         du -sh assets/pnpm-store 2>/dev/null || echo "（store 目录尚未创建，本次为冷启动）"
 
+    # ── 缓存：**已构建好的 target**（真正的"旧产物复用"，2026-10-04 补）──
+    #   为什么之前每次都重编 20 分钟：只缓存了输入（源码镜像 / pnpm store），**没缓存 target**，
+    #   runner 每次是空的 → build-common.sh 的 SKIP_BUILD（缺省即复用）无物可复用。
+    #   key 用**官方 tag**（源码变了必须重编）+ 构建逻辑指纹（这些文件变了也重编）。
+    #   仍用 tar 单文件：目录太大/文件太多会让 cache action 同样吃内存。
+    - name: 复用已构建的 target（按官方 tag 命中）
+      id: cache-target
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/reuse-target.tar.gz
+        key: dsh-target-${{ steps.tag.outputs.tag }}-${{ hashFiles('build/build-config.yaml','build/build-common.sh','build/prune-target.sh','build/prune_common.py','build/build-prune-whitelist.json','scripts/lib/common.sh') }}
+        restore-keys: |
+          dsh-target-${{ steps.tag.outputs.tag }}-
+
+    - name: 命中则解包 target（随后 build-common.sh 会跳过编译）
+      if: steps.cache-target.outputs.cache-hit == 'true'
+      shell: bash
+      run: |
+        set -e
+        TAR="$RUNNER_TEMP/reuse-target.tar.gz"
+        T="build/master-build/build"
+        mkdir -p "$T"
+        tar -xzf "$TAR" -C "$T"
+        echo "✓ target 缓存命中（${{ steps.tag.outputs.tag }}）：已解包 $(du -sh "$T/target" 2>/dev/null | cut -f1)"
+        echo "  build-common.sh 将走 SKIP_BUILD 复用分支（跳过 20 分钟编译）"
+        ls -la "$T/.build-done" 2>/dev/null || echo "  ⚠ 未见到 .build-done 标记，SKIP_BUILD 可能不生效"
+
+    - name: 未命中则说明将完整构建
+      if: steps.cache-target.outputs.cache-hit != 'true'
+      shell: bash
+      run: echo "target 缓存未命中（${{ steps.tag.outputs.tag }}）→ 本次完整构建（约 20 分钟）"
+
     # ⚠ 单步构建（BUILD_STAGE=all）保证失败时 failure() 能捕获；日志靠 artifact 兜底。
     - name: 公共预编译 pnpm install + build + 裁剪（唯一一次）
       shell: bash
@@ -103,6 +140,9 @@ runs:
         echo "✓ 已打包单文件: $TAR（$(du -h "$TAR" | cut -f1)）"
         echo "  上传后 pack-* job 解包即得同样的 target/ 与 build-meta.env"
         echo "ARTIFACT_TAR=$TAR" >> "$GITHUB_ENV"
+        # 同一份 tar 也作为"下次运行复用"的缓存内容（单文件，省内存）
+        cp -f "$TAR" "$RUNNER_TEMP/reuse-target.tar.gz"
+        echo "✓ 已写入复用缓存文件: $RUNNER_TEMP/reuse-target.tar.gz"
 
     - name: 上传 target（单文件，供 pack-* job 复用，避免重复构建）
       uses: actions/upload-artifact@v4
