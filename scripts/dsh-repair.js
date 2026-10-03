@@ -67,6 +67,10 @@ const path = require('path');
 const DEFAULT_DSH_PORT = 30801;
 const DEFAULT_PROXY_PORT = 30800;
 const DEFAULT_CONTAINER_PORT = 30802;
+// --dry-run / DSH_REPAIR_DRY_RUN=1：破坏性动作（停旧实例、写 PID 文件、改权限、启动）
+// 只打印不执行。⚠ 加这个开关的直接原因：无参数运行时 findDshDir 会自动定位到**正在服务**的
+// DSH，随后 killOldProcesses() 会把它停掉 —— 实测把本会话的宿主进程杀过一次。
+const DRY_RUN = process.argv.includes('--dry-run') || process.env.DSH_REPAIR_DRY_RUN === '1';
 // PID 文件名带 uid：同一台机器上多用户各跑一次时，共用 /tmp/dsh-repair.pid 会互相覆盖、
 // 进而被 killOldProcesses() 照着杀掉对方实例。dsh-repair.cjs 早有这个补丁，本文件此前没有。
 const _uid = typeof process.getuid === 'function' && process.getuid() !== undefined ? process.getuid() : 'x';
@@ -310,12 +314,16 @@ function killOldProcesses(dshDir) {
   try {
     const oldPid = fs.readFileSync(PID_FILE, 'utf-8').trim();
     if (oldPid) {
-      console.log(`[√] 停止旧实例 (PID ${oldPid})`);
-      try { process.kill(parseInt(oldPid, 10), 'SIGTERM'); } catch {
-        // 有意忽略：目标进程可能已自行退出（ESRCH）；下面还会补一次 SIGKILL
-      }
-      try { process.kill(parseInt(oldPid, 10), 'SIGKILL'); } catch {
-        // 有意忽略：同上，进程已不在
+      if (DRY_RUN) {
+        console.log(`[dry-run] 将停止旧实例 (PID ${oldPid})`);
+      } else {
+        console.log(`[√] 停止旧实例 (PID ${oldPid})`);
+        try { process.kill(parseInt(oldPid, 10), 'SIGTERM'); } catch {
+          // 有意忽略：目标进程可能已自行退出（ESRCH）；下面还会补一次 SIGKILL
+        }
+        try { process.kill(parseInt(oldPid, 10), 'SIGKILL'); } catch {
+          // 有意忽略：同上，进程已不在
+        }
       }
     }
   } catch {
@@ -332,8 +340,12 @@ function killOldProcesses(dshDir) {
         try {
           const cwd = fs.readlinkSync(path.join('/proc', pid, 'cwd'));
           if (cwd === dshDir) {
-            console.log(`[√] 停止 DSH 子进程 (PID ${pid})`);
-            process.kill(parseInt(pid, 10), 'SIGKILL');
+            if (DRY_RUN) {
+              console.log(`[dry-run] 将停止 DSH 子进程 (PID ${pid})`);
+            } else {
+              console.log(`[√] 停止 DSH 子进程 (PID ${pid})`);
+              process.kill(parseInt(pid, 10), 'SIGKILL');
+            }
           }
         } catch {
           // 有意忽略：读 /proc/<pid>/cwd 时该进程可能已退出（竞态），跳过即可
@@ -353,8 +365,12 @@ function killOldProcesses(dshDir) {
     );
     for (const pid of out.trim().split('\n').filter(Boolean)) {
       if (pid === selfPid) continue;
-      try { process.kill(parseInt(pid, 10), 'SIGTERM'); } catch {
-        // 有意忽略：该进程可能已退出（ESRCH），继续处理列表里的下一个
+      if (DRY_RUN) {
+        console.log(`[dry-run] 将停止 dsh-repair 进程 (PID ${pid})`);
+      } else {
+        try { process.kill(parseInt(pid, 10), 'SIGTERM'); } catch {
+          // 有意忽略：该进程可能已退出（ESRCH），继续处理列表里的下一个
+        }
       }
     }
   } catch {

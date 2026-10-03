@@ -649,7 +649,8 @@ DeepSeekHarness-NAS/
 │   ├── set-dsh-cpu-quota.sh / verify-dsh-cpu-quota.sh  # CPU 配额设置/验证
 │   ├── fix-dsh-settings-namespace.sh  # alpha 版插件加载失败修复
 │   ├── generate-diff-report.sh  #   正式/测试 FPK 差分报告
-│   └── dsh-repair.cjs           #   独立守护
+│   └── dsh-repair.cjs           #   独立守护（带外副本，非运行时权威；支持 --dry-run /
+│                                #   DSH_REPAIR_DRY_RUN=1：只打印将停的 PID 而不真停）
 ├── web-install/                 # 【网页安装工具】远程探测系统 + 网页安装/卸载/检查/修复（2026-09-14 从 scripts/ 迁出）
 │   ├── install-server.py        #   网页安装服务端（配置保存 + 系统探测 + 远程执行 + 安装历史）
 │   ├── install-server-ctl.sh    #   8765 服务端启停（start/stop/restart/status）
