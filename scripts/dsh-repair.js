@@ -461,12 +461,18 @@ async function main() {
 
   // 先停止旧实例（必须在自己写 PID 文件之前，否则会 kill 自己）
   await killOldProcesses(dshDir);
+  // 端口：环境变量优先（与 .cjs / 内嵌段同构），命令行参数兜底。
+  // ⚠ 必须在 DRY_RUN 提前退出【之前】解析：退出分支要打印端口，且它只依赖 env 与 parsePortArg。
+  const dshPort = parseInt(process.env.DSH_REPAIR_DSH_PORT || '', 10) || parsePortArg('--dsh-port', DEFAULT_DSH_PORT);
+  const proxyPort = parseInt(process.env.DSH_REPAIR_PROXY_PORT || '', 10) || parsePortArg('--proxy-port', DEFAULT_PROXY_PORT);
+  const containerPort = parseInt(process.env.DSH_REPAIR_CONTAINER_PORT || '', 10) || parsePortArg('--container-port', DEFAULT_CONTAINER_PORT);
   if (DRY_RUN) {
     // 到此为止：killOldProcesses 已在 dry-run 下只打印将停的 PID，未真停；
     // 后面的写 PID 文件 / 改权限 / 启动 DSH / 挂反代与容器一律不做。
     console.log('═══════════════════════════════════════');
     console.log('  [dry-run] 到此为止');
     console.log(`  目标 DSH 目录: ${dshDir}`);
+    console.log(`  端口: DSH=${dshPort} 反代=${proxyPort} 容器=${containerPort}`);
     console.log('  未做：写 PID 文件、收紧权限、启动 DSH、挂反代与容器页面');
     console.log('═══════════════════════════════════════');
     return;
@@ -491,9 +497,7 @@ async function main() {
   secureDshTree(dshHome);
 
   // 端口
-  const dshPort = parsePortArg('--dsh-port', DEFAULT_DSH_PORT);
-  const proxyPort = parsePortArg('--proxy-port', DEFAULT_PROXY_PORT);
-  const containerPort = parsePortArg('--container-port', DEFAULT_CONTAINER_PORT);
+  // （端口已在上方 DRY_RUN 分支之前解析）
 
   // 等端口释放
   let waitCount = 0;
