@@ -104,7 +104,11 @@ runs:
           build/master-build/build/target
           build/master-build/build/build-meta.env
         retention-days: ${{ inputs.retention-days }}
-        compression-level: 6
+        # 0 = 只打包不压缩（2026-10-04）：该 artifact 只在**同一次运行内**被 pack-* 复用，
+        # 无需压缩。实测 compression-level=6 时，upload-artifact 的 node 进程在压缩
+        # 745MB target（文件数极多）时爆 4GB 堆：FATAL ERROR: Ineffective mark-compacts
+        # near heap limit → 整个 job 失败。改为 0 后既消除 OOM，也大幅加快上传。
+        compression-level: 0
 
     - name: 上传构建日志
       uses: ./.github/actions/upload-build-logs
