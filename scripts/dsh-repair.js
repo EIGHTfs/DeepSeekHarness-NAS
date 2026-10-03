@@ -170,6 +170,14 @@ function isDshDir(dir) {
 
 // ========== 2. 检测 DSH 入口和 node ==========
 function detectEntry(dshDir) {
+  // ⓪ 环境变量优先（start.sh 内嵌版走这条；shim 也把 --entry 映射到这里）
+  if (process.env.DSH_REPAIR_ENTRY) {
+    const rel = process.env.DSH_REPAIR_ENTRY;
+    if (fs.existsSync(path.join(dshDir, rel))) {
+      return { entry: rel, tsx: rel.endsWith('.ts'), exists: rel };
+    }
+    throw new Error(`DSH_REPAIR_ENTRY 指定的入口不存在: ${rel}`);
+  }
   const checks = [
     { entry: 'apps/cli/src/bin.ts',          tsx: true,  exists: 'apps/cli/src/bin.ts' },
     { entry: 'node_modules/@deepseek-ai/dsh/lib/bin.js', tsx: false, exists: 'node_modules/@deepseek-ai/dsh/lib/bin.js' },
@@ -183,6 +191,12 @@ function detectEntry(dshDir) {
 }
 
 function findNode(dshDir) {
+  // ⓪ 环境变量优先（start.sh 内嵌版走这条；shim 也把 --node 映射到这里）
+  if (process.env.DSH_REPAIR_NODE) {
+    const n = process.env.DSH_REPAIR_NODE;
+    if (fs.existsSync(n)) return n;
+    throw new Error(`DSH_REPAIR_NODE 指定的 node 不存在: ${n}`);
+  }
   // 1) 本实例自带 node（相对路径，与包名无关）
   // 2) 系统标准路径（/usr/local/bin /usr/bin）
   // 3) PATH 兜底
@@ -204,6 +218,18 @@ function findNode(dshDir) {
 
 // ========== 3. 探测 DSH_HOME 和数据区 ==========
 function resolveDshHome(dshDir) {
+  // ⓪ 环境变量优先（start.sh 内嵌版走这条；shim 也把 --dsh-home/--home 映射到这里）：
+  //    DSH_REPAIR_HOME = .dsh 目录；DSH_REPAIR_HOME_PARENT = 其上级（HOME）；后者未设时取上级目录。
+  if (process.env.DSH_REPAIR_HOME) {
+    const dshHome = path.resolve(process.env.DSH_REPAIR_HOME);
+    const home = process.env.DSH_REPAIR_HOME_PARENT
+      ? path.resolve(process.env.DSH_REPAIR_HOME_PARENT)
+      : path.dirname(dshHome);
+    fs.mkdirSync(dshHome, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+    console.log(`[√] 环境变量指定 DSH_HOME=${dshHome}`);
+    return { dshHome, home };
+  }
   // 最高优先级：--dsh-home <路径> 显式指定（home 自动取其上级）
   const dhIdx = process.argv.indexOf('--dsh-home');
   if (dhIdx !== -1 && process.argv[dhIdx + 1]) {
