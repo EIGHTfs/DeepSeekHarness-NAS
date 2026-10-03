@@ -4,17 +4,17 @@
 #===============================================================================
 # 【三脚本分工】2026-09-13 从原 build.sh（spk+fpk 混合 1216 行）拆分：
 #   build-common.sh  公共：pnpm install + build + 黑白名单裁剪 → target 整树 + build-meta.env
-#   build-spk.sh     消费 target → 群晖 .spk 安装包
-#   build-fpk.sh     【本脚本】消费 target → 飞牛 .fpk 安装包
+#   pack-spk.sh     消费 target → 群晖 .spk 安装包
+#   pack-fpk.sh     【本脚本】消费 target → 飞牛 .fpk 安装包
 #
 # 【双链路】（2026-09-13 新增；默认行为不变）:
-#   ./build-fpk.sh          默认：消费 build-common.sh 的 target（源码 monorepo 编译产物）
-#   ./build-fpk.sh --npm    新增：消费 build-npm-fpk-app.sh 的 app_root（npm 装官方包，~100MiB）
-#                           前置：先运行 ./build/FPK/build-npm-fpk-app.sh [VERSION]
+#   ./pack-fpk.sh          默认：消费 build-common.sh 的 target（源码 monorepo 编译产物）
+#   ./pack-fpk.sh --npm    新增：消费 build-npm-app.sh 的 app_root（npm 装官方包，~100MiB）
+#                           前置：先运行 ./build/build-npm-app.sh [VERSION]
 #                           仅此参数走 npm 链路；SPK 与源码链路完全不受影响
 #
 # 用法:
-#   ./build-fpk.sh [--npm]
+#   ./pack-fpk.sh [--npm]
 #
 # 产物:
 #   build/staging/<APP_NAME>_x86-<FPK_VERSION>.fpk
@@ -41,7 +41,7 @@ BUILD_ROOT="$WS/build"
 CONFIG_FILE="$SCRIPT_DIR/../build-config.yaml"               # 配置在 build/ 根
 BUILD_META_DIR="$BUILD_ROOT/master-build"                    # 源码链路 target 元数据根（原 spk-build → master-build）
 NPM_META_DIR="$BUILD_ROOT/master-build"                      # npm 链路 app 元数据根（同根目录，不同子目录）
-NPM_APP_SCRIPT="$BUILD_ROOT/FPK/build-npm-fpk-app.sh"        # FPK npm 链路脚本（本目录）
+NPM_APP_SCRIPT="$BUILD_ROOT/build-npm-app.sh"        # FPK npm 链路脚本（本目录）
 EXCLUDES_FILE="$BUILD_ROOT/build-excludes.json"              # tar 排除规则（通用，build/ 根）
 BUILD_LIB="$BUILD_ROOT/build-lib.sh"                         # 公共函数库（构建级共用）
 
@@ -109,7 +109,7 @@ CFG_SHARE_DATA_DIR="${FPKCFG_SHARE_DATA_DIR-}"
 if [ "$NPM_MODE" = "1" ]; then
   _NPM_META="$(ls -1t "$NPM_META_DIR"/npm-app-*/npm-meta.env 2>/dev/null | head -1)"
   if [ -z "$_NPM_META" ] || [ ! -f "$_NPM_META" ]; then
-    echo "✗ 未找到 npm-meta.env（请先运行 ./build/FPK/build-npm-fpk-app.sh [VERSION] 生成 npm 应用体）" >&2
+    echo "✗ 未找到 npm-meta.env（请先运行 ./build/build-npm-app.sh [VERSION] 生成 npm 应用体）" >&2
     exit 1
   fi
   . "$_NPM_META"   # APP_NAME/APP_ID/APP_NAME_LOWER/PKG_VER/FPK_VERSION/SPK_VERSION/APP_ROOT
@@ -694,7 +694,7 @@ echo "  ✅ FPK: $OUT_FPK ($(du -h --apparent-size "$OUT_FPK" | cut -f1) | MD5 $
 # 体积门禁（阈值来自 build-config.yaml size_limit_mb；0 = 不检查）
 if [ "${CFG_SIZE_LIMIT_MB:-0}" != "0" ] && [ -n "$_FPK_SIZE_MB" ] && [ "$_FPK_SIZE_MB" -gt "$CFG_SIZE_LIMIT_MB" ]; then
   echo "[!] 体积门禁未通过：$_FPK_SIZE_MB MB > ${CFG_SIZE_LIMIT_MB} MB（阈值 size_limit_mb in build-config.yaml）" >&2
-  echo "    产物已生成但未达标，请先裁剪（build/FPK/build-fpk.sh 消费的 target 重新跑 build-common.sh 纯白名单裁剪）后再发布。" >&2
+  echo "    产物已生成但未达标，请先裁剪（build/FPK/pack-fpk.sh 消费的 target 重新跑 build-common.sh 纯白名单裁剪）后再发布。" >&2
   exit 1
 fi
 

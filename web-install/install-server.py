@@ -317,8 +317,8 @@ _BUILD_STAGES = [
 # 三个构建脚本（2026-09-15 目录归位后路径：SPK/FPK 子目录 + 通用留根）
 _BUILD_SCRIPTS = {
     'common': 'build/build-common.sh',
-    'spk':    'build/SPK/build-spk.sh',
-    'fpk':    'build/FPK/build-fpk.sh',
+    'spk':    'build/SPK/pack-spk.sh',
+    'fpk':    'build/FPK/pack-fpk.sh',
 }
 
 

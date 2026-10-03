@@ -61,10 +61,10 @@ jobs:
       - uses: ./.github/actions/pack-with-target
 
       - name: 打 SPK（源码链路）
-        run: ./build/SPK/build-spk.sh
+        run: ./build/SPK/pack-spk.sh
 
       - name: 打 FPK（源码链路）
-        run: ./build/FPK/build-fpk.sh
+        run: ./build/FPK/pack-fpk.sh
 
       - name: 汇总产物到 dist-main（供后续检查与发布）
         run: |

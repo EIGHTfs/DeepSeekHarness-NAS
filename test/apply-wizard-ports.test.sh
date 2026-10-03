@@ -2,7 +2,7 @@
 #===============================================================================
 # apply-wizard-ports.test.sh — 验证 SPK installer 的端口逻辑（三场景）
 #===============================================================================
-# 【被测对象】build/SPK/build-spk.sh 的 installer 母版中 apply_wizard_ports()：
+# 【被测对象】build/SPK/pack-spk.sh 的 installer 母版中 apply_wizard_ports()：
 #   最终生效端口 = 向导值 → 历史 ports 文件 → 打包默认；并**无条件**把 ui/config
 #   门户端口同步为最终值（2026-10-02 修复：重装未填端口时不再跳过同步）。
 #
@@ -11,15 +11,15 @@
 #   S2 全新安装填向导端口 3090/3091/3092 → ui/config 应为 3090
 #   S3 全新安装未填端口（无历史）→ ui/config 应为打包默认 30800
 #
-# 【设计】从 build-spk.sh 实时提取 installer 母版（改源码即测新逻辑，不复制产物）；
+# 【设计】从 pack-spk.sh 实时提取 installer 母版（改源码即测新逻辑，不复制产物）；
 #   mktemp 隔离工作目录，结束清理，零污染。
 # 【用法】./test/apply-wizard-ports.test.sh   （退出码 0=全过；非 0=失败）
 #===============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD_SPK="$SCRIPT_DIR/../build/SPK/build-spk.sh"
-[ -f "$BUILD_SPK" ] || { echo "✗ 未找到 build-spk.sh: $BUILD_SPK" >&2; exit 1; }
+BUILD_SPK="$SCRIPT_DIR/../build/SPK/pack-spk.sh"
+[ -f "$BUILD_SPK" ] || { echo "✗ 未找到 pack-spk.sh: $BUILD_SPK" >&2; exit 1; }
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
