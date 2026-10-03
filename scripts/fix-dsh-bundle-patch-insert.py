@@ -154,14 +154,22 @@ def convert_text(text: str) -> str:
 
 
 def write_via_fileinput(path: Path, new_text: str) -> None:
+    """写回文件并留一份 .bak（整体替换为新内容）。
+
+    ⚠ 不要改回 fileinput：它的 `encoding` 参数是 **Python 3.10+** 才有的，
+    而本机（群晖自带）是 3.8 —— 一调用就
+        TypeError: input() got an unexpected keyword argument 'encoding'
+    也就是说本脚本的**写回路径在本机从来没成功过**（只有 --dry-run 能跑通）。
+    这是单测从 dry_run 扩到"真写"时才暴露出来的（临时目录内验证，未影响真实文件）。
+
+    这里用 shutil 先备份再整体写回；两个调用点都只在内容确实需要修改时才调用，
+    因此"总是先备份"与 fileinput(inplace=True, backup=".bak") 的行为一致。
+    """
+    import shutil
     if not new_text.endswith("\n"):
         new_text += "\n"
-    first = True
-    with fileinput.input(files=[str(path)], inplace=True, backup=".bak", encoding="utf-8") as fh:
-        for _line in fh:
-            if first:
-                print(new_text, end="")
-                first = False
+    shutil.copy2(path, str(path) + ".bak")
+    path.write_text(new_text, encoding="utf-8")
 
 
 def collect_patch_files(paths: list[Path]) -> list[Path]:
@@ -237,7 +245,7 @@ def convert_profile_inserts_to_overrides(text: str, ids: set[str]) -> str:
     return "\n".join(out).rstrip() + "\n"
 
 
-def main(argv: list[str] | None = None) -> int:
+def _parse_args(argv):
     parser = argparse.ArgumentParser(description="Fix DSH plugin cordis.patch.yml to use insert")
     parser.add_argument("paths", nargs="*", type=Path, help="plugin dir / yml / workspace")
     parser.add_argument("--dry-run", action="store_true")
@@ -247,14 +255,14 @@ def main(argv: list[str] | None = None) -> int:
         default="git-push,skill-scoreboard",
         help="用户层要从 insert 改成覆盖的 id，逗号分隔",
     )
-    args = parser.parse_args(argv)
+    return parser.parse_args(argv)
 
-    targets = args.paths or [DEFAULT_WORKSPACE]
-    files = collect_patch_files(targets)
-    if not files:
-        print("没有找到 cordis.patch.yml", file=sys.stderr)
-        # 仍可能只改 profile
-    print(f"扫描 {len(files)} 个 cordis.patch.yml")
+
+def _process_patch_files(files, dry_run):
+    """逐个处理收集到的 cordis.patch.yml。返回 (changed, skipped)。
+
+    只有 classify_patch 判为 wrong 的才转换；dry_run 时只打印不改文件。
+    """
     changed = 0
     skipped = 0
     for path in files:
@@ -266,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
             skipped += 1
             continue
         new = convert_text(text)
-        if args.dry_run:
+        if dry_run:
             print(f"  DRY  wrong → insert  {rel}")
             changed += 1
             continue
@@ -274,22 +282,40 @@ def main(argv: list[str] | None = None) -> int:
         bak = Path(str(path) + ".bak")
         print(f"  FIX  {rel}  bak={bak.exists()}")
         changed += 1
+    return changed, skipped
+
+
+def _process_profile_patch(pp, ids, dry_run):
+    """处理用户层 profile 补丁。返回 (changed, skipped)。"""
+    old = pp.read_text(encoding="utf-8")
+    new = convert_profile_inserts_to_overrides(old, ids)
+    if new == old:
+        print(f"  skip profile (无需改)  {pp}")
+        return 0, 1
+    if dry_run:
+        print(f"  DRY  profile override  {pp}")
+    else:
+        write_via_fileinput(pp, new)
+        print(f"  FIX  profile  {pp}")
+    return 1, 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+
+    targets = args.paths or [DEFAULT_WORKSPACE]
+    files = collect_patch_files(targets)
+    if not files:
+        print("没有找到 cordis.patch.yml", file=sys.stderr)
+        # 仍可能只改 profile
+    print(f"扫描 {len(files)} 个 cordis.patch.yml")
+    changed, skipped = _process_patch_files(files, args.dry_run)
 
     if args.profile_patch:
-        pp = args.profile_patch
         ids = {x.strip() for x in args.override_ids.split(",") if x.strip()}
-        old = pp.read_text(encoding="utf-8")
-        new = convert_profile_inserts_to_overrides(old, ids)
-        if new != old:
-            if args.dry_run:
-                print(f"  DRY  profile override  {pp}")
-            else:
-                write_via_fileinput(pp, new)
-                print(f"  FIX  profile  {pp}")
-            changed += 1
-        else:
-            print(f"  skip profile (无需改)  {pp}")
-            skipped += 1
+        c, s = _process_profile_patch(args.profile_patch, ids, args.dry_run)
+        changed += c
+        skipped += s
 
     print(f"完成 changed={changed} skipped={skipped} dry_run={args.dry_run}")
     return 0
