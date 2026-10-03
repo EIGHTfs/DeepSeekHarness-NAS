@@ -471,9 +471,38 @@ if _STAGE_OK install && [ ! -d "$BUILD_SRC/node_modules" ]; then
   # --no-frozen-lockfile：install 前剥离 devDeps 后 package.json 与 lockfile 不一致，
   # CI 环境 pnpm 默认 frozen-lockfile 会报 ERR_PNPM_OUTDATED_LOCKFILE 拒绝安装
   # （实测 2026-09-14：裁剪 23 个 devDeps 后 install 失败）。加此参数重算 lockfile。
-  ( cd "$BUILD_SRC" && \
-    PATH="$PNPM_BIN_DIR:$PATH" HOME="$_HOME_DIR" PNPM_STORE_DIR="$PNPM_STORE" npm_config_cache="$NPM_CACHE" \
-    "$_PNPM_SHIM" install --store-dir="$PNPM_STORE" --force --no-frozen-lockfile 2>&1 | tail -20 )
+  # ── 网络容错（2026-10-03）：官方 0.2.1 的 @openai/codex 多平台 optional 包下载
+  #    error(23) 超时（默认 fetch-timeout=60s/retries=2）→ 整个 install 失败。
+  #    ① npm_config_fetch_timeout=600s + fetch_retries=5 + network_concurrency=8
+  #       （降低并发稳单包下载，pnpm 兼容 npm_config_* 环境变量）
+  #    ② install 失败自动重试 3 次（间隔 30s，瞬时网络抖动标准解法）
+  #    ③ 仍失败切 npmmirror 镜像兜底一次（registry.npmjs.org 海外偶发不稳）
+  _PNPM_LOG="$WS/assets/pnpm-install.log"
+  _pnpm_install() {  # $1 额外参数（如 --registry）；退出码=pnpm 真实退出码
+    ( cd "$BUILD_SRC" && \
+      PATH="$PNPM_BIN_DIR:$PATH" HOME="$_HOME_DIR" PNPM_STORE_DIR="$PNPM_STORE" \
+      npm_config_cache="$NPM_CACHE" \
+      npm_config_fetch_timeout=600000 npm_config_fetch_retries=5 npm_config_network_concurrency=8 \
+      "$_PNPM_SHIM" install --store-dir="$PNPM_STORE" --force --no-frozen-lockfile "${1:-}" \
+      > "$_PNPM_LOG" 2>&1 )
+  }
+  _inst_ok=1
+  for _attempt in 1 2 3; do
+    echo "  → pnpm install 尝试 $_attempt/3（fetch-timeout=600s, retries=5）"
+    if _pnpm_install; then _inst_ok=0; break; fi
+    tail -15 "$_PNPM_LOG" 2>/dev/null || true
+    echo "  ⚠ pnpm install 第 $_attempt 次失败，30s 后重试" >&2
+    [ "$_attempt" -lt 3 ] && sleep 30
+  done
+  if [ "$_inst_ok" = "1" ]; then
+    echo "  ⚠ 默认源 3 次失败，切 npmmirror 镜像最后尝试" >&2
+    _pnpm_install "--registry=https://registry.npmmirror.com" && _inst_ok=0 || true
+  fi
+  if [ "$_inst_ok" = "1" ]; then
+    echo "✗ pnpm install 4 次尝试均失败，最近日志见 $_PNPM_LOG" >&2
+    exit 1
+  fi
+  tail -5 "$_PNPM_LOG" >&2
 fi
 _ANN "stage=$BUILD_STAGE install 结束 (node_modules=$( [ -d "$BUILD_SRC/node_modules" ] && echo 有 || echo 无))"
 
