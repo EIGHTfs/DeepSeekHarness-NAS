@@ -16,6 +16,11 @@
 #         镜像，只下增量，`git archive` 出快照），再退化到 git clone，最后回退 api/zipball。
 #   去重: 目标 src/deepseek-ai/{tag} 目录已存在且非空 → 跳过不覆盖，重复运行不重复下载。
 #
+
+# ── 公共函数库（safe_rm_rf：强制 --one-file-system + 挂载点检测）──
+_DSH_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/lib/common.sh"
+[ -f "$_DSH_LIB" ] && . "$_DSH_LIB"
+
 set -euo pipefail
 
 # ---------- 定位脚本目录与仓库根（src 在仓库根，本脚本在 scripts/ 下） ----------
@@ -148,7 +153,7 @@ fi
 
 WORK="$SRC_DIR/$TMP_PREFIX"
 mkdir -p "$WORK"
-trap 'rm -rf "$WORK"' EXIT
+trap 'safe_rm_rf "$WORK"' EXIT
 
 # ---------- 方法0: 本地 git 缓存增量拉取（首选） ----------
 # 依据（2026-10-03 用户要求）：官方是 **git 仓库**，不该每次全量下快照；且**旧源码可复用**。

@@ -19,6 +19,11 @@
 # 产物:
 #   release/<tag>/<资产文件名>
 #
+
+# ── 公共函数库（safe_rm_rf：强制 --one-file-system + 挂载点检测）──
+_DSH_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/lib/common.sh"
+[ -f "$_DSH_LIB" ] && . "$_DSH_LIB"
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -123,7 +128,7 @@ ensure_aria2c() {
   else
     echo "  ⚠ aria2c 下载失败，继续用 curl 单流"
   fi
-  rm -rf "$WS/tools/.aria2-tmp"
+  safe_rm_rf "$WS/tools/.aria2-tmp"
 }
 
 # ---------- 列出资产（name/id/size） ----------
