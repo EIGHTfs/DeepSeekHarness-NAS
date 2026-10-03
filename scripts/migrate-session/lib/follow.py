@@ -11,7 +11,7 @@ follow.py —— 触发 DSH 把已投放的会话迁移到当前格式版本。
     流式的 session/follow 一走，lock 与 v3 立刻落盘。
   · follow 是流式 Remote 方法，必须走 WebSocket：/api/remote.mux
     帧格式：{"type":"open","streamId":<id>,"endpoint":"session/follow","payload":{"args":{...}}}
-  · 认证：先 HTTP 用 token 换 cookie（token 在启动输出 "dsh web: http://.../?token=..." 里），
+  · 认证：先 HTTP 用 token 换 cookie（token 在启动输出 "dsh web: http://.../?token=..." 里），  # dsh-skip-sensitive: 描述认证机制，token 为运行时生成，非硬编码凭据
     再把同一 cookie 带进 WebSocket 握手。cookie 名形如 dsh-auth-<随机串>。
 
 为什么用 Python：目标机（群晖）无 node_modules/ws、无 websockets 库，标准库最稳。
@@ -40,7 +40,7 @@ def sh(cmd):
 def find_token(home):
     """
     找到当前实例的 web token。
-    启动输出形如：dsh web: http://127.0.0.1:30801/?token=XXXX
+    启动输出形如：dsh web: http://127.0.0.1:30801/?token=XXXX  # dsh-skip-sensitive: 说明启动输出格式，XXXX 为占位符非真实凭据
     它被写到实例根目录（home 的上一级）的 <实例名>.log 里。
     """
     cands = []
@@ -70,7 +70,7 @@ def find_token(home):
 
 def exchange_cookie(port, token, host="127.0.0.1"):
     """用 token 换认证 cookie。返回 'name=value' 或 None。"""
-    out = sh(f'curl -s -m 8 -D - -o /dev/null "http://{host}:{port}/?token={token}" 2>/dev/null')
+    out = sh(f'curl -s -m 8 -D - -o /dev/null "http://{host}:{port}/?token={token}" 2>/dev/null')  # dsh-skip-sensitive: 本机回环请求换取 cookie，token 为运行时读取，非硬编码
     for line in (out or "").splitlines():
         if line.lower().startswith("set-cookie:"):  # dsh-skip-sensitive 仅解析响应头，非构造 Cookie，无 Secure/HttpOnly 可加
             ck = line.split(":", 1)[1].strip().split(";")[0].strip()
