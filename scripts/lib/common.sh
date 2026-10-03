@@ -21,15 +21,15 @@
 # 【哪些【不要】收口（2026-10-04 审计纠错，务必先读）】
 #   按"函数名重复"做的审计会**误报**：同名但**作用域不同**的代码不能抽，硬抽会破坏生成物。
 #   已确认的误报（保留各自实现，勿动）：
-#     · log_msg —— build/FPK/build-fpk.sh 里出现两次，但都在 **heredoc 生成的 fnOS 运行时
+#     · log_msg —— build/FPK/pack-fpk.sh 里出现两次，但都在 **heredoc 生成的 fnOS 运行时
 #       脚本**内（写 ${LOG_FILE}/${TRIM_PKGVAR} 日志），与构建侧日志**不是一回事**。
-#     · load_variables_from_file —— build-fpk.sh:364 是 fnOS 运行时要求的**空桩**，
+#     · load_variables_from_file —— pack-fpk.sh:364 是 fnOS 运行时要求的**空桩**，
 #       :479 才是打包器自己的实现；二者同名不同作用域。
 #     · preinst/postinst/preuninst/postuninst/start/status（DSM 专有）与
 #       install_callback/service_*（fnOS 专有）—— 平台专有，保留各自实现。
 #     · scripts/migrate-session.sh、fix-login-shell.sh、fetch-release-mt.sh 的领域逻辑。
 #     · **打包器里嵌入目标运行时的 rm -rf 也不要收口**（2026-10-04 新增，甄别启发式的假阴性）：
-#       例 build/SPK/build-spk.sh 的 preuninst/postuninst 段（与 synouser --del 同段）——
+#       例 build/SPK/pack-spk.sh 的 preuninst/postuninst 段（与 synouser --del 同段）——
 #       它**未用 \${} 转义**（值在构建期烘焙），但命令是在**目标机卸载时执行**，目标机上
 #       没有 scripts/lib/common.sh → 换成 safe_rm_rf 会直接坏包。判据：看**变量是否被
 #       烘焙**（未转义）+ 是否伴随 synouser/userdel/TRIM_*/PKG_VAR 等运行时语义。
@@ -47,7 +47,7 @@
 #   fetch_url / extract_tar / md5_of / b64_encode / json_get / json_set ……
 #        fetch-dsh-latest.sh、fetch-release-mt.sh、install-remote-*.sh 等
 #   load_build_meta / resolve_pkg_version / check_pkg_size / running_dsh / pkg_*
-#        …… build/SPK/build-spk.sh 与 build/FPK/build-fpk.sh 各一份
+#        …… build/SPK/pack-spk.sh 与 build/FPK/pack-fpk.sh 各一份
 #   gen_start_sh …… 原 build/build-lib.sh（build-lib.sh 现为薄转发）
 #===============================================================================
 
@@ -66,7 +66,7 @@ warn()    { echo "  ⚠ $*" >&2; }
 miss()    { echo "  ✗ $*" >&2; }
 err()     { echo "✗ $*" >&2; }
 die()     { echo "✗ $*" >&2; exit 1; }
-# 兼容旧名（build/FPK/build-fpk.sh、scripts/sync-github-release.sh 用过）
+# 兼容旧名（build/FPK/pack-fpk.sh、scripts/sync-github-release.sh 用过）
 log_msg() { echo "$*"; }
 # 分节标题（构建日志可读性）
 section() { echo; echo "═══ $* ═══"; }

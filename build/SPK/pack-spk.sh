@@ -4,11 +4,11 @@
 #===============================================================================
 # 【三脚本分工】2026-09-13 从原 build.sh（spk+fpk 混合 1216 行）拆分：
 #   build-common.sh  公共：pnpm install + build + 黑白名单裁剪 → target 整树 + build-meta.env
-#   build-spk.sh     【本脚本】消费 target → 群晖 .spk 安装包
-#   build-fpk.sh     消费 target → 飞牛 .fpk 安装包
+#   pack-spk.sh     【本脚本】消费 target → 群晖 .spk 安装包
+#   pack-fpk.sh     消费 target → 飞牛 .fpk 安装包
 #
 # 用法:
-#   ./build-spk.sh
+#   ./pack-spk.sh
 #   （无参数。所有配置读 build-config.yaml + build-meta.env；
 #     前置：先运行 ./build-common.sh 生成 target）
 #
@@ -363,7 +363,7 @@ START_SCRIPT="${PACKAGE_BASE}/start.sh"
 
 # 端口读取优先级（2026-10-02）：
 #   ① 数据目录 <var>/<版本>/ports（安装向导 wizard_*_port 写入，跨升级保留）→ 最高
-#   ② 打包默认 target/var/ports（build-spk.sh 依 build-config.yaml 生成）→ 回退
+#   ② 打包默认 target/var/ports（pack-spk.sh 依 build-config.yaml 生成）→ 回退
 PORT_FILE="${PACKAGE_BASE}/var/ports"
 # 数据目录版本隔离（与 installer pkg_version_resolved 同源：dsh → npm → top）
 for _pf in "${SYNOPKG_PKGVAR}"/*/ports "${SYNOPKG_PKGVAR}/ports"; do

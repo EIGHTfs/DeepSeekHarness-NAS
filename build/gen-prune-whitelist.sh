@@ -2,7 +2,7 @@
 #===============================================================================
 # gen-prune-whitelist.sh — 从 npm 锁文件自动生成源码构建裁剪白名单
 #===============================================================================
-# 【用途】npm 链路（build-npm-fpk-app.sh）的 package-lock.json 是官方依赖的完整
+# 【用途】npm 链路（build-npm-app.sh）的 package-lock.json 是官方依赖的完整
 #   事实清单：磁盘实际包 522 个全部落在锁文件 582 条引用内（2026-09-13 实测，
 #   0 个磁盘有锁文件无）。因此源码构建（build-common.sh）裁剪时的白名单可直接
 #   由锁文件自动生成，取代手工维护 —— 锁文件有的包一律保留，跑不掉的依赖
@@ -36,7 +36,7 @@ if [ -z "$LOCK_FILE" ]; then
   LOCK_FILE="$(ls -1t "$WS"/build/master-build/npm-app-*/node-v*/dsh-web/package-lock.json 2>/dev/null | head -1 || true)"
 fi
 if [ -z "$LOCK_FILE" ] || [ ! -f "$LOCK_FILE" ]; then
-  echo "✗ 未找到 package-lock.json（先运行 ./build/FPK/build-npm-fpk-app.sh 或指定路径）" >&2
+  echo "✗ 未找到 package-lock.json（先运行 ./build/build-npm-app.sh 或指定路径）" >&2
   exit 1
 fi
 

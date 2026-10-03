@@ -4,8 +4,8 @@
 #===============================================================================
 # 【三脚本分工】2026-09-13 从原 build.sh（spk+fpk 混合 1216 行）拆分：
 #   build-common.sh  公共：pnpm install + pnpm build + 黑白名单裁剪 → target 整树
-#   build-spk.sh     群晖 .spk 打包（消费 target；无参数，端口/名字读 build-config.yaml）
-#   build-fpk.sh     飞牛 .fpk 打包（消费 target；无参数，端口/名字读 build-config.yaml）
+#   pack-spk.sh     群晖 .spk 打包（消费 target；无参数，端口/名字读 build-config.yaml）
+#   pack-fpk.sh     飞牛 .fpk 打包（消费 target；无参数，端口/名字读 build-config.yaml）
 #
 # 用法:
 #   ./build-common.sh [SRC] [SKIP_BUILD]
@@ -21,7 +21,7 @@
 #     / claude-agent-sdk+codex / packages|apps 的 src / docs / benchmarks / native
 #   - 保留：bin/node + bin/dsh + bin/pnpm + 随包 pnpm + 各包 lib/dist 产物 + 运行时 node_modules
 #   - 装完即用，无首启构建（首启构建逻辑已抽离 scripts/first-build-logic.sh 留档）；
-#     start.sh 由 build-spk.sh / build-fpk.sh 各自按端口段生成（本脚本不生成）
+#     start.sh 由 pack-spk.sh / pack-fpk.sh 各自按端口段生成（本脚本不生成）
 #
 # 产物:
 #   target 整树       build/master-build/build-<SPK_VERSION>/target（编译+裁剪后装包内容）
@@ -29,8 +29,8 @@
 #                     —— spk/fpk 打包脚本 source 它获取元数据（单一真源）
 #
 # 之后:
-#   ./build-spk.sh    → build/staging/<APP_NAME>_x86_64-<SPK_VERSION>.spk
-#   ./build-fpk.sh    → build/staging/<APP_NAME>_x86-<FPK_VERSION>.fpk
+#   ./pack-spk.sh    → build/staging/<APP_NAME>_x86_64-<SPK_VERSION>.spk
+#   ./pack-fpk.sh    → build/staging/<APP_NAME>_x86-<FPK_VERSION>.fpk
 #===============================================================================
 
 # ── 公共函数库（safe_rm_rf：强制 --one-file-system + 挂载点检测）──
@@ -162,9 +162,9 @@ BUILD_ROOT="$SCRIPT_DIR"
 WORK_ROOT="${D_WORK_ROOT:-$BUILD_ROOT/master-build}"         # 构建中间产物根（原 spk-build → master-build）
 PRUNE_SCRIPT="$BUILD_ROOT/prune-target.sh"                   # 裁剪脚本（通用，本目录）
 GEN_WHITELIST_SCRIPT="$BUILD_ROOT/gen-prune-whitelist.sh"    # 白名单生成（通用，本目录）
-SPK_BUILD_SCRIPT="$BUILD_ROOT/SPK/build-spk.sh"              # SPK 打包（build/SPK/）
-FPK_BUILD_SCRIPT="$BUILD_ROOT/FPK/build-fpk.sh"              # FPK 打包（build/FPK/）
-NPM_FPK_SCRIPT="$BUILD_ROOT/FPK/build-npm-fpk-app.sh"        # FPK npm 链路（build/FPK/）
+SPK_BUILD_SCRIPT="$BUILD_ROOT/SPK/pack-spk.sh"              # SPK 打包（build/SPK/）
+FPK_BUILD_SCRIPT="$BUILD_ROOT/FPK/pack-fpk.sh"              # FPK 打包（build/FPK/）
+NPM_FPK_SCRIPT="$BUILD_ROOT/build-npm-app.sh"        # FPK npm 链路（build/FPK/）
 # 参数：--dry-run 可出现在任意位置（亦可用环境变量 DRY_RUN=1）；其余按位置 = SRC SKIP_BUILD
 DRY_RUN="${DRY_RUN:-0}"
 _POS=()
@@ -432,7 +432,7 @@ else
   #   .../@playwright+mcp@0.0.80/...: Directory not empty → 构建中止、日志停在"复制源码"，
   #   且留下半成品 BUILD_SRC 让下次重跑继续踩。
   #   改用 **tar 管道 + --hard-dereference**（硬链展开为真实文件、软链保留），与
-  #   build/FPK/build-fpk.sh 的 app.tgz 段同一套实现（那里也是为规避深目录复制失败）。
+  #   build/FPK/pack-fpk.sh 的 app.tgz 段同一套实现（那里也是为规避深目录复制失败）。
   safe_rm_rf "$BUILD_SRC"
   mkdir -p "$BUILD_SRC"
   ( cd "$SRC" && tar -cf - --hard-dereference . ) | ( cd "$BUILD_SRC" && tar -xf - )
@@ -737,7 +737,7 @@ fi   # 结束「二、源码副本 + 构建 + 三、裁剪」（skip-build=1 复
 # 四、写 build-meta.env（spk/fpk 打包脚本 source 的元数据，单一真源）
 #===============================================================================
 cat > "$WORK/build-meta.env" <<EOF
-# 由 build-common.sh 生成（$(date '+%F %T')）；build-spk.sh / build-fpk.sh source 本文件
+# 由 build-common.sh 生成（$(date '+%F %T')）；pack-spk.sh / pack-fpk.sh source 本文件
 APP_NAME='${APP_NAME}'
 APP_ID='${APP_ID}'
 APP_NAME_LOWER='${APP_NAME_LOWER}'
@@ -759,6 +759,6 @@ echo "  元数据   : $WORK/build-meta.env"
 echo "  APP_NAME : $APP_NAME | dsh $PKG_VER | SPK $SPK_VERSION | FPK $FPK_VERSION"
 echo "────────────────────────────────────────────────"
 echo "后续打包（二选一或都做）:"
-echo "  ./build-spk.sh    构建 SPK（群晖）"
-echo "  ./build-fpk.sh    构建 FPK（飞牛）"
+echo "  ./pack-spk.sh    构建 SPK（群晖）"
+echo "  ./pack-fpk.sh    构建 FPK（飞牛）"
 echo "════════════════════════════════════════════════"

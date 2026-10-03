@@ -4,8 +4,8 @@
 #===============================================================================
 # 【与本仓库其他脚本的关系】
 #   build-common.sh  源码 monorepo 编译 → target（SPK/FPK 源码链路共用；SPK 已成功，勿动）
-#   build-npm-fpk-app.sh 【本脚本】npm 装官方包 → app_root（FPK npm 链路；独立新增，不影响 SPK）
-#   build-fpk.sh     消费 target 或 app_root → 飞牛 .fpk（加 --npm 走本脚本产物）
+#   build-npm-app.sh 【本脚本】npm 装官方包 → app_root（FPK npm 链路；独立新增，不影响 SPK）
+#   pack-fpk.sh     消费 target 或 app_root → 飞牛 .fpk（加 --npm 走本脚本产物）
 #
 # 依据:10000ge10000/deepseek-harness-fpk 的 npm 装包方案实测（2026-09-13，
 #   产物 100.5MiB vs 源码 173MB；构建 ~12min vs ~20min；本机 fnOS 装成 running）。
@@ -13,7 +13,7 @@
 #   的 app_root 组装思路，start.sh 一律用我们自己的母版（入口收敛 + token 免密）。
 #
 # 用法:
-#   ./build-npm-fpk-app.sh [VERSION] [NODE_VERSION]
+#   ./build-npm-app.sh [VERSION] [NODE_VERSION]
 #     VERSION      官方 dsh 版本（缺省自动解析 npm dist-tags.next）
 #     NODE_VERSION node 版本（缺省 24.4.0）
 #   产物: build/master-build/npm-app-VERSION/  app_root/  +  npm-meta.env
@@ -21,8 +21,8 @@
 # ⚠ 2026-10-04 状态：**留档，不在 CI 执行**（用户口径）
 #   本脚本产出 FPK 的 npm 应用体（app_root）。在线构建已改为**只跑源码链路**：
 #     · CI job 仅 2 个：build-target（唯一构建）+ pack-and-release（打 SPK/FPK 并发布）
-#     · 本脚本与 build-fpk.sh 的 --npm 分支**保留代码**，供本地/将来手动执行：
-#         ./build/FPK/build-npm-fpk-app.sh && ./build/FPK/build-fpk.sh --npm
+#     · 本脚本与 pack-fpk.sh 的 --npm 分支**保留代码**，供本地/将来手动执行：
+#         ./build/build-npm-app.sh && ./build/FPK/pack-fpk.sh --npm
 #   改回自动执行时，请同步恢复 workflow 的 npm 打包与 npm Release 步骤。
 
 set -euo pipefail
@@ -69,7 +69,7 @@ if [ -z "$VERSION" ] || [ "$VERSION" = "next" ]; then
 fi
 if [ -z "$VERSION" ]; then
   echo "✗ 无法解析 @deepseek-ai/dsh 版本（网络不可达？）" >&2
-  echo "  可显式传参: ./build/FPK/build-npm-fpk-app.sh 0.1.5-rc.2" >&2
+  echo "  可显式传参: ./build/build-npm-app.sh 0.1.5-rc.2" >&2
   exit 1
 fi
 echo "══════ npm 装包构建 dsh@${VERSION} (Node ${NODE_VERSION}) ══════"
@@ -124,7 +124,7 @@ if [ "$_NEED_INSTALL" = "1" ]; then
   )
 fi
 # ⚠ 嵌套 bug 修复（2026-09-13 实测根因）：cp -a src dst 在 dst 已存在时，
-#   会把 src 复制成 dst/src 而非覆盖 → 重跑 build-npm-fpk-app.sh 产生
+#   会把 src 复制成 dst/src 而非覆盖 → 重跑 build-npm-app.sh 产生
 #   app_root/node_modules/node_modules 双份物理副本 → @deepseek-ai/dsh-tools 被加载两份
 #   → TOOL_RUNTIME_SCHEDULER Symbol 对不上 → 飞牛 dsh 报
 #   "Cannot read properties of undefined (reading 'prepare')"。
@@ -170,9 +170,9 @@ if grep -qE "__PROXY_PORT__|__DSH_PORT__|__CONTAINER_PORT__|__APP_NAME__|__APP_I
   echo "[!] start.sh 占位符未全部替换" >&2; exit 1
 fi
 
-# ── 6. 元数据（build-fpk.sh --npm source 本文件） ──
+# ── 6. 元数据（pack-fpk.sh --npm source 本文件） ──
 cat > "$NPM_BUILD/npm-meta.env" <<EOF
-# 由 build-npm-fpk-app.sh 生成（$(date '+%Y-%m-%d %H:%M:%S')）
+# 由 build-npm-app.sh 生成（$(date '+%Y-%m-%d %H:%M:%S')）
 APP_NAME='${APP_NAME}'
 APP_ID='${APP_ID}'
 APP_NAME_LOWER='${APP_NAME_LOWER}'
@@ -191,5 +191,5 @@ echo "  node    : v${NODE_VERSION}"
 echo "  node_modules: $(du -sh "$APP_ROOT/node_modules" 2>/dev/null | cut -f1)"
 echo "  app_root: $APP_ROOT"
 echo "  端口    : $FPK_PROXY_PORT / $FPK_DSH_PORT / $FPK_CONTAINER_PORT"
-echo "  接下来  : ./build-fpk.sh --npm 用本产物组装 fpk"
+echo "  接下来  : ./pack-fpk.sh --npm 用本产物组装 fpk"
 echo "════════════════════════════════════════════════"

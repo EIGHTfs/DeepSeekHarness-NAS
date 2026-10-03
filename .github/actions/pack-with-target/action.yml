@@ -8,7 +8,7 @@
 #
 # 【调用方约定】
 #   · 调用前必须 actions/checkout（打包脚本本身在仓库里）
-#   · 调用后直接运行对应打包器：./build/SPK/build-spk.sh 或 ./build/FPK/build-fpk.sh
+#   · 调用后直接运行对应打包器：./build/SPK/pack-spk.sh 或 ./build/FPK/pack-fpk.sh
 #
 # 说明：artifact 的路径结构由 build-target action 的上传路径决定（公共祖先为
 #   build/master-build/build），故这里**下载到工作区根目录**即可还原同样的相对路径。

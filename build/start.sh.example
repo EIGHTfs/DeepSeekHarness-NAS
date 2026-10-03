@@ -5,7 +5,7 @@
 #  用法:   ./start.sh [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store]
 #
 #  ⚠ 本文件是【逻辑母版】，不是最终运行脚本：
-#     最终 start.sh 由 build-spk.sh / build-fpk.sh 依 build-config.yaml 生成，
+#     最终 start.sh 由 pack-spk.sh / pack-fpk.sh 依 build-config.yaml 生成，
 #     端口/应用名/品牌/名牌版本链以 __PROXY_PORT__ / __DSH_PORT__ / __CONTAINER_PORT__ / __APP_NAME__ /
 #     __BRAND_NAME__ / __BRAND_VERSION_ORDER__ / __FPK_VERSION__ / __PORTAL_TITLE__ / __PORTAL_DESC__
 #     占位符形式存在，生成时按 build-config.yaml 注入（禁止在此写死端口、包名与品牌字面）。
