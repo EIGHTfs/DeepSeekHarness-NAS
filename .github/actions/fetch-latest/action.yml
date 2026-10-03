@@ -1,0 +1,14 @@
+name: fetch-latest
+description: 拉取官方最新源码（build-spk/build-fpk/release 共用）
+inputs:
+  token:
+    description: GitHub token（DS_FETCH_TOKEN）
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: 拉取官方最新源码到 src/deepseek-ai/{tag}
+      shell: bash
+      run: ./scripts/fetch-dsh-latest.sh
+      env:
+        DS_FETCH_TOKEN: ${{ inputs.token }}

@@ -1,0 +1,18 @@
+name: upload-build-logs
+description: 失败时上传构建日志（GitHub 日志 blob 经常丢失，artifact 兜底）
+inputs:
+  artifact-name:
+    description: artifact 名（job 区分）
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: 失败时上传构建日志（诊断）
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: |
+          build/master-build/build-*/pnpm-build.log
+        retention-days: 7
+        if-no-files-found: ignore

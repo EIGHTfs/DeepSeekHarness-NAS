@@ -1,0 +1,7 @@
+# 第三方 bundle patch 标准写法：顶层 insert 新建 loader 行。
+# （无 insert 的 `- id` 是覆盖已有行；基座没有本插件，会报 patch target not found）
+- insert:
+    - id: dsh-session-migrate
+      name: dsh-session-migrate
+      config:
+        enabled: true

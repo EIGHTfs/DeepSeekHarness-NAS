@@ -1,0 +1,1743 @@
+#!/bin/bash
+# ============================================================
+#  DSH 实例启动脚本 (dsh-v0.1.2-alpha.4) —— 自包含版
+#  数据区: <DSH_DIR>/.dsh-home/.dsh (自动定位)
+#  用法:   ./start.sh [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store]
+#
+#  ⚠ 本文件是【逻辑母版】，不是最终运行脚本：
+#     最终 start.sh 由 build-spk.sh / build-fpk.sh 依 build-config.yaml 生成，
+#     端口/应用名/品牌/名牌版本链以 __PROXY_PORT__ / __DSH_PORT__ / __CONTAINER_PORT__ / __APP_NAME__ /
+#     __BRAND_NAME__ / __BRAND_VERSION_ORDER__ / __FPK_VERSION__ / __PORTAL_TITLE__ / __PORTAL_DESC__
+#     占位符形式存在，生成时按 build-config.yaml 注入（禁止在此写死端口、包名与品牌字面）。
+#  说明:   全部逻辑内嵌于本文件，无需外部 dsh-repair：
+#          自动定位 DSH 目录 / node / 启动入口
+#          → 清理旧实例 → 权限与目录修复 → 启动 DSH
+#          → 内置反代 (带 ownsHost polyfill + 自动重定向 ?token) + 容器页面
+#          → 支持 CLI 自定义 3 端口 (--proxy-port / --dsh-port / --container-port)
+#          → check 只读自检（属主 / 凭据权限 / ACL / 端口 / 缺包）；fix-owner 修属主漂移（仅 root）
+#  PID/日志/临时文件一律落应用版本数据目录（禁止 /tmp：fnOS /tmp 属 root 无 sticky，应用用户不可写）
+#
+#  【2026-10-03 可诊断化】权限收紧不再静默吞 EPERM：
+#  背景：从旧版本迁移/共享文件夹场景下，数据区条目属主可能是管理员用户而非服务用户，
+#        chmod 全部 EPERM。旧实现内层 catch{} 把失败全丢掉，只有 .credentials.yaml 卡在 622，
+#        DSH 三秒后以 "1 required plugin did not activate" 崩溃，日志里零线索（193 实机）。
+#  现在：① secureDshTree 汇总失败项 + 打印可执行的 chown 命令；
+#        ② preflightCredentials 提前镜像 credentials-local 的 mode&0o077 断言；
+#        ③ 启动超时路径直接抛出日志里的致命原因；
+#        ④ ./start.sh check 一条命令给出根因（含 --deep 缺包探测）。
+# ============================================================
+
+# ---------- 自动定位 ----------
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# 智能定位 DSH 实例目录：
+#   1) 脚本所在目录本身就是实例（默认部署）
+#   2) 逐级向上找（脚本副本放在实例内的工作区/子目录时）
+#   3) 同级子目录扫描（脚本副本放在实例的父目录时）
+find_dsh_dir() {
+  local is_instance d cur
+  is_instance() { [ -f "$1/apps/cli/lib/bin.js" ] || [ -f "$1/apps/cli/src/bin.ts" ] || [ -f "$1/node_modules/@deepseek-ai/dsh/lib/bin.js" ] || [ -f "$1/lib/bin.js" ]; }
+  if is_instance "$SCRIPT_DIR"; then
+    echo "$SCRIPT_DIR"; return 0
+  fi
+  cur="$SCRIPT_DIR"
+  for _ in 1 2 3 4 5 6 7 8; do
+    cur="$(dirname "$cur")"
+    [ "$cur" = "/" ] && break
+    if is_instance "$cur"; then
+      echo "$cur"; return 0
+    fi
+  done
+  for cand in "$SCRIPT_DIR"/*/; do
+    [ -d "$cand" ] || continue
+    if is_instance "${cand%/}"; then
+      echo "${cand%/}"; return 0
+    fi
+  done
+  echo "[!] 未找到 DSH 实例目录（apps/cli/src/bin.ts / lib/bin.js）" >&2
+  exit 1
+}
+# ---------- gen-portal：生成门户配置（ui/config）----------
+#   纯配置输出：端口取自 --proxy-port / 环境变量 / 母版占位符默认值；
+#   appname 取 __APP_NAME__ 占位符。**不依赖 DSH 实例**，故放在 detect_entry 之前。
+#   用法: ./start.sh gen-portal [--type url|iframe] [--key-prefix PREFIX] [--key-id NAME]
+#                               [--all-users true|false] [--with-url true|false]
+#                               [--proxy-port N]
+#   --key-id NAME   UI 键名主体（默认 __APP_ID__，去连字符；SPK 用默认即与 INFO dsmappname 一致，
+#                   FPK 需带连字符传 --key-id __APP_NAME__ 与 manifest desktop_applaunchname 对齐）
+if [ "${1:-}" = "gen-portal" ]; then
+  shift
+  _gp_type="url"; _gp_prefix="SYNO.SDS."; _gp_all="false"; _gp_url="false"
+  _gp_keyid="__APP_ID__"
+  _gp_proxy="${DSH_PROXY_PORT:-__PROXY_PORT__}"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --type=*)       _gp_type="${1#*=}" ; shift ;;
+      --type)         _gp_type="$2" ; shift 2 ;;
+      --key-prefix=*) _gp_prefix="${1#*=}" ; shift ;;
+      --key-prefix)   _gp_prefix="$2" ; shift 2 ;;
+      --key-id=*)     _gp_keyid="${1#*=}" ; shift ;;
+      --key-id)       _gp_keyid="$2" ; shift 2 ;;
+      --all-users=*)  _gp_all="${1#*=}" ; shift ;;
+      --all-users)    _gp_all="$2" ; shift 2 ;;
+      --with-url=*)   _gp_url="${1#*=}" ; shift ;;
+      --with-url)     _gp_url="$2" ; shift 2 ;;
+      --proxy-port=*) _gp_proxy="${1#*=}" ; shift ;;
+      --proxy-port)   _gp_proxy="$2" ; shift 2 ;;
+      *)              echo "[!] gen-portal 未知参数: $1" >&2 ; exit 1 ;;
+    esac
+  done
+  _gp_url_line=""
+  [ "$_gp_url" = "true" ] && _gp_url_line='
+            "url": "/",'
+  cat <<PORTAL_EOF
+{
+    ".url": {
+        "${_gp_prefix}${_gp_keyid}.Application": {
+            "type": "${_gp_type}",
+            "icon": "images/icon_{0}.png",
+            "title": "__PORTAL_TITLE__",
+            "desc": "__PORTAL_DESC__",
+            "protocol": "http",
+            "port": "${_gp_proxy}",
+            "allUsers": ${_gp_all}
+        }
+    }
+}
+PORTAL_EOF
+  exit 0
+fi
+
+DSH_DIR="$(find_dsh_dir)"
+
+# ---------- 版本号解析（优先级链，配置驱动）----------
+# 数据目录按版本隔离（TRIM_PKGVAR/<version>/，覆盖安装不覆盖旧数据），名牌亦取此值。
+# 优先级顺序由 build-config.yaml 的 brand_version_order 决定（打包期注入本行，
+# 默认 dsh,npm）；取值来源按顺序逐个尝试，第一个取到值的胜出：
+#   dsh  —— dsh 包 package.json 的 version
+#           npm 链路: node_modules/@deepseek-ai/dsh/package.json
+#           源码链路: apps/cli/package.json
+#   npm  —— 客户端编译产物 localBuildVersion() 的完整串（含 commit，如 0.1.5-rc.2-449af19）
+#   top  —— 顶层 package.json 的 version（外壳兜底）
+# ⚠ 不可只读顶层 package.json：npm 链路该文件是外壳（dsh-web/1.0.0），
+#   会把数据目录错建成 <var>/1.0.0（2026-09-13 实测）。
+BRAND_VERSION_ORDER="__BRAND_VERSION_ORDER__"
+
+# 单个来源的取值（无值输出空）
+_version_from() {
+  local src="$1" dir="$2" f v
+  case "$src" in
+    dsh)
+      for f in "$dir/node_modules/@deepseek-ai/dsh/package.json" \
+               "$dir/node_modules/node_modules/@deepseek-ai/dsh/package.json" \
+               "$dir/apps/cli/package.json"; do
+        [ -f "$f" ] || continue
+        v="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" 2>/dev/null | head -1)"
+        [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+      done
+      ;;
+    npm)
+      for f in "$dir/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js" \
+               "$dir/node_modules/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js"; do
+        [ -f "$f" ] || continue
+        v="$(sed -n 's/.*function localBuildVersion()[^{]*{[[:space:]]*return[[:space:]]*`\([^`]*\)`.*/\1/p' "$f" 2>/dev/null | head -1)"
+        [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+      done
+      ;;
+    top)
+      f="$dir/package.json"
+      [ -f "$f" ] && sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" 2>/dev/null | head -1
+      ;;
+  esac
+  return 0
+}
+
+# 按配置顺序逐个来源尝试（含 top 兜底），首个非空即用
+resolve_pkg_version() {
+  local dir="$1" src v
+  for src in ${BRAND_VERSION_ORDER//,/ } top; do
+    v="$(_version_from "$src" "$dir")"
+    [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+  done
+  return 0
+}
+PKG_VERSION="$(resolve_pkg_version "$DSH_DIR")"
+[ -z "$PKG_VERSION" ] && PKG_VERSION="__FPK_VERSION__"
+# 名牌名称（网页左上角；由打包脚本依 build-config.yaml brand_name 注入）
+BRAND_NAME="__BRAND_NAME__"
+# 外部数据区优先：TRIM_PKGVAR（fnOS 生命周期注入）或 SYNOPKG_PKGVAR / PKG_VAR（群晖注入），按版本分子目录
+if [ -n "${TRIM_PKGVAR:-}" ]; then
+  DSH_HOME_PARENT="$TRIM_PKGVAR/$PKG_VERSION"
+  DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
+elif [ -n "${SYNOPKG_PKGVAR:-}" ]; then
+  DSH_HOME_PARENT="$SYNOPKG_PKGVAR/$PKG_VERSION"
+  DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
+elif [ -n "${PKG_VAR:-}" ]; then
+  DSH_HOME_PARENT="$PKG_VAR/$PKG_VERSION"
+  DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
+else
+  # 手动启动（无 TRIM_PKGVAR / SYNOPKG_PKGVAR / PKG_VAR 注入，如 SSH 直跑 ./start.sh）：
+  # 优先复用群晖套件标准数据目录（/var/packages/<APP>/var → 真实数据卷，或 /volume*/@appdata/<APP>），
+  # 使手动启动与套件启动落到同一 DSH_HOME（同一 PID 文件），避免「两套实例」——否则
+  # is_running 各读各的 PID 文件互不感知，AI/手动 restart 会操作错误实例（2026-09-22 实测分叉）。
+  # 探测不到（非群晖部署：fnOS 走 TRIM_PKGVAR 分支不受影响；纯目录部署）则回退 .dsh-home 保持原行为。
+  _APP_NAME="${APP_NAME:-$(basename "$DSH_DIR")}"
+  SYNODATA=""
+  for _d in "/var/packages/${_APP_NAME}/var" /volume*/@appdata/${_APP_NAME}; do
+    [ -d "$_d/$PKG_VERSION" ] && { SYNODATA="$_d"; break; }
+  done
+  if [ -n "$SYNODATA" ]; then
+    DSH_HOME_PARENT="$SYNODATA/$PKG_VERSION"
+    DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
+  else
+    DSH_HOME_DIR="$DSH_DIR/.dsh-home/.dsh"
+    DSH_HOME_PARENT="$DSH_DIR/.dsh-home"
+  fi
+fi
+
+# ---------- 显式指定 DSH_HOME（2026-09-17）----------
+# dsh 按 $DSH_HOME/profiles/<name> 定位 profile（见 dsh --help）。不导出时 dsh 走默认
+# 规则（$HOME 下）：群晖 SSH 里 root 裸跑会落到 /root/.dsh，与服务实际使用的
+# <PKG_VAR>/<version>/.dsh 不是同一个 home → `dsh plugin add` 装到服务读不到的地方，
+# 表现为「插件装完不生效 / 插件市场报错」。
+#   2026-09-17 实机复现：dsh plugin --profile web list
+#     → "dsh: initialized profile web at /root/.dsh/profiles/web"
+# 【强制覆盖，不继承外部残留值】服务必须使用自己的 home：若此处改成「已有 DSH_HOME
+#   则不覆盖」，当服务进程从父环境继承到陈旧/无关的 DSH_HOME（实测：在已设 DSH_HOME
+#   的 shell 里跑本脚本，会保留那个外来值而非 <PKG_VAR>/<version>/.dsh），数据目录
+#   与 profile 会双双跑偏 —— 那是比原 bug 更隐蔽的错误。用户想指定 home 应走 wrapper
+#   的 CLI 场景（见 install_dsh_wrapper），服务侧不接受外部覆盖。
+export DSH_HOME="$DSH_HOME_DIR"
+
+find_node() {
+  # 1) 本实例自带 node（bin/node，与 start.sh 同目录 —— 相对路径，与包名无关，最稳）
+  # 2) 系统标准路径（/usr/local/bin /usr/bin）
+  # 3) PATH 兜底
+  for c in "$SCRIPT_DIR/bin/node" "$DSH_DIR/bin/node" \
+           "/usr/local/bin/node" "/usr/bin/node"; do
+    [ -x "$c" ] && { echo "$c"; return 0; }
+  done
+  command -v node 2>/dev/null
+}
+NODE_BIN="$(find_node)" || { echo "[!] 未找到 node 可执行文件" >&2; exit 1; }
+
+# ---------- 首启构建（已抽离留档 2026-09-13） ----------
+# 完整预构建包（-dist）已含 node_modules 与构建产物，装完即用、免首启构建。
+# 如需精简包首启构建逻辑（ensure_built + 构建进度占位页），
+# 见同级 scripts/first-build-logic.sh（抽离留档，实际打包不使用）。
+
+detect_entry() {
+  if [ -f "$DSH_DIR/apps/cli/lib/bin.js" ]; then
+    ENTRY="$DSH_DIR/apps/cli/lib/bin.js"; TSX=0
+  elif [ -f "$DSH_DIR/apps/cli/src/bin.ts" ]; then
+    ENTRY="$DSH_DIR/apps/cli/src/bin.ts"; TSX=1
+  elif [ -f "$DSH_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js" ]; then
+    ENTRY="$DSH_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js"; TSX=0
+  elif [ -f "$DSH_DIR/lib/bin.js" ]; then
+    ENTRY="$DSH_DIR/lib/bin.js"; TSX=0
+  else
+    echo "[!] 未找到 DSH 启动入口（apps/cli/src/bin.ts / lib/bin.js）" >&2
+    exit 1
+  fi
+}
+
+detect_entry
+
+# ---------- CLI 参数解析 ----------
+DSH_CMD="${1:-start}"
+PROXY_PORT_ARG=""
+DSH_PORT_ARG=""
+CONTAINER_PORT_ARG=""
+OWNER_ARG=""
+CHECK_DEEP=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --proxy-port=*)     PROXY_PORT_ARG="${1#*=}" ; shift ;;
+    --dsh-port=*)       DSH_PORT_ARG="${1#*=}" ; shift ;;
+    --container-port=*) CONTAINER_PORT_ARG="${1#*=}" ; shift ;;
+    --proxy-port)       PROXY_PORT_ARG="$2" ; shift 2 ;;
+    --dsh-port)         DSH_PORT_ARG="$2" ; shift 2 ;;
+    --container-port)   CONTAINER_PORT_ARG="$2" ; shift 2 ;;
+    --owner=*)          OWNER_ARG="${1#*=}" ; shift ;;
+    --owner)            OWNER_ARG="$2" ; shift 2 ;;
+    --deep)             CHECK_DEEP=1 ; shift ;;
+    start|stop|restart|status|check|fix-owner|fix-deps|fix-store) DSH_CMD="$1" ; shift ;;
+    -h|--help)
+      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store]"
+      echo "  --proxy-port N       反代端口（默认 __PROXY_PORT__，环境变量 DSH_PROXY_PORT）"
+      echo "  --dsh-port N         DSH 内部端口（默认 __DSH_PORT__，环境变量 DSH_DSH_PORT）"
+      echo "  --container-port N   容器页面端口（默认 __CONTAINER_PORT__，环境变量 DSH_CONTAINER_PORT）"
+      echo "  check                只读自检：属主/凭据权限/ACL/端口/缺包（--deep 追加缺包导入探测）"
+      echo "  fix-owner            修复属主漂移（仅 root；--owner <服务用户名>）"
+      echo "  --owner NAME         fix-owner 的目标属主（默认取数据父目录的属主）"
+      echo "  --deep               check 追加运行时缺包导入探测（较慢）"
+      exit 0
+      ;;
+    *)
+      echo "[!] 未知参数: $1" >&2
+      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store]" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# ---------- 端口 / tmp / IP ----------
+# 端口优先级：CLI 参数 > 环境变量 > 默认值
+PROXY_PORT="${PROXY_PORT_ARG:-${DSH_PROXY_PORT:-__PROXY_PORT__}}"
+DSH_PORT="${DSH_PORT_ARG:-${DSH_DSH_PORT:-__DSH_PORT__}}"
+CONTAINER_PORT="${CONTAINER_PORT_ARG:-${DSH_CONTAINER_PORT:-__CONTAINER_PORT__}}"
+PORT_LIST="$PROXY_PORT $DSH_PORT $CONTAINER_PORT"
+
+# 应用名（门户配置键名用；由打包脚本依 build-config.yaml 注入）
+APP_NAME="__APP_NAME__"
+
+# ── PID / 日志文件位置（禁止 /tmp）──
+# fnOS 的 /tmp 属 root、无 sticky，应用用户（run-as=package）不可写：
+#   /tmp/dsh-repair-<uid>.log: 权限不够 → 启动直接失败（2026-09-13 实机实测）。
+# 统一放应用自己的版本数据目录（DSH_HOME_PARENT，安装期 chown 给应用用户）：
+#   <PKG_VAR>/<version>/<APP_NAME>.pid 与 .log
+PID_DIR="${DSH_HOME_PARENT:-$DSH_HOME_DIR}"
+PID_FILE="${PID_DIR}/${APP_NAME}.pid"
+LOG_FILE="${PID_DIR}/${APP_NAME}.log"
+# node 的临时文件走 TMPDIR；fnOS /tmp 不可写会让 mkdtemp EACCES → 启动崩溃
+export TMPDIR="${PID_DIR}/tmp" TMP="${PID_DIR}/tmp" TEMP="${PID_DIR}/tmp"
+# 【2026-10-03】目录创建推迟到 cmd_start：原先写在顶层，会让只读的 `check` 也产生副作用
+# （凭空建出数据目录/ tmp），且 status/stop 本就不该创建目录。只读子命令必须真的只读。
+ensure_pid_dirs() {
+  mkdir -p "$PID_DIR" 2>/dev/null || true
+  mkdir -p "$TMPDIR" 2>/dev/null || true
+}
+# fnOS/Synology 把包用户的登录 shell 记成 /sbin/nologin，但该文件在本机并不存在
+# （/sbin -> usr/sbin，/usr/sbin/nologin 缺失）。DSH 的 subprocess-local 用
+# process.env.SHELL || os.userInfo().shell 解析侧边栏终端默认 shell；不设 SHELL 时
+# 读 /etc/passwd 得到悬空的 /sbin/nologin，resolveExecutable 抛
+# 'subprocess-local: command "/sbin/nologin" is not an executable file'。
+# process.env.SHELL 优先级高于 passwd，继承值不可执行时回退到真实存在的 bash。
+[ -x "${SHELL:-}" ] || export SHELL=/bin/bash
+
+LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+[ -n "$LAN_IP" ] || LAN_IP="<NAS-IP>"
+
+# sticky /tmp + fs.protected_regular=1：非属主无法截断他人文件。
+# 先截断；失败则 unlink 再新建（sticky 目录里文件所有者/root 可删）。
+ensure_tmpfile_writable() {
+  local f="$1"
+  if : > "$f" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$f" 2>/dev/null || true
+  if : > "$f" 2>/dev/null; then
+    return 0
+  fi
+  echo "[!] 无法写入 $f（请检查该路径及其父目录的权限/属主）" >&2
+  return 1
+}
+
+# ============================================================
+#  内嵌修复/守护代码（CommonJS）。启动 DSH + 反代 + 容器页，
+#  权限/目录修复，token 捕获，信号处理。所有输入走 DSH_REPAIR_* 环境变量。
+# ============================================================
+REPAIR_CODE=$(cat <<'DSH_REPAIR_EOF'
+'use strict';
+const { spawn, execSync } = require('child_process');
+const fs = require('fs');
+const http = require('http');
+const net = require('net');
+
+const dshDir = process.env.DSH_REPAIR_DIR;
+const dshHome = process.env.DSH_REPAIR_HOME;
+const home = process.env.DSH_REPAIR_HOME_PARENT;
+const nodeBin = process.env.DSH_REPAIR_NODE;
+const entry = process.env.DSH_REPAIR_ENTRY;
+const tsx = process.env.DSH_REPAIR_TSX === '1';
+const dshPort = parseInt(process.env.DSH_REPAIR_DSH_PORT || '__DSH_PORT__', 10);
+const proxyPort = parseInt(process.env.DSH_REPAIR_PROXY_PORT || '__PROXY_PORT__', 10);
+const containerPort = parseInt(process.env.DSH_REPAIR_CONTAINER_PORT || '__CONTAINER_PORT__', 10);
+const PID_FILE = process.env.DSH_REPAIR_PID_FILE;
+
+function writeTmpFile(file, content) {
+  try {
+    fs.writeFileSync(file, content, 'utf-8');
+    return;
+  } catch (err) {
+    const code = err && err.code;
+    if (code !== 'EACCES' && code !== 'EPERM') throw err;
+  }
+  try { fs.unlinkSync(file); } catch {}
+  fs.writeFileSync(file, content, 'utf-8');
+}
+
+// 读 /proc/self/mountinfo 的挂载点集合：收紧权限时跳过嵌套挂载点
+// （bind 挂载 / NFS 子树里的文件不属本实例，连带 chmod 会改到别的系统/远端）
+function readMountPoints() {
+  const s = new Set();
+  try {
+    for (const line of fs.readFileSync('/proc/self/mountinfo', 'utf-8').split('\n')) {
+      const f = line.split(' ');
+      // mountinfo 格式: id parent major:minor root mountpoint ...
+      if (f.length > 4 && f[4].startsWith('/')) s.add(f[4].replace(/\\040/g, ' '));
+    }
+  } catch {}
+  return s;
+}
+
+// 权限收紧结果汇报：把「谁没改成功 / 为什么 / 怎么修」一次说清。
+// 2026-10-03 实测教训：迁移后 .dsh 内 76 个条目属主是管理员用户而非服务用户，
+// chmod 全部 EPERM 却被内层 catch{} 丢弃，只有 .credentials.yaml 卡在 622 →
+// DSH 三秒后以 "1 required plugin did not activate" 崩溃，现场零线索。
+function reportHarden(dir, myUid, denied, failed) {
+  const ui = (() => { try { return require('os').userInfo(); } catch { return {}; } })();
+  const uname = ui.username || (myUid !== -1 ? String(myUid) : 'root');
+  const who = ui.gid != null ? `${uname}:${ui.gid}` : uname;
+  if (denied.length) {
+    console.error(`[✗] ${denied.length} 个条目不属当前服务用户，chmod 被拒（EPERM），权限未收紧:`);
+    for (const d of denied.slice(0, 10)) console.error(`      ${d.p}`);
+    if (denied.length > 10) console.error(`      …… 另有 ${denied.length - 10} 项，同因`);
+    console.error('[!] 若失败项含 DSH_HOME 根目录，它下面的 .credentials.yaml 就收不紧；');
+    console.error('    credentials 是必需插件，DSH 会直接启动失败（非属主时 chmod 无效，必须先 chown）。');
+    console.error(`[!] 修复（需 root）: chown -R ${who} ${dir}`);
+    console.error('    或执行: ./start.sh fix-owner --owner <服务用户名>');
+  }
+  for (const f of failed.slice(0, 5)) console.error(`[!] 权限收紧失败 ${f.p}: ${f.code}`);
+}
+
+// 权限修复。跳过嵌套挂载点、已是目标权限则不重复 chmod；失败项汇总上报（不再静默）
+function secureDshTree(dir) {
+  console.log(`[√] 收紧权限: ${dir}`);
+  const myUid = typeof process.getuid === 'function' ? process.getuid() : -1;
+  const mounts = readMountPoints();
+  const denied = [];   // EPERM/EACCES：几乎总是「不是自己的文件」
+  const failed = [];   // 其它错误（只读文件系统、IO 等）
+  const harden = (p, mode) => {
+    try {
+      const st = fs.lstatSync(p);
+      if ((st.mode & 0o777) === mode) return;
+      fs.chmodSync(p, mode);
+    } catch (e) {
+      const code = e && e.code;
+      ((code === 'EPERM' || code === 'EACCES') ? denied : failed).push({ p, code });
+    }
+  };
+  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch {}
+  harden(dir, 0o700);
+  const walk = (d) => {
+    let entries;
+    try { entries = fs.readdirSync(d, { withFileTypes: true }); }
+    catch (e) { failed.push({ p: d, code: e && e.code }); return; }
+    for (const ent of entries) {
+      if (ent.name === '.' || ent.name === '..') continue;
+      const p = require('path').join(d, ent.name);
+      if (ent.isSymbolicLink()) continue;         // 原行为：不跟随软链
+      if (mounts.has(p)) continue;                // 新增：不跨挂载点（只跳过子项，根目录仍处理）
+      if (ent.isDirectory()) { harden(p, 0o700); walk(p); }
+      else harden(p, 0o600);
+    }
+  };
+  walk(dir);
+  reportHarden(dir, myUid, denied, failed);
+}
+
+// 镜像 credentials-local 的 assertOwnerOnly（判据 mode & 0o077 === 0）。
+// 把结论提前到启动阶段，不让用户去猜 "1 required plugin did not activate"。
+// 只警告不退出：自定义 profile 未必加载 credentials，硬退出可能挡掉本可用的配置。
+function preflightCredentials(dshHome) {
+  const f = require('path').join(dshHome, '.credentials.yaml');
+  let st;
+  try { st = fs.statSync(f); } catch { return; }   // 不存在：首启由 DSH 自行创建
+  if ((st.mode & 0o077) === 0) return;
+  console.warn(`[!] ${f} 权限 ${(st.mode & 0o777).toString(8)} 含 group/other 位；`);
+  console.warn('    credentials 为必需插件，DSH 将拒绝启动（非属主时 chmod 无效，须先 chown）。');
+  console.warn(`    修复（需 root）: chown -R <服务用户>:<服务组> ${dshHome} 后重试，或 ./start.sh check`);
+}
+
+async function isPortInUse(port) {
+  return new Promise(resolve => {
+    const s = net.connect(port, '127.0.0.1');
+    s.once('connect', () => { s.destroy(); resolve(true); });
+    s.once('error', () => resolve(false));
+  });
+}
+
+function killOldProcesses() {
+  try {
+    const oldPid = fs.readFileSync(PID_FILE, 'utf-8').trim();
+    if (oldPid && String(oldPid) !== String(process.pid)) {
+      console.log(`[√] 停止旧实例 (PID ${oldPid})`);
+      try { process.kill(parseInt(oldPid, 10), 'SIGTERM'); } catch {}
+      try { process.kill(parseInt(oldPid, 10), 'SIGKILL'); } catch {}
+    }
+  } catch {}
+  try {
+    const out = execSync(
+      "ps -eo pid,args | grep -E 'bin\\.ts web|bin\\.js web' | grep -v grep | awk '{print $1}'",
+      { encoding: 'utf8' }
+    );
+    for (const pid of out.trim().split('\n').filter(Boolean)) {
+      try {
+        const cwd = fs.readlinkSync(require('path').join('/proc', pid, 'cwd'));
+        if (cwd === dshDir) {
+          console.log(`[√] 停止 DSH 子进程 (PID ${pid})`);
+          process.kill(parseInt(pid, 10), 'SIGKILL');
+        }
+      } catch {}
+    }
+  } catch {}
+  return new Promise(resolve => setTimeout(resolve, 2000));
+}
+
+function buildPolyfillScript() {
+  return `<script>
+(function() {
+  // ownsHost 声明：使 isLoopback=true → persistence='host' → settings 可用
+  try {
+    var g = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : this;
+    if (!g.__DSH_TRANSPORT__) { try { g.__DSH_TRANSPORT__ = {}; } catch(e){} }
+    if (g.__DSH_TRANSPORT__) {
+      try { Object.defineProperty(g.__DSH_TRANSPORT__, 'ownsHost', { value: true, writable: false, configurable: false }); }
+      catch(e) { g.__DSH_TRANSPORT__.ownsHost = true; }
+    }
+  } catch(e) { console.warn('[DSH] ownsHost:', e); }
+  // crypto.randomUUID polyfill（非安全上下文局域网修复）
+  function createUUID() {
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+      return '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, function(c) {
+        return (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16);
+      });
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+  try {
+    var g = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : this;
+    if (!g.crypto) { try { g.crypto = {}; } catch(e){} }
+    if (g.crypto) {
+      try { if (!g.crypto.randomUUID) { Object.defineProperty(g.crypto, 'randomUUID', { value: createUUID, writable: true, configurable: true, enumerable: true }); } }
+      catch(e) { g.crypto.randomUUID = createUUID; }
+    }
+    if (typeof Crypto !== 'undefined' && Crypto.prototype && !Crypto.prototype.randomUUID) {
+      try { Object.defineProperty(Crypto.prototype, 'randomUUID', { value: createUUID, writable: true, configurable: true, enumerable: true }); }
+      catch(e) {}
+    }
+  } catch(e) { console.warn('[DSH] randomUUID:', e); }
+  // AbortSignal.any polyfill（华为平板/安卓旧浏览器/微信 WebView "AbortSignal.any is not a function"）
+  try {
+    if (typeof g.AbortSignal !== 'undefined' && !g.AbortSignal.any) {
+      g.AbortSignal.any = function(signals) {
+        var controller = new AbortController();
+        if (!signals || !signals.length) return controller.signal;
+        for (var i = 0; i < signals.length; i++) {
+          var s = signals[i];
+          if (!s) continue;
+          if (s.aborted) { controller.abort(s.reason); return controller.signal; }
+          s.addEventListener('abort', function() { controller.abort(this.reason); }, { once: true });
+        }
+        return controller.signal;
+      };
+    }
+  } catch(e) { console.warn('[DSH] AbortSignal.any:', e); }
+  // AbortSignal.timeout polyfill
+  try {
+    if (typeof g.AbortSignal !== 'undefined' && !g.AbortSignal.timeout) {
+      g.AbortSignal.timeout = function(ms) {
+        var controller = new AbortController();
+        setTimeout(function() {
+          var err = new Error('The operation timed out');
+          err.name = 'TimeoutError';
+          controller.abort(err);
+        }, ms);
+        return controller.signal;
+      };
+    }
+  } catch(e) { console.warn('[DSH] AbortSignal.timeout:', e); }
+  // Promise.withResolvers polyfill
+  try {
+    if (typeof Promise !== 'undefined' && !Promise.withResolvers) {
+      Promise.withResolvers = function() {
+        var resolve, reject;
+        var promise = new Promise(function(res, rej) { resolve = res; reject = rej; });
+        return { promise: promise, resolve: resolve, reject: reject };
+      };
+    }
+  } catch(e) { console.warn('[DSH] Promise.withResolvers:', e); }
+})();
+</script>`;
+}
+
+function buildContainerHtml() {
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DSH 容器</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#000}
+iframe{width:100%;height:100%;border:none}
+</style>
+</head>
+<body>
+<script>
+// 统一走反代（带 polyfill + ownsHost）
+var host = window.location.hostname;
+document.write('<iframe src="http://' + host + ':' + ${proxyPort} + '/" id="dshFrame"></iframe>');
+</script>
+</body>
+</html>`;
+}
+
+async function main() {
+  console.log('═══════════════════════════════════════');
+  console.log('  DSH 修复/守护（内嵌于 start.sh）');
+  console.log('═══════════════════════════════════════');
+  console.log(`[√] DSH 目录: ${dshDir}`);
+  console.log(`[√] 启动入口: ${entry} (tsx=${tsx})`);
+  console.log(`[√] Node: ${nodeBin}`);
+  console.log(`[√] DSH_HOME: ${dshHome}`);
+
+  await killOldProcesses();
+  writeTmpFile(PID_FILE, String(process.pid));
+
+  try { fs.mkdirSync(dshHome, { recursive: true, mode: 0o700 }); } catch (e) { console.error(`[!] mkdir DSH_HOME: ${e.message}`); }
+  try { fs.mkdirSync(home, { recursive: true, mode: 0o700 }); } catch (e) {}
+  secureDshTree(dshHome);
+  preflightCredentials(dshHome);
+
+  let waitCount = 0;
+  while (waitCount < 10) {
+    const d = await isPortInUse(dshPort);
+    const p = await isPortInUse(proxyPort);
+    const c = await isPortInUse(containerPort);
+    if (!d && !p && !c) break;
+    await new Promise(r => setTimeout(r, 500));
+    waitCount++;
+  }
+  console.log(`[√] 端口: DSH=${dshPort}, 反代=${proxyPort}, 容器=${containerPort}`);
+
+  console.log(`[>] 启动 DSH (127.0.0.1:${dshPort})`);
+  // 【修复 2026-09-16】V8 默认堆上限约 2GB，DSH 长时间运行堆涨到上限即
+  // "FATAL ERROR: Ineffective mark-compacts near heap limit ... JavaScript heap out of memory"
+  // → SIGABRT 自杀（系统内存充足时非资源受限）。自适应：物理内存 40% 给 V8 堆，
+  // 下限 2GB 保底、上限 8GB 防过度分配（与正式 start.sh 同款逻辑）。
+  const { totalmem } = require('os');
+  const heapMB = Math.max(2048, Math.min(8192, Math.floor(totalmem() / 1024 / 1024 * 0.4)));
+  const heapArg = '--max-old-space-size=' + heapMB;
+  const dshArgs = tsx
+    ? [heapArg, '--import', 'tsx/esm', entry, 'web', '--host', '127.0.0.1', '--port', String(dshPort), '--no-open']
+    : [heapArg, '--expose-internals', entry, 'web', '--host', '127.0.0.1', '--port', String(dshPort), '--no-open'];
+
+  const dshProcess = spawn(nodeBin, dshArgs, {
+    cwd: dshDir,
+    env: { ...process.env, DSH_HOME: dshHome, HOME: home },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+
+  let dshToken = '';
+  dshProcess.stdout.on('data', (chunk) => {
+    const s = chunk.toString();
+    process.stdout.write(s);
+    const m = s.match(/token=([A-Za-z0-9_-]+)/);
+    if (m) dshToken = m[1];
+  });
+
+  dshProcess.on('exit', (code, sig) => {
+    console.log(`[!] DSH 退出 code=${code} signal=${sig}`);
+    // 清理 PID 文件：否则异常退出会留下陈旧 pid（status/排障会误导）
+    try { fs.unlinkSync(PID_FILE); } catch {}
+    setTimeout(() => process.exit(code || 0), 1000);
+  });
+
+  // 2026-10-03 新增：spawn 自身失败（如入口/cwd 不存在 → ENOENT）会触发未处理的
+  // 'error' 事件，直接把守护进程崩栈、日志只剩一段 Node 堆栈。这里收敛成一行结论。
+  dshProcess.on('error', (err) => {
+    console.error(`[!] 无法启动 DSH 进程: ${err && err.message}`);
+    try { fs.unlinkSync(PID_FILE); } catch {}
+    setTimeout(() => process.exit(1), 1000);
+  });
+
+  await new Promise(r => setTimeout(r, 3000));
+
+  const polyfill = buildPolyfillScript();
+
+  // ===== 入口收敛：区分「套件门户打开」与「局域网直连」 =====
+  // 原理三条（用户确立，禁止改动）：
+  //   1) 套件打开才带 token —— DSM 桌面图标 / fnOS 应用图标打开（门户来源）才 302 无条件带 token；
+  //   2) 带过 token 直访免密 —— 浏览器已持 dsh-auth cookie，此后直连 http://<NAS-IP>:30800 放行；
+  //   3) 从未带过 token 的直连进不来 —— 无 cookie 且非门户来源（地址栏直连 sec-fetch-site=none）→ 403。
+  const hostnameFromHostHeader = (hostHeader) => {
+    if (!hostHeader) return '';
+    try { return new URL(`http://${hostHeader}`).hostname; } catch (e) { return ''; }
+  };
+  const hostnameFromReferer = (referer) => {
+    if (!referer) return '';
+    try { return new URL(referer).hostname; } catch (e) { return ''; }
+  };
+  // 只对文档级导航设卡（地址栏直连 / 顶层跳转 / iframe 首次加载）：
+  // 页面内的脚本、样式、接口调用与 WebSocket 握手一律放行（否则打死应用）。
+  const isDirectAccess = (req) => {
+    const dest = req.headers['sec-fetch-dest'];
+    let isNav;
+    if (dest !== undefined) {
+      isNav = dest === 'document' || dest === 'iframe' || dest === 'frame';
+    } else {
+      // 老旧 WebView 不发 Sec-Fetch-*，退化为「请求 HTML 的 GET/HEAD」判定
+      isNav = (req.method === 'GET' || req.method === 'HEAD') && (req.headers.accept || '').includes('text/html');
+    }
+    if (!isNav) return false;                                   // 应用内请求放行
+    if (req.url && req.url.includes('token=')) return false;    // 已带 token 放行
+    const site = req.headers['sec-fetch-site'];
+    if (site === 'none') return true;                           // 地址栏直连铁证
+    if (!site) {                                                // 旧浏览器无该头：Referer 同主机才算门户打开
+      const refHost = hostnameFromReferer(req.headers.referer);
+      if (!refHost) return true;                                // 无 Referer = 直连
+      return refHost !== hostnameFromHostHeader(req.headers.host);
+    }
+    // cross-site 且 Referer 明确是外站（非本机）→ 拦；DSM 门户 https→http 可能剥 Referer，按门户放行
+    if (site === 'cross-site' && req.headers.referer) {
+      const refHost = hostnameFromReferer(req.headers.referer);
+      if (refHost && refHost !== hostnameFromHostHeader(req.headers.host)) return true;
+    }
+    return false;                                               // same-origin/same-site/同机 cross-site → 门户，放行
+  };
+  const FORBIDDEN_PAGE = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>请从套件图标打开 - __PORTAL_TITLE__</title>
+<style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f6f8;color:#1f2329;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+.card{max-width:30rem;padding:2.5rem;background:#fff;border-radius:12px;box-shadow:0 2px 16px rgba(0,0,0,.08);text-align:center}
+h1{margin:0 0 1rem;font-size:1.25rem}
+p{margin:.5rem 0;line-height:1.7;color:#4e5969}
+code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>无法直接访问</h1>
+<p>__PORTAL_TITLE__ 仅支持从<strong>套件图标</strong>打开。</p>
+<p>请返回 <strong>群晖桌面 / 飞牛桌面</strong>，点击 <code>__PORTAL_TITLE__</code> 应用图标进入。</p>
+</div>
+</body>
+</html>`;
+
+  // ===== 局域网来源检查（3080 反代 + 3082 容器共用）=====
+  // 目的：只允许局域网/本机访问，公网来源一律拒绝。
+  // 依据：req.socket.remoteAddress 给出 TCP 真实来源 IP（实测 fnOS 上是纯 IPv4，
+  //       环回="127.0.0.1"、局域网="10.10.10.63"，无 ::ffff: 前缀；仍兼容该前缀）。
+  // 注：不信任 X-Forwarded-For —— 那是请求头，可被伪造；remoteAddress 由内核给出，不可伪造。
+  //     代价：若将来在前面再挂一层反向代理，这里看到的会是代理 IP（代理在本机则仍放行）。
+  // 判定：私网段（RFC1918）+ 环回 + 链路本地 + IPv6 ULA/环回 = 局域网，其余拒绝。
+  const isLoopbackOrLan = (ip) => {
+    if (!ip) return false;
+    let a = String(ip).trim();
+    if (a.startsWith('::ffff:')) a = a.slice(7);          // IPv4-mapped IPv6
+    if (a === '::1' || a === '127.0.0.1') return true;
+    if (a.startsWith('127.')) return true;                 // 整个 127.0.0.0/8
+    if (a.startsWith('fe80:') || a.startsWith('fc') || a.startsWith('fd')) return true; // 链路本地 / ULA
+    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(a);
+    if (!m) return false;                                  // 非 IPv4 字面量（异常值）不放行
+    const o = m.slice(1).map(Number);
+    if (o.some(n => n > 255)) return false;
+    const [p, q] = o;
+    if (p === 10) return true;                             // 10.0.0.0/8
+    if (p === 172 && q >= 16 && q <= 31) return true;      // 172.16.0.0/12
+    if (p === 192 && q === 168) return true;               // 192.168.0.0/16
+    if (p === 169 && q === 254) return true;               // 169.254.0.0/16 链路本地
+    if (p === 0) return true;                              // 0.0.0.0（本机监听态）
+    return false;                                          // 公网 IP → 拒绝
+  };
+
+  const LAN_ONLY_PAGE = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>仅限局域网访问 - __PORTAL_TITLE__</title>
+<style>
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f6f8;color:#1f2329;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+.card{max-width:30rem;padding:2.5rem;background:#fff;border-radius:12px;box-shadow:0 2px 16px rgba(0,0,0,.08);text-align:center}
+h1{margin:0 0 1rem;font-size:1.25rem}
+p{margin:.5rem 0;line-height:1.7;color:#4e5969}
+code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>仅限局域网访问</h1>
+<p><code>__PORTAL_TITLE__</code> 只允许在<strong>局域网内</strong>访问。</p>
+<p>检测到当前请求来自公网地址，已拒绝。</p>
+<p>请在局域网内使用 <code>http://&lt;NAS-IP&gt;:__PROXY_PORT__/</code> 访问。</p>
+</div>
+</body>
+</html>`;
+
+  // ===== 套件门户打开自动认证:门户来源且无 dsh 会话时 302 无条件带 token =====
+  // DSM 门户（桌面套件图标）承担登录墙：只有登录 DSM 的用户才进得了门户、点得到套件。
+  // 门户打开＝携带 token 的唯一入口：请求无 dsh 会话时 302 到 ?token=...，
+  // dsh 收到 token 会自行 303 到干净 URL 并种下 dsh-auth cookie，地址栏 token 随即自动隐藏。
+  const autoAuthRedirect = (clientReq, clientRes) => {
+    const sep = clientReq.url.includes('?') ? '&' : '?';
+    clientRes.writeHead(302, {
+      'Location': clientReq.url + sep + 'token=' + dshToken,
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+    });
+    clientRes.end();
+  };
+
+  const proxyServer = http.createServer((clientReq, clientRes) => {
+    const cookieHeader = clientReq.headers.cookie || '';
+    try {
+      require('fs').appendFileSync(process.env.DSH_REPAIR_TMPDIR + '/dsh-proxy.log', `[${new Date().toISOString()}] REQ ${clientReq.method} ${clientReq.url} cookie="${cookieHeader.slice(0,120)}" sf="${clientReq.headers['sec-fetch-site']||''}" ref="${(clientReq.headers.referer||'').slice(0,80)}"\n`);
+    } catch {}
+    // ⓪ 局域网硬闸（最优先）：公网来源直接拒绝，先于门户/直连判定
+    const _srcIp = clientReq.socket && clientReq.socket.remoteAddress;
+    if (!isLoopbackOrLan(_srcIp)) {
+      try {
+        require('fs').appendFileSync(process.env.DSH_REPAIR_TMPDIR + '/dsh-proxy.log', `[${new Date().toISOString()}] DENY ${clientReq.method} ${clientReq.url} src=${_srcIp} (非局域网)\n`);
+      } catch {}
+      clientRes.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      clientRes.end(LAN_ONLY_PAGE);
+      return;
+    }
+    // ② 已持 dsh-auth cookie → 直连也放行（带过 token 即免密）
+    const hasAuth = cookieHeader.includes('dsh-auth');
+    if (!hasAuth && isDirectAccess(clientReq)) {
+      clientRes.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      clientRes.end(FORBIDDEN_PAGE);
+      return;
+    }
+    // ① 门户打开（无 cookie 且非直连）→ 302 无条件带 token
+    if (dshToken && clientReq.method === 'GET' &&
+        !clientReq.url.includes('token=') &&
+        !hasAuth &&
+        !clientReq.headers.upgrade) {
+      autoAuthRedirect(clientReq, clientRes);
+      return;
+    }
+    // ===== 以下为原有反代逻辑 =====
+    // 不设置 x-forwarded-for / x-real-ip / forwarded：
+    // 插件的重启接口要求 "loopback 直连且无代理转发痕迹"（trustedRestartRequest）
+    const headers = {
+      ...clientReq.headers,
+      'x-forwarded-proto': 'http',
+      'x-forwarded-host': clientReq.headers.host || `0.0.0.0:${proxyPort}`,
+      host: `127.0.0.1:${dshPort}`,
+    };
+    delete headers['x-forwarded-for'];
+    delete headers['x-real-ip'];
+    delete headers.forwarded;
+    if (clientReq.headers.origin) headers.origin = `http://127.0.0.1:${dshPort}`;
+    if (clientReq.headers.referer) headers.referer = `http://127.0.0.1:${dshPort}/`;
+    if (headers['sec-fetch-site'] === 'cross-site') headers['sec-fetch-site'] = 'same-origin';
+    const isHtml = clientReq.url === '/' || clientReq.url.endsWith('.html') || !clientReq.url.includes('.');
+    if (isHtml) delete headers['accept-encoding'];
+
+    const options = { hostname: '127.0.0.1', port: dshPort, path: clientReq.url, method: clientReq.method, headers };
+    const proxyReq = http.request(options, (proxyRes) => {
+      try {
+        require('fs').appendFileSync(process.env.DSH_REPAIR_TMPDIR + '/dsh-proxy.log', `[${new Date().toISOString()}] RESP ${clientReq.method} ${clientReq.url} → dsh ${proxyRes.statusCode} set-cookie=${(proxyRes.headers['set-cookie']||[]).length} loc=${(proxyRes.headers.location||'').slice(0,60)}\n`);
+      } catch {}
+      // ===== Set-Cookie 改写：SameSite=Strict → Lax =====
+      // DSM 门户走 https://…:5001，而套件是 http://…:__PROXY_PORT__，跨 scheme 在浏览器里算跨站；
+      // Strict cookie 在跨站导航链中不被接受/携带 → 若不改写，浏览器永远收不到 dsh-auth
+      // cookie，每次都被重新 302 带 token，产生 ERR_TOO_MANY_REDIRECTS。Lax 允许顶层导航携带。
+      const fixSetCookie = (resHeaders) => {
+        const fix = (c) => (typeof c === 'string' ? c.replace(/;\s*SameSite=Strict/gi, '; SameSite=Lax') : c);
+        if (resHeaders['set-cookie']) {
+          if (Array.isArray(resHeaders['set-cookie'])) resHeaders['set-cookie'] = resHeaders['set-cookie'].map(fix);
+          else resHeaders['set-cookie'] = fix(resHeaders['set-cookie']);
+        }
+      };
+      // ===== 认证失效兜底：dsh 返回 401 authentication required =====
+      // 覆盖「浏览器残留旧/过期 cookie」场景。改用 302 自动带 token 重新认证。
+      if (dshToken && proxyRes.statusCode === 401 && clientReq.method === 'GET' &&
+          !clientReq.url.includes('token=') && !clientReq.headers.upgrade) {
+        proxyRes.resume();
+        autoAuthRedirect(clientReq, clientRes);
+        return;
+      }
+      const isHtmlResp = (proxyRes.headers['content-type'] || '').includes('text/html');
+      if (isHtmlResp) {
+        let chunks = [];
+        proxyRes.on('data', chunk => chunks.push(chunk));
+        proxyRes.on('end', () => {
+          let body = Buffer.concat(chunks).toString('utf-8');
+          if (body.includes('<head>')) body = body.replace('<head>', `<head>${polyfill}`);
+          else body = polyfill + body;
+          const resHeaders = { ...proxyRes.headers };
+          delete resHeaders['content-length'];
+          resHeaders['content-length'] = Buffer.byteLength(body, 'utf-8');
+          resHeaders['cache-control'] = 'no-store, no-cache, must-revalidate';
+          resHeaders['pragma'] = 'no-cache';
+          fixSetCookie(resHeaders);
+          clientRes.writeHead(proxyRes.statusCode, resHeaders);
+          clientRes.end(body);
+        });
+      } else {
+        const resHeaders = { ...proxyRes.headers };
+        const _ct = (resHeaders['content-type'] || '').toLowerCase();
+        // 媒体资源（video/*、image/*）保留后端缓存头（public max-age=86400 + ETag/If-Range）：
+        // 浏览器 HTTP 缓存生效 → 开屏/壁纸视频重播零请求（此前统一 no-store 导致每次全量重新
+        // Range 请求）；其余响应维持 no-store（认证代理保守，配置/页面即时生效原则不变）。
+        if (!(_ct.startsWith('video/') || _ct.startsWith('image/'))) {
+          resHeaders['cache-control'] = 'no-store, no-cache, must-revalidate';
+          resHeaders['pragma'] = 'no-cache';
+        }
+        fixSetCookie(resHeaders);
+        clientRes.writeHead(proxyRes.statusCode, resHeaders);
+        proxyRes.pipe(clientRes, { end: true });
+      }
+    });
+    proxyReq.on('error', () => {
+      if (!clientRes.headersSent) {
+        clientRes.writeHead(502, { 'Content-Type': 'text/html; charset=utf-8' });
+        clientRes.end('<h3>DSH 正在启动中，请稍候刷新...</h3>');
+      }
+    });
+    clientReq.pipe(proxyReq, { end: true });
+  });
+
+  proxyServer.on('upgrade', (req, socket, head) => {
+    const headers = { ...req.headers, host: `127.0.0.1:${dshPort}` };
+    if (headers.origin) headers.origin = `http://127.0.0.1:${dshPort}`;
+    if (headers['sec-fetch-site'] === 'cross-site') headers['sec-fetch-site'] = 'same-origin';
+    const proxySocket = net.connect(dshPort, '127.0.0.1', () => {
+      proxySocket.write(`${req.method} ${req.url} HTTP/${req.httpVersion}\r\n` +
+        Object.entries(headers).map(([k, v]) => `${k}: ${v}`).join('\r\n') + '\r\n\r\n');
+      if (head && head.length) proxySocket.write(head);
+      socket.pipe(proxySocket); proxySocket.pipe(socket);
+    });
+    proxySocket.on('error', () => socket.destroy());
+    socket.on('error', () => proxySocket.destroy());
+  });
+
+  proxyServer.listen(proxyPort, '0.0.0.0', () => {
+    console.log(`[√] 反代: http://0.0.0.0:${proxyPort} -> http://127.0.0.1:${dshPort}`);
+  });
+
+  const containerHtml = buildContainerHtml();
+  const containerServer = http.createServer((req, res) => {
+    // 局域网硬闸：容器页与反代同一策略（公网来源拒绝，防容器页成为无鉴权入口）
+    const _cSrcIp = req.socket && req.socket.remoteAddress;
+    if (!isLoopbackOrLan(_cSrcIp)) {
+      try {
+        require('fs').appendFileSync(process.env.DSH_REPAIR_TMPDIR + '/dsh-proxy.log', `[${new Date().toISOString()}] DENY ${req.method} ${req.url} src=${_cSrcIp} (容器:非局域网)\n`);
+      } catch {}
+      res.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(LAN_ONLY_PAGE);
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      'Pragma': 'no-cache',
+    });
+    res.end(containerHtml);
+  });
+  containerServer.listen(containerPort, '0.0.0.0', () => {
+    console.log(`[√] 容器: http://0.0.0.0:${containerPort}/`);
+  });
+
+  let tokenWait = 0;
+  while (!dshToken && tokenWait < 40) {
+    await new Promise(r => setTimeout(r, 500));
+    tokenWait++;
+  }
+
+  console.log('═══════════════════════════════════════');
+  console.log('  DSH 修复完成');
+  console.log('═══════════════════════════════════════');
+  if (dshToken) {
+    console.log(`  首次认证: http://127.0.0.1:${dshPort}/?token=${dshToken}`);
+    console.log(`  首次认证: http://<NAS-IP>:${proxyPort}/?token=${dshToken}`);
+    console.log('');
+  }
+  console.log(`  认证后访问: http://<NAS-IP>:${proxyPort}/`);
+  console.log(`  容器页面: http://<NAS-IP>:${containerPort}/`);
+  console.log('═══════════════════════════════════════');
+
+  function shutdown(signal) {
+    console.log(`\n[!] 收到 ${signal}，正在停止...`);
+    try { fs.unlinkSync(PID_FILE); } catch {}
+    try { if (dshProcess && !dshProcess.killed) dshProcess.kill('SIGKILL'); } catch {}
+    try { proxyServer.close(); } catch {}
+    try { containerServer.close(); } catch {}
+    process.exit(0);
+  }
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGHUP', () => shutdown('SIGHUP'));
+}
+
+main().catch(err => {
+  console.error('[!] 修复失败:', err.message);
+  try { fs.unlinkSync(PID_FILE); } catch {}
+  process.exit(1);
+});
+DSH_REPAIR_EOF
+)
+
+# ---------- 工具 ----------
+is_running() {
+  [ -f "$PID_FILE" ] || return 1
+  local pid
+  pid=$(cat "$PID_FILE" 2>/dev/null)
+  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+get_token() {
+  grep -o 'token=[A-Za-z0-9_-]*' "$LOG_FILE" 2>/dev/null | tail -1 | cut -d= -f2
+}
+
+# ---------- check（只读自检；2026-10-03 新增）----------
+# 一条命令给出「起不来」的根因：属主漂移 / 凭据权限 / ACL / 端口 / 运行时缺包。
+# 只读：不写文件、不改权限、不启动服务。退出码 0=无致命项，1=有致命项（⚠ 不计入）。
+#
+# 判定基准是「服务用户」而不是「当前用户」：运维通常 SSH 成 root 跑自检，
+# 若拿 root 当基准，正常归属服务用户的整棵树都会被误报成"不属当前用户"。
+# 服务用户 = --owner 显式值 > （非 root 运行时）当前用户 > 数据父目录属主 > 套件目录属主。
+resolve_service_user() {
+  local u=""
+  if [ -n "${OWNER_ARG:-}" ]; then printf '%s' "$OWNER_ARG"; return 0; fi
+  if [ "$(id -u)" != "0" ]; then id -un; return 0; fi
+  u="$(stat -c '%U' "$DSH_HOME_PARENT" 2>/dev/null || true)"
+  [ -n "$u" ] && [ "$u" != "root" ] && { printf '%s' "$u"; return 0; }
+  u="$(stat -c '%U' "$DSH_DIR" 2>/dev/null || true)"
+  [ -n "$u" ] && [ "$u" != "root" ] && { printf '%s' "$u"; return 0; }
+  id -un
+}
+
+cmd_check() {
+  local rc=0 me mgroup
+  me="$(resolve_service_user)"
+  mgroup="$(id -gn "$me" 2>/dev/null || echo "$me")"
+  echo "═══════════════════════════════════════"
+  echo "  DSH 自检（只读）"
+  echo "═══════════════════════════════════════"
+  echo "实例目录  : $DSH_DIR"
+  echo "DSH_HOME  : $DSH_HOME_DIR"
+  echo "数据父目录: $DSH_HOME_PARENT"
+  echo "Node      : $NODE_BIN"
+  echo "启动入口  : $ENTRY (tsx=$TSX)"
+  echo "服务用户  : $me:$mgroup"
+  echo "当前用户  : $(id -un):$(id -gn) (uid=$(id -u))"
+  [ "$me" != "$(id -un)" ] && echo "            （基准取服务用户 $me；可用 --owner 覆盖）"
+  echo
+
+  # ① 属主一致性：非本用户的条目 chmod 会 EPERM（2026-10-03 实机故障根因）
+  #    两个根分别扫描：.dsh 可能是独立子卷/绑定挂载，单次 -xdev 会把它整个剪掉
+  echo "① 属主一致性（非本用户的条目 chmod 会 EPERM）"
+  local d n
+  for d in "$DSH_HOME_PARENT" "$DSH_HOME_DIR"; do
+    if [ ! -e "$d" ]; then echo "   ⚠ $d 不存在"; continue; fi
+    n=$(find "$d" -xdev ! -user "$me" 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$n" -gt 0 ]; then
+      echo "   ✗ $d: $n 个条目不属于 $me"
+      find "$d" -xdev ! -user "$me" 2>/dev/null | head -5 | sed 's/^/       /'
+      echo "       修复(需 root): chown -R $me:$mgroup $d   （或 ./start.sh fix-owner --owner $me）"
+      rc=1
+    else
+      echo "   ✓ $d 属主一致"
+    fi
+  done
+  echo
+
+  # ② 凭据文件权限：镜像 credentials-local 的 assertOwnerOnly（判据 mode & 0o077 === 0）
+  echo "② 凭据文件权限（credentials 是必需插件，含 group/other 位会拒绝启动）"
+  local cf="$DSH_HOME_DIR/.credentials.yaml" perm last2
+  if [ -f "$cf" ]; then
+    perm=$(stat -c '%a' "$cf" 2>/dev/null || echo "?")
+    last2="${perm: -2}"
+    if [ "$perm" = "?" ]; then
+      echo "   ⚠ 无法读取 $cf 的权限"
+    elif [ "$last2" = "00" ]; then
+      echo "   ✓ $cf 权限 $perm"
+    else
+      echo "   ✗ $cf 权限 $perm 含 group/other 位"
+      echo "       修复(需 root): chown -R $me:$mgroup $DSH_HOME_DIR && chmod 600 '$cf'"
+      echo "       注意：不是自己所有时 chmod 无效（EPERM），必须先 chown"
+      rc=1
+    fi
+  else
+    echo "   ⚠ $cf 不存在（首启由 DSH 自行创建）"
+  fi
+  echo
+
+  # ③ ACL（群晖）：chmod 600 不会撤销 ACL 授权，mode 位看不出但实际仍可读
+  echo "③ ACL 检查（群晖；chmod 不会撤销 ACL 授权）"
+  local acltool="" a acl_extra
+  for a in /usr/syno/bin/synoacltool /bin/synoacltool; do
+    [ -x "$a" ] && { acltool="$a"; break; }
+  done
+  if [ -z "$acltool" ]; then
+    echo "   - 非群晖或无 synoacltool，跳过"
+  elif [ ! -f "$cf" ]; then
+    echo "   - 凭据文件不存在，跳过"
+  else
+    acl_extra=$("$acltool" -get "$cf" 2>/dev/null | grep -E '^[[:space:]]*\[[0-9]+\][[:space:]]*(user|group|everyone):' | grep -v "user:$me:" || true)
+    if [ -n "$acl_extra" ]; then
+      echo "   ⚠ 凭据文件存在非 $me 的 ACL 授权项:"
+      printf '%s\n' "$acl_extra" | sed 's/^/       /'
+      echo "       修复(需 root): $acltool -delall '$cf'   （按需保留服务用户条目）"
+    else
+      echo "   ✓ 未见非 $me 的 ACL 授权项"
+    fi
+  fi
+  echo
+
+  # ④ 运行状态与端口
+  echo "④ 运行状态与端口"
+  if is_running; then
+    echo "   ✓ 运行中 (PID $(cat "$PID_FILE" 2>/dev/null))"
+  else
+    echo "   - 未运行"
+  fi
+  local p
+  for p in $PORT_LIST; do
+    if netstat -tln 2>/dev/null | grep -q ":$p "; then echo "   ✓ $p 监听中"; else echo "   - $p 未监听"; fi
+  done
+  echo
+
+  # ⑤ 运行时依赖完整性（对应「npm 白名单裁掉 pnpm 传递依赖」那类缺陷）
+  echo "⑤ 运行时依赖完整性"
+  local broken
+  broken=$(find "$DSH_DIR/node_modules/.pnpm" -xtype l 2>/dev/null | wc -l | tr -d ' ')
+  if [ "${broken:-0}" -gt 0 ]; then
+    echo "   ⚠ node_modules/.pnpm 下 $broken 个悬空软链（多为 dev 依赖；打中运行时依赖会让内置插件 failed to import）"
+    find "$DSH_DIR/node_modules/.pnpm" -xtype l 2>/dev/null | head -5 | sed 's/^/       /'
+    echo "       修复: ./build/fix-runtime-deps.sh <TARGET> <BUILD_SRC> <NODE>"
+  else
+    echo "   ✓ 无悬空软链"
+  fi
+  if [ "${CHECK_DEEP:-0}" = "1" ]; then
+    echo "   --deep 导入探测（入口集对齐 build/fix-runtime-deps.sh）:"
+    local entry out probe_bad=0
+    for entry in "$DSH_DIR"/packages/boot/*/lib/index.js "$DSH_DIR"/apps/cli/lib/bin.js; do
+      [ -f "$entry" ] || continue
+      out=$(DSH_PROBE_ENTRY="$entry" timeout 30 "$NODE_BIN" --input-type=module \
+            -e 'import(process.env.DSH_PROBE_ENTRY).catch(e=>{console.log(e.message);process.exit(1)})' 2>&1 || true)
+      if printf '%s' "$out" | grep -q "Cannot find package"; then
+        echo "       ✗ ${entry#"$DSH_DIR"/}: $(printf '%s' "$out" | grep -m1 'Cannot find package')"
+        probe_bad=1
+      fi
+    done
+    if [ "$probe_bad" = 1 ]; then rc=1; else
+      echo "       ✓ 探测的入口均可 import（注意：不含 packages/telemetry、packages/document）"
+    fi
+  else
+    echo "   （加 --deep 可逐个入口做 import 探测，较慢）"
+  fi
+  echo
+  echo "═══════════════════════════════════════"
+  if [ "$rc" = 0 ]; then echo "自检结果: 无致命项"; else echo "自检结果: 存在致命项（见上方 ✗）"; fi
+  return "$rc"
+}
+
+# ---------- fix-owner（仅 root；修迁移导致的属主漂移）----------
+# 背景：从旧版本迁移 / 共享文件夹恢复后，数据区条目属主可能是管理员用户而非服务用户；
+#   服务用户 chmod 会 EPERM → .credentials.yaml 收不紧 → credentials 插件拒绝启动（实机故障）。
+# 说明：chown 需要特权，而服务侧以套件用户运行本脚本（见 cmd_start 注释），故独立成子命令。
+cmd_fix_owner() {
+  local user group rc=0 d
+  if [ "$(id -u)" != "0" ]; then
+    echo "[!] fix-owner 需要 root（chown 需要特权）" >&2
+    echo "    请执行: sudo $0 fix-owner${OWNER_ARG:+ --owner $OWNER_ARG}" >&2
+    return 1
+  fi
+  user="$(resolve_service_user)"
+  # 保护：解析不出或解析为 root 时拒绝执行，避免把数据区 chown 给 root
+  if [ -z "$user" ] || [ "$user" = "root" ]; then
+    echo "[!] 无法确定服务用户（解析为 '${user:-空}'）" >&2
+    echo "    请显式指定: $0 fix-owner --owner <服务用户名>" >&2
+    return 1
+  fi
+  if ! id "$user" >/dev/null 2>&1; then
+    echo "[!] 用户不存在: $user" >&2
+    return 1
+  fi
+  group="$(id -gn "$user" 2>/dev/null || echo "$user")"
+  echo "服务用户: $user:$group"
+  for d in "$DSH_HOME_PARENT" "$DSH_HOME_DIR"; do
+    if [ ! -e "$d" ]; then echo "   - $d 不存在，跳过"; continue; fi
+    echo "   chown -R $user:$group $d"
+    # 用 find -xdev 而非 chown -R：嵌套挂载点（bind/NFS）内的文件不应被连带改属主
+    find "$d" -xdev -exec chown "$user:$group" {} + 2>/dev/null || rc=1
+    chown "$user:$group" "$d" 2>/dev/null || rc=1
+  done
+  if [ "$rc" = 0 ]; then
+    echo "✓ 属主已修复。权限收紧在下次 start 生效（或现在执行: $0 restart）"
+    return 0
+  fi
+  echo "[!] 部分条目修复失败，请查看上方输出" >&2
+  return 1
+}
+
+# ---------- start ----------
+cmd_start() {
+  # pnpm storeDir 记录自愈：随包记录来自打包机，目标机可能不匹配 → 一切 pnpm 操作失败。
+  #   只读几个小文件、无网络；仅在真改动或异常时打印（正常启动零噪音）。
+  fix_pnpm_store_dir 2>&1 | grep -v "已一致" || true
+  # dsh 命令软链：让系统里直接敲 `dsh` 调 DSH CLI（优先 /usr/bin——
+  # 群晖 SSH 的 PATH 只含 /usr/bin:/bin:/usr/sbin:/sbin，不含 /usr/local/bin）。
+  # 放在 is_running 之前：无论 DSH 是否已在运行，start 时都确保软链存在；
+  # 否则若软链丢失而 DSH 仍在运行，会被下面 is_running 短路跳过永远不重建。
+  # ln -sf 幂等（已存在则覆盖式更新），重复执行无害。
+  # 注：DSM 的 synopkg 服务以套件用户（非 root）运行本脚本，/usr/bin、/usr/local/bin
+  #   均不可写；此时兜底建到 $HOME/.local/bin（须先 mkdir -p，ln 不自动建父目录）。
+  #
+  # 【2026-09-17 改为 wrapper】原先只做软链，用户 SSH 进去敲 `dsh` 时环境里没有
+  # DSH_HOME，dsh 会按默认规则落到 $HOME/.dsh（群晖 root → /root/.dsh），与服务使用的
+  # home 不一致 → 插件装到服务读不到的地方。改为写一个注入 DSH_HOME 的 wrapper，
+  # 使任何方式调用的 dsh 都指向本实例 home（幂等重写；版本升级后 home 变化自动更新）。
+  # 尊重用户已显式设置的 DSH_HOME（wrapper 内不覆盖）。
+  install_dsh_wrapper() {
+    local target="$1" real="$2"
+    mkdir -p "$(dirname "$target")" 2>/dev/null || return 1
+    cat > "$target" <<DSH_WRAPPER_EOF
+#!/bin/sh
+# DSH CLI wrapper —— 由 start.sh 生成（2026-09-17），请勿手改：
+# 注入本实例的 DSH_HOME，避免 dsh 落到 \$HOME/.dsh 导致插件装错位置。
+if [ -z "\${DSH_HOME:-}" ] && [ -d "$DSH_HOME_DIR" ]; then
+  DSH_HOME="$DSH_HOME_DIR"
+  export DSH_HOME
+fi
+exec "$real" "\$@"
+DSH_WRAPPER_EOF
+    chmod 0755 "$target" 2>/dev/null || true
+  }
+  if [ -f "$DSH_DIR/bin/dsh" ]; then
+    if ! install_dsh_wrapper /usr/bin/dsh "$DSH_DIR/bin/dsh"; then
+      if ! install_dsh_wrapper /usr/local/bin/dsh "$DSH_DIR/bin/dsh"; then
+        install_dsh_wrapper "$HOME/.local/bin/dsh" "$DSH_DIR/bin/dsh" || true
+      fi
+    fi
+  fi
+  # pnpm 命令软链：让系统里直接敲 `pnpm` 调随包 pnpm（与 dsh 同款 fallback 链）
+  if [ -f "$DSH_DIR/bin/pnpm" ]; then
+    if ! ln -sf "$DSH_DIR/bin/pnpm" /usr/bin/pnpm 2>/dev/null; then
+      if ! ln -sf "$DSH_DIR/bin/pnpm" /usr/local/bin/pnpm 2>/dev/null; then
+        mkdir -p "$HOME/.local/bin" 2>/dev/null
+        ln -sf "$DSH_DIR/bin/pnpm" "$HOME/.local/bin/pnpm" 2>/dev/null || true
+      fi
+    fi
+  fi
+  if is_running; then
+    echo "DSH 已在运行 (PID $(cat "$PID_FILE"))"
+    local TOKEN
+    TOKEN=$(get_token)
+    if [ -n "$TOKEN" ]; then
+      echo "  Token: $TOKEN"
+      echo "  局域网访问: http://${LAN_IP}:${PROXY_PORT}/?token=$TOKEN"
+    fi
+    return 0
+  fi
+  echo "启动 DSH ..."
+  # PATH 前置用户级 pnpm wrapper（如需 pnpm 插件安装）
+  export PATH="$HOME/.local/bin:$PATH"
+  ensure_pid_dirs
+  ensure_tmpfile_writable "$LOG_FILE" || return 1
+  DSH_REPAIR_DIR="$DSH_DIR" \
+  DSH_REPAIR_HOME="$DSH_HOME_DIR" \
+  DSH_REPAIR_HOME_PARENT="$DSH_HOME_PARENT" \
+  DSH_REPAIR_NODE="$NODE_BIN" \
+  DSH_REPAIR_ENTRY="$ENTRY" \
+  DSH_REPAIR_TSX="$TSX" \
+  DSH_REPAIR_DSH_PORT="$DSH_PORT" \
+  DSH_REPAIR_PROXY_PORT="$PROXY_PORT" \
+  DSH_REPAIR_CONTAINER_PORT="$CONTAINER_PORT" \
+  DSH_REPAIR_PID_FILE="$PID_FILE" \
+  DSH_REPAIR_TMPDIR="$PID_DIR" \
+  nohup "$NODE_BIN" --input-type=commonjs -e "$REPAIR_CODE" > "$LOG_FILE" 2>&1 &
+  echo "后台启动中，日志: $LOG_FILE"
+  # 等端口就绪（首次 tsx 编译较慢，最多 90 秒）
+  for i in $(seq 1 45); do
+    sleep 2
+    local ready=1
+    for p in $PORT_LIST; do
+      netstat -tln 2>/dev/null | grep -q ":$p " || { ready=0; break; }
+    done
+    if [ "$ready" = "1" ]; then
+      sleep 3
+      echo "DSH 启动完成"
+      echo ""
+      local TOKEN
+      TOKEN=$(get_token)
+      if [ -n "$TOKEN" ]; then
+        echo "  Token: $TOKEN"
+        echo "  首次认证: http://${LAN_IP}:${PROXY_PORT}/?token=$TOKEN"
+        echo "  认证后访问: http://${LAN_IP}:${PROXY_PORT}/"
+        echo "  容器页面: http://${LAN_IP}:${CONTAINER_PORT}/"
+      else
+        tail -15 "$LOG_FILE" | grep -E "✅|认证|访问|容器|DSH" || true
+      fi
+      # 插件安装位置提示：dsh 已随本脚本导出同一 DSH_HOME，故命令行直接 add 即指向本实例
+      echo "  DSH_HOME: $DSH_HOME_DIR"
+      echo "  插件安装: dsh plugin --profile web add <包名>（已指向上述 home，装后 restart 生效）"
+      return 0
+    fi
+  done
+  echo "! 端口未就绪，请查看日志: $LOG_FILE"
+  # 2026-10-03 新增：直接把日志里的致命原因抛出来，不让用户自己翻大日志
+  # （旧行为只有一句"请查看日志"，193 那次的真因是 credentials 权限，藏在几千行之后）
+  local hit
+  hit=$(grep -m1 -E "startup failed|required plugin did not activate|readable beyond its owner|Cannot find package|EADDRINUSE" "$LOG_FILE" 2>/dev/null || true)
+  if [ -n "$hit" ]; then
+    echo "  ── 检测到的根因 ──"
+    echo "  $hit"
+    grep -m1 -B1 -A3 "readable beyond its owner" "$LOG_FILE" 2>/dev/null | sed 's/^/    /' || true
+    echo "  自检: $0 check"
+  fi
+  # 2026-10-03 新增：缺包兜底 —— 只补日志点名的那几个包，补完重试一次启动。
+  #   打包阶段本应离线带全，这里是最后一道防线；DSH_DEPS_RETRIED 防止重试递归。
+  local miss
+  miss="$(missing_from_log)"
+  if [ -n "$miss" ] && [ -z "${DSH_DEPS_RETRIED:-}" ]; then
+    export DSH_DEPS_RETRIED=1
+    echo "  ── 触发依赖兜底补齐（打包阶段应已带全，这里是兜底）──"
+    # shellcheck disable=SC2086
+    rescue_deps $miss
+    echo "  重试启动一次…"
+    cmd_start
+    return $?
+  fi
+  return 1
+}
+
+# ---------- stop ----------
+cmd_stop() {
+  if ! is_running; then
+    echo "DSH 未运行"
+    return 0
+  fi
+  local pid
+  pid=$(cat "$PID_FILE")
+  echo "停止 DSH (PID $pid) ..."
+  kill "$pid" 2>/dev/null
+  # 等主进程退出
+  for i in $(seq 1 10); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 1
+  done
+  # 兜底：清理孤儿 DSH web 进程（cwd 匹配本实例）
+  for p in $(pgrep -f "bin.ts web|bin.js web" 2>/dev/null); do
+    cwd=$(readlink /proc/$p/cwd 2>/dev/null)
+    if [ "$cwd" = "$DSH_DIR" ]; then
+      kill -9 "$p" 2>/dev/null
+    fi
+  done
+  # 清理构建进度占位进程（精简包构建中 stop：占位是 nohup 后台，主进程 kill 不到）
+  PH_PID_FILE="$DSH_HOME_PARENT/.build-placeholder.pid"
+  if [ -f "$PH_PID_FILE" ]; then
+    php=$(cat "$PH_PID_FILE" 2>/dev/null || echo "")
+    [ -n "$php" ] && kill "$php" 2>/dev/null
+    rm -f "$PH_PID_FILE"
+  fi
+  rm -f "$PID_FILE"
+  # 等端口释放
+  for i in $(seq 1 10); do
+    local busy=0
+    for p in $PORT_LIST; do
+      netstat -tln 2>/dev/null | grep -q ":$p " && busy=1
+    done
+    [ "$busy" = "0" ] && break
+    sleep 1
+  done
+  echo "DSH 已停止"
+}
+
+# ---------- restart ----------
+cmd_restart() {
+  cmd_stop
+  cmd_start
+}
+
+# ---------- status ----------
+cmd_status() {
+  # 退出码遵循 LSB init 约定：0=运行中，3=未运行。
+  # ⚠ 必须给出退出码：调用方（fnOS cmd/main、群晖 start-stop-status）靠它判状态，
+  #   只 echo 不返回 → 恒为 0 → 系统误判「运行中」而不再真正拉起服务
+  #   （2026-09-13 实机实测：装完 status 报 running 但无进程、无端口）。
+  local running=0
+  if is_running; then
+    running=1
+    local pid
+    pid=$(cat "$PID_FILE")
+    echo "DSH 运行中 (PID $pid)"
+    local TOKEN
+    TOKEN=$(get_token)
+    if [ -n "$TOKEN" ]; then
+      echo ""
+      echo "  Token: $TOKEN"
+      echo "  局域网访问: http://${LAN_IP}:${PROXY_PORT}/?token=$TOKEN"
+    fi
+  else
+    echo "DSH 未运行"
+  fi
+  echo ""
+  echo "端口状态:"
+  for p in $PORT_LIST; do
+    if netstat -tln 2>/dev/null | grep -q ":$p "; then
+      echo "  $p  ✅ 监听中"
+    else
+      echo "  $p  ❌ 未监听"
+    fi
+  done
+  echo ""
+  echo "日志: $LOG_FILE"
+  [ "$running" = "1" ] && return 0
+  return 3
+}
+
+# ============================================================================
+# 运行时依赖兜底补齐（缺包导致启动失败时的最后一道防线）
+# ----------------------------------------------------------------------------
+# 【职责边界】打包阶段（build-common.sh + prune-target.sh 的依赖闭包）负责把运行时
+#   依赖**离线带全**；这里只做兜底：启动真的因缺包失败时，在线把那几个包补上，
+#   补完重试一次启动。
+#   ⚠ 刻意**不做**"全量扫描补齐"：现场 node_modules 的悬空软链可达 200+ 条，绝大多数
+#     是构建期 devDependencies（@testing-library/*、pretty-format 等），全补等于把
+#     裁剪掉的 dev 依赖又装回来——既慢又违背裁剪初衷。只补**启动真正点名要用的**。
+# 【版本来源】pnpm 布局的悬空软链本身带着精确版本，readlink 反解即可：
+#     fontkit            -> ../../fontkit@2.0.4/node_modules/fontkit
+#     @sindresorhus/is   -> ../../../@sindresorhus+is@4.6.0/node_modules/@sindresorhus/is
+#   （scoped 包在 pnpm 目录名里把 / 写成 +）反解不到就退回裸包名（取 registry 最新）。
+# 【补齐方式】用**随包 pnpm**（<实例>/bin/pnpm → pnpm/dist/pnpm.mjs，与 build-common.sh
+#   同一套），在一个临时工程里解析完整依赖闭包，再把结果**平铺**复制进
+#   <实例>/node_modules（不覆盖已有条目、不动 pnpm 现有布局），让 Node 能解析到。
+# 【registry】DSH_NPM_REGISTRY 环境变量 > 默认国内镜像。
+# 【绝不阻断启动】任何一步失败只记日志并继续——兜底失败时的行为与没有本功能完全一致。
+# ============================================================================
+DEP_RESCUE_REGISTRY="${DSH_NPM_REGISTRY:-https://registry.npmmirror.com}"
+
+# 悬空软链条数（现场绝大多数是构建期 devDeps，只作日志/自检参考）
+count_dangling_links() {
+  find "$DSH_DIR/node_modules" -xtype l 2>/dev/null | wc -l | tr -d ' '
+}
+
+# 反解某包的精确版本：resolve_missing_spec <pkg> → 输出 <pkg>@<ver>；解不到输出空
+resolve_missing_spec() {
+  local pkg="$1" flat t
+  flat="${pkg//\//+}"
+  while IFS= read -r t; do
+    case "$t" in
+      */"${flat}@"*"/node_modules/"*)
+        printf '%s@%s\n' "$pkg" "$(printf '%s' "$t" | sed -n "s|.*/${flat}@\([^/]*\)/node_modules/.*|\1|p" | head -1)"
+        return 0 ;;
+    esac
+  done < <(find "$DSH_DIR/node_modules" -xtype l -exec readlink {} \; 2>/dev/null)
+  return 0
+}
+
+# 从最近启动日志提取 "Cannot find package 'X'" 的包名（去重）
+missing_from_log() {
+  [ -f "$LOG_FILE" ] || return 0
+  grep -oE "Cannot find package '[^']+'" "$LOG_FILE" 2>/dev/null \
+    | sed "s/Cannot find package '//; s/'\$//" | sort -u
+}
+
+# 列出某棵树里所有悬空软链（绝对路径，每行一条）
+list_dangling_links() {
+  find "$1/node_modules" -xtype l 2>/dev/null
+}
+
+# 悬空软链的目标路径（**词法**归一，绝不 chdir）
+#   ⚠ 不能用 cd 归一化：死链的目标目录正是因为缺失才成为死链，cd 必然失败，
+#     会得到 /<name> 这种残缺路径（实测踩坑：dangling_spec 因此对真死链全部返回失败）。
+#   软链目标形如 <n>×"../" + "<flat>@<ver>/node_modules/<name>"，按层数削基目录即可。
+dangling_dest() {
+  local link="$1" t base up
+  t="$(readlink "$link" 2>/dev/null)" || return 1
+  [ -n "$t" ] || return 1
+  case "$t" in /*) printf '%s' "$t"; return 0 ;; esac
+  base="$(dirname "$link")"
+  up=0
+  while case "$t" in ../*) true ;; *) false ;; esac; do
+    up=$((up + 1)); t="${t#../}"
+  done
+  while case "$t" in ./*) true ;; *) false ;; esac; do t="${t#./}"; done
+  while [ "$up" -gt 0 ]; do
+    base="$(dirname "$base")"; up=$((up - 1))
+  done
+  printf '%s/%s' "$base" "$t"
+}
+
+# 由一条悬空软链反解「该处需要的精确包规格」<pkg>@<ver>；解不出返回 1
+#   例：…/.pnpm/got@14.6.6/node_modules/@sindresorhus/is
+#        -> ../../../@sindresorhus+is@7.2.0/node_modules/@sindresorhus/is
+#       得 @sindresorhus/is@7.2.0
+#   ⚠ 必须**逐条软链**反解，不能按包名取第一个匹配：同名包在不同父包下要不同版本
+#     （实测 got@11.8.6 要 @sindresorhus/is@4.6.0、got@14.6.6 要 7.2.0；按包名取首个
+#      曾把 4.6.0 补给了 14.6.6，于是 dsh-otel 依旧 failed to import）。
+dangling_spec() {
+  local link="$1" dest flat ver name
+  dest="$(dangling_dest "$link")" || return 1
+  [ -n "$dest" ] || return 1
+  case "$dest" in */.pnpm/*/node_modules/*) ;; *) return 1 ;; esac
+  flat="$(printf '%s' "$dest" | sed -n 's|.*/\.pnpm/\([^/]*\)/node_modules/.*|\1|p')"
+  [ -n "$flat" ] || return 1
+  ver="${flat##*@}"
+  name="${flat%@*}"
+  [ -n "$name" ] && [ -n "$ver" ] && [ "$ver" != "$flat" ] || return 1
+  printf '%s@%s\n' "${name//+/\/}" "$ver"
+}
+
+# 需要兜底的树：实例根 + DSH_HOME + 各 profile
+#   （插件装在各 profile 树的 node_modules 里，插件依赖从**那棵树**解析，只补实例根不够）
+rescue_trees() {
+  local d
+  [ -n "${DSH_DIR:-}" ] && printf '%s\n' "$DSH_DIR"
+  if [ -n "${DSH_HOME_DIR:-}" ]; then
+    printf '%s\n' "$DSH_HOME_DIR"
+    for d in "$DSH_HOME_DIR"/profiles/*; do
+      # 只要 profile 目录本身；glob 会命中 profiles/node_modules（那是各 profile 的
+      # 依赖目录，不是独立树），必须排掉，否则会把它当成一棵树去改
+      case "$(basename "$d")" in node_modules) continue ;; esac
+      [ -d "$d" ] && printf '%s\n' "$d"
+    done
+  fi
+  return 0
+}
+
+# 补齐物的属主规整：root 跑兜底时补进来的文件属主是 root，服务用户读不到 →
+#   DSH 启动期 scandir EACCES 直接崩（实测：profiles/web/node_modules/@modelcontextprotocol）。
+#   只认目标树本来就有的属主；非 root 运行（本就同属主）时传空跳过。
+resc_own() {  # $1=路径  $2=目标属主（空=跳过）
+  [ -n "$1" ] && [ -n "$2" ] && chown -R "$2" "$1" 2>/dev/null
+  return 0
+}
+
+# 在线补齐：随包 pnpm 解析闭包 → 按 pnpm 布局合并进各树 .pnpm（悬空软链随之复活）
+#            + 按规格名平铺到树根（hoisted 布局靠树根解析）
+#   入参：包名（或 包名@版本）。版本**逐条悬空软链反解**（同名多版本全补）；
+#   裸名且无软链线索时才退回 registry 最新。
+rescue_deps() {
+  [ -x "$DSH_DIR/bin/pnpm" ] || { echo "[deps] 随包 pnpm 不存在（$DSH_DIR/bin/pnpm），跳过兜底"; return 0; }
+  [ $# -gt 0 ] || { echo "[deps] 未指定要补的包，跳过"; return 0; }
+  local names=() specs=() trees="" t="" link="" spec="" p="" work="" copied=0 d="" n=""
+  local ptree="" edest="" ename="" ev="" eflat="" src="" missing="" svc="" svcg=""
+  # ⚠ 必须在 local 声明**之后**取值：local 里的 svc="" 会清空先前赋值（实测踩坑：
+  #   赋值放前面 → svc 恒为空 → 补齐物停留在 root 属主 → 服务用户 scandir EACCES 崩溃）
+  if [ "$(id -u 2>/dev/null)" = "0" ]; then
+    svc="$(stat -c %U "$DSH_DIR/node_modules" 2>/dev/null)"
+    svcg="$(stat -c %G "$DSH_DIR/node_modules" 2>/dev/null)"
+    [ "$svc" = "root" ] && svc=""
+    [ -n "$svc" ] && [ -n "$svcg" ] && svc="$svc:$svcg"
+  fi
+  # 区分「裸名」与「名@版本」：⚠ scoped 包名开头的 @ 不是版本分隔符
+  #   （@sindresorhus/is 是裸名；@sindresorhus/is@7.2.0 才带版本）。
+  #   曾用 case "$p" in *@*) 判定，导致 @scope/name 被当带版本 → 名字解析成空串、
+  #   收集不到任何版本化规格、死链照旧（实测踩坑）。
+  for p in "$@"; do
+    case "$p" in
+      @*/*@*) names+=("${p%@*}"); specs+=("$p") ;;   # scoped 且带版本
+      @*)     names+=("$p") ;;                        # scoped 裸名
+      *@*)    names+=("${p%@*}"); specs+=("$p") ;;    # 普通包且带版本
+      *)      names+=("$p") ;;                        # 普通裸名
+    esac
+  done
+  trees="$(rescue_trees)"
+  # 逐条悬空软链，把命中这些名字的精确版本全收进来（同名多版本各补各的）
+  while IFS= read -r t; do
+    [ -d "$t/node_modules" ] || continue
+    while IFS= read -r link; do
+      spec="$(dangling_spec "$link")" || continue
+      [ -n "$spec" ] || continue
+      for p in "${names[@]}"; do
+        if [ "${spec%@*}" = "$p" ]; then specs+=("$spec"); break; fi
+      done
+    done < <(list_dangling_links "$t")
+  done <<< "$trees"
+  # 去重（包名/版本不含空白，安全）
+  if [ "${#specs[@]}" -gt 0 ]; then
+    specs=($(printf '%s\n' "${specs[@]}" | sort -u))
+  fi
+  [ "${#specs[@]}" -gt 0 ] || { echo "[deps] 目标包在悬空软链里没有线索，跳过"; return 0; }
+  echo "[deps] 兜底补齐: $(printf '%s ' "${specs[@]}" | sed 's/ $//')  (registry=$DEP_RESCUE_REGISTRY)"
+  work="$(mktemp -d "${TMPDIR:-/tmp}/dsh-rescue.XXXXXX" 2>/dev/null)" || { echo "[deps] 建临时目录失败，跳过"; return 0; }
+  printf '{}\n' > "$work/package.json"
+  if ! "$DSH_DIR/bin/pnpm" add --dir "$work" --registry "$DEP_RESCUE_REGISTRY" \
+        --ignore-scripts --reporter=append-only "${specs[@]}" > "$work/pnpm.log" 2>&1; then
+    echo "[deps] 在线补齐失败（网络或 registry 不可达），保持原状"
+    tail -6 "$work/pnpm.log" 2>/dev/null | sed 's/^/    /'
+    rm -rf "$work"; return 0
+  fi
+  while IFS= read -r t; do
+    [ -d "$t/node_modules" ] || continue
+    mkdir -p "$t/node_modules/.pnpm" 2>/dev/null || true
+    # 该树里「被点名包」的死链 → 期望落地路径清单（只处理点名的包，避免把
+    # 200+ 条构建期 devDeps 全拉下来）
+    ptree="$(mktemp "${TMPDIR:-/tmp}/dsh-rescue-tree.XXXXXX" 2>/dev/null)" || ptree=""
+    if [ -n "$ptree" ]; then
+      while IFS= read -r link; do
+        spec="$(dangling_spec "$link")" || continue
+        case " ${names[*]} " in *" ${spec%@*} "*) ;; *) continue ;; esac
+        edest="$(dangling_dest "$link")" || continue
+        [ -n "$edest" ] && printf '%s|%s\n' "$spec" "$edest" >> "$ptree"
+      done < <(list_dangling_links "$t")
+    fi
+    # ① 合并 .pnpm 条目（目录名即 <flat>@<ver>；版本化目录不会遮蔽任何东西）
+    #    用 cp -a 保留内部软链：pnpm 布局内是相对软链，合并后自然生效；
+    #    -aL 会把整棵依赖树解引用成实体目录、体积爆炸，禁用。
+    while IFS= read -r d; do
+      n="$(basename "$d")"
+      [ -e "$t/node_modules/.pnpm/$n" ] && continue
+      cp -a "$d" "$t/node_modules/.pnpm/$n" 2>/dev/null && { copied=$((copied+1)); resc_own "$t/node_modules/.pnpm/$n" "$svc"; }
+    done < <(find "$work/node_modules/.pnpm" -maxdepth 1 -mindepth 1 -type d 2>/dev/null)
+    # ② 逐条死链按**期望路径**精确落地，不依赖 pnpm 的版本去重结局。
+    #    实测教训：pnpm 临时工程里 cacheable-request 解析成 7.0.4 而死链期望 13.0.19，
+    #    只做 ① 时死链照旧、Node 上溯到树根拿到错版本，报
+    #    "Named export 'CacheError' not found"（CJS/ESM 混用）。
+    #    只认**精确版本**目录；取不到就明确告警，绝不用其它版本顶替。
+    if [ -n "$ptree" ] && [ -s "$ptree" ]; then
+      while IFS='|' read -r spec edest; do
+        [ -e "$edest" ] && continue
+        ename="${spec%@*}"; ev="${spec##*@}"; eflat="${ename//\//+}@$ev"
+        src="$work/node_modules/.pnpm/$eflat/node_modules/$ename"
+        if [ -e "$src" ]; then
+          mkdir -p "$(dirname "$edest")" 2>/dev/null || true
+          if cp -a "$src" "$edest" 2>/dev/null; then
+            copied=$((copied+1))
+            # 交还属主：整个 .pnpm/<flat>@<ver> 子树——mkdir 出来的**父目录**也是 root，
+            # 只 chown 内层包目录会让父目录留在 root（沙箱实测）。
+            resc_own "$(printf '%s' "$edest" | sed -n 's|\(.*/\.pnpm/[^/]*\)/node_modules/.*|\1|p')" "$svc"
+            continue
+          fi
+        fi
+        missing="$missing $spec"
+      done < "$ptree"
+    fi
+    rm -f "$ptree" 2>/dev/null || true
+    # ③ 树根平铺**仅**用于纯 hoisted 树（无 .pnpm）。pnpm 布局树绝不平铺：
+    #    树根同名条目会遮蔽 .pnpm 里的正确版本（scoped 还必须用完整名，否则
+    #    @swc/helpers 会被放成 helpers）—— 两处都是实测踩过的坑。
+    if [ ! -d "$t/node_modules/.pnpm" ]; then
+      for spec in "${specs[@]}"; do
+        n="${spec%@*}"
+        [ -e "$t/node_modules/$n" ] && continue
+        [ -e "$work/node_modules/$n" ] || continue
+        mkdir -p "$(dirname "$t/node_modules/$n")" 2>/dev/null || true
+        cp -a "$work/node_modules/$n" "$t/node_modules/$n" 2>/dev/null && { copied=$((copied+1)); resc_own "$t/node_modules/$n" "$svc"; }
+      done
+    fi
+    echo "  $t: 悬空软链剩余 $(find "$t/node_modules" -xtype l 2>/dev/null | wc -l | tr -d ' ') 条"
+  done <<< "$trees"
+  echo "[deps] 已补入 $copied 项"
+  [ -n "$missing" ] && echo "[deps] ⚠ registry 未取到（已跳过，不用其它版本顶替）:$missing"
+  rm -rf "$work"
+  return 0
+}
+
+# fix-deps：手动兜底（扫描报告 + 按日志缺包补齐；可用 DSH_RESCUE_PKGS 指定包）
+cmd_fix_deps() {
+  echo "── 运行时依赖兜底 ──"
+  echo "  实例目录 : $DSH_DIR"
+  echo "  悬空软链 : $(count_dangling_links) 条（含构建期 devDependencies，不全是运行时缺包）"
+  local pkgs
+  pkgs="$(missing_from_log)"
+  if [ -z "$pkgs" ]; then
+    echo "  最近日志未发现 'Cannot find package' 记录（$LOG_FILE）"
+    echo "  提示: 先 start 一次让缺包暴露；或指定要补的包:"
+    echo "        DSH_RESCUE_PKGS='foo@1.2.3 @scope/bar' $0 fix-deps"
+  fi
+  if [ -n "${DSH_RESCUE_PKGS:-}" ]; then
+    pkgs="$(printf '%s\n%s\n' "$pkgs" "$(printf '%s' "$DSH_RESCUE_PKGS" | tr ' ' '\n')" | sed '/^$/d' | sort -u)"
+  fi
+  # shellcheck disable=SC2086
+  rescue_deps $pkgs
+}
+
+# ============================================================================
+# pnpm storeDir 记录修复（脚本自愈；pnpm 11 读 pnpm-workspace.yaml 的 storeDir）
+# ----------------------------------------------------------------------------
+# 【病症】随包发布的 node_modules/.modules.yaml 里记着**打包机**的 store 路径，目标机上
+#   pnpm 解析到另一个（常常是空的）store → pnpm 报 storeDir 不匹配，此后 dsh plugin add
+#   等一切 pnpm 操作都失败（实测 193：记录是 0.1.6 迁移前的路径，pnpm 现解析
+#   /volume1/.pnpm-store/v11，仅 27M 近乎空）。
+# 【修法】把**记录里的** store 写进同级 pnpm-workspace.yaml 的 storeDir，让 pnpm 解析回
+#   那个已经装了内容的 store —— 无需重装、不下载任何包（193 实测该 store 有 825M 内容）。
+# 【为什么不是别的做法】
+#   · `pnpm install --store-dir <path>` 不是修复：只对那一次命令生效、不改写记录，
+#     下一条命令照旧失败（用户实测 pnpm 11.7 / 11.22 均如此）。
+#   · `.npmrc` 的 `store-dir` 在 pnpm 11 上**本机实测不生效**，必须写 pnpm-workspace.yaml。
+#   · 反向切换到 pnpm 现解析的 store 等于清空重装（每包重新下载）；只在记录里的 store
+#     已不存在时才退而求其次（此时删掉记录项，让 pnpm 用默认 store，不再卡死）。
+# 【扫描范围】实例根 + DSH_HOME 及其下各 profile（插件管理器/主题各自一棵 node_modules）。
+# 【无网络、可回滚】只读写两个文件，改动前留 .bak-storerecord。
+# ============================================================================
+fix_pnpm_store_dir_one() {
+  # ⚠ 必须分两条语句：同一 local 语句里 $dir 尚未生效（shell 先展开各词再赋值），
+  #   写成 local dir="$1" my="$dir/..." 会得到 /node_modules/.modules.yaml（实测踩坑）。
+  local dir="$1" my rec ws cur
+  my="$dir/node_modules/.modules.yaml"
+  [ -f "$my" ] || return 0
+  rec="$(sed -n 's/.*"storeDir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$my" | head -1)"
+  [ -n "$rec" ] || return 0
+  ws="$dir/pnpm-workspace.yaml"
+  cur=""
+  [ -f "$ws" ] && cur="$(sed -n 's/^storeDir:[[:space:]]*//p' "$ws" | head -1)"
+  if [ "$cur" = "$rec" ]; then
+    echo "  ✓ storeDir 已一致: $dir"
+    return 0
+  fi
+  if [ ! -d "$rec" ]; then
+    # 记录里的 store 在本机不存在：反向修复不可行 → 删掉记录项，pnpm 用自己解析的 store
+    # （代价是下次安装需重新下载，但不再报错卡死一切 pnpm 操作）
+    echo "  ⚠ $dir: 记录中的 store 不存在（$rec）→ 移除记录项，改用 pnpm 默认 store"
+    [ -f "$my.bak-storerecord" ] || cp -p "$my" "$my.bak-storerecord" 2>/dev/null || true
+    sed -i '/"storeDir"/d' "$my" 2>/dev/null || true
+    return 0
+  fi
+  if [ -f "$ws" ]; then
+    [ -f "$ws.bak-storerecord" ] || cp -p "$ws" "$ws.bak-storerecord" 2>/dev/null || true
+    if [ -n "$cur" ]; then
+      sed -i "s|^storeDir:.*|storeDir: $rec|" "$ws"
+    else
+      printf 'storeDir: %s\n' "$rec" >> "$ws"
+    fi
+  else
+    printf 'storeDir: %s\n' "$rec" > "$ws"
+  fi
+  echo "  ✓ 已修: $dir → storeDir=$rec"
+  return 0
+}
+
+# 扫描并修复所有相关树（实例根 + DSH_HOME + 各 profile）
+fix_pnpm_store_dir() {
+  local d
+  fix_pnpm_store_dir_one "$DSH_DIR"
+  if [ -n "${DSH_HOME_DIR:-}" ]; then
+    fix_pnpm_store_dir_one "$DSH_HOME_DIR"
+    # ⚠ DSH_HOME_DIR 本身就以 .dsh 结尾（如 …/0.2.0-rc.2/.dsh），profiles 在它**下面**，
+    #   不要再拼 .dsh/profiles（会变成 .dsh/.dsh/profiles，永远扫不到）。
+    for d in "$DSH_HOME_DIR"/profiles/*; do
+      [ -d "$d" ] && fix_pnpm_store_dir_one "$d"
+    done
+  fi
+  return 0
+}
+
+# fix-store：手动执行
+cmd_fix_store() {
+  echo "── pnpm storeDir 记录修复（无需重装、不下载）──"
+  fix_pnpm_store_dir
+}
+
+# ---------- main ----------
+case "$DSH_CMD" in
+  start)   cmd_start ;;
+  stop)    cmd_stop ;;
+  restart) cmd_restart ;;
+  status)  cmd_status ;;
+  check)   cmd_check ;;
+  fix-owner) cmd_fix_owner ;;
+  fix-deps) cmd_fix_deps ;;
+  fix-store) cmd_fix_store ;;
+  *)
+    echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store]"
+    exit 1
+    ;;
+esac

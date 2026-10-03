@@ -1,0 +1,35 @@
+#!/bin/bash
+# ============================================================
+#  pnpm 命令包装器 —— 让系统里直接敲 `pnpm` 就能用随包分发的 pnpm
+#  （build-common.sh 把 tools/pnpm（bin+dist+pnpm-bridge）打进 <实例>/pnpm）
+#  用法: pnpm <子命令> [参数...]
+#  说明: 用 DSH 实例自带 node 直接跑 pnpm.mjs（node 版本解耦，10/11 通用）
+# ============================================================
+set -u
+# 解析软链到真实文件路径（/usr/bin/pnpm → …/target/bin/pnpm）
+SELF="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+# 定位 DSH 实例根：<实例>/bin/pnpm → <实例>
+DSH_DIR="$(dirname "$SCRIPT_DIR")"
+
+# 自检随包 pnpm
+if [ ! -f "$DSH_DIR/pnpm/dist/pnpm.mjs" ]; then
+  echo "[pnpm] 未找到随包 pnpm (pnpm/dist/pnpm.mjs) at: $DSH_DIR" >&2
+  exit 1
+fi
+
+# 找 node（与 start.sh / scripts/dsh 一致；不硬编码第三方套件路径）
+find_node() {
+  # 1) 本实例自带 node（相对路径，与包名无关）
+  # 2) 系统标准路径（/usr/local/bin /usr/bin）
+  # 3) PATH 兜底
+  for c in "$DSH_DIR/bin/node" "/usr/local/bin/node" "/usr/bin/node"; do
+    [ -x "$c" ] && { echo "$c"; return 0; }
+  done
+  command -v node 2>/dev/null
+}
+NODE_BIN="$(find_node)" || { echo "[pnpm] 未找到 node，请先安装 Node.js" >&2; exit 1; }
+
+# 用包内 node 跑 pnpm.mjs（把 HOME/PNPM 相关 env 置到可写位置，绕只读分区）
+export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
+exec "$NODE_BIN" "$DSH_DIR/pnpm/dist/pnpm.mjs" "$@"

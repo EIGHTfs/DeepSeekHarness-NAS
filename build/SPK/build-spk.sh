@@ -1,0 +1,621 @@
+#!/bin/bash
+#===============================================================================
+# DeepSeek Harness NAS — SPK 打包脚本（群晖 DSM x86_64）
+#===============================================================================
+# 【三脚本分工】2026-09-13 从原 build.sh（spk+fpk 混合 1216 行）拆分：
+#   build-common.sh  公共：pnpm install + build + 黑白名单裁剪 → target 整树 + build-meta.env
+#   build-spk.sh     【本脚本】消费 target → 群晖 .spk 安装包
+#   build-fpk.sh     消费 target → 飞牛 .fpk 安装包
+#
+# 用法:
+#   ./build-spk.sh
+#   （无参数。所有配置读 build-config.yaml + build-meta.env；
+#     前置：先运行 ./build-common.sh 生成 target）
+#
+# 产物:
+#   build/staging/<APP_NAME>_x86_64-<SPK_VERSION>.spk
+#
+# 关键设计（注释按本脚本职责重新整理）:
+#   - 端口: proxy/dsh/container 读 build-config.yaml spk: 段（默认 30800/30801/30802）
+#   - start.sh: 由本脚本按 SPK 端口段生成（gen_start_sh，母版 scripts/start.sh.example，
+#     端口/appname 占位符全部注入，无硬编码）
+#   - 内层 package.tgz: gzip + --hard-dereference（pnpm 硬链展开，DSM 才能解）；
+#     软链保留（旧包含软链可装，软链不是问题）
+#   - 外层 .spk: 未压缩 tar，无 ./ 前缀（DSM 规范）
+#   - 门户 ui/config: start.sh gen-portal 生成（键名与 INFO dsmappname 逐字一致）
+#   - 数据目录版本隔离: 安装脚本按内嵌 dsh 版本建 <var>/<version>/，覆盖安装不丢旧数据
+#===============================================================================
+set -euo pipefail
+
+# ── 本脚本引用的脚本/目录路径（常量；改路径只改这里，引用点一律用常量） ──
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # build/SPK/
+WS="$(cd "$SCRIPT_DIR/../.." && pwd)"                        # 工作区根（脚本在 build/SPK/ 下）
+BUILD_ROOT="$WS/build"
+CONFIG_FILE="$SCRIPT_DIR/../build-config.yaml"
+BUILD_META_DIR="$BUILD_ROOT/master-build"                    # build-common.sh 产物根（原 spk-build → master-build）
+PRUNE_SCRIPT="$BUILD_ROOT/prune-target.sh"                   # 通用裁剪（留 build/ 根）
+BUILD_COMMON_SCRIPT="$BUILD_ROOT/build-common.sh"            # 公共预编译（通用留根）
+EXCLUDES_FILE="$BUILD_ROOT/build-excludes.json"              # tar 排除规则（通用，build/ 根）
+BUILD_LIB="$BUILD_ROOT/build-lib.sh"                         # 公共函数库（构建级共用）
+
+# 公共函数库：gen_start_sh 等（SPK/FPK 共用，改一处生效；库头有完整梳理口径）
+[ -f "$BUILD_LIB" ] || { echo "✗ 缺少公共函数库: $BUILD_LIB" >&2; exit 1; }
+. "$BUILD_LIB"
+
+# ── 工作区分类目录（环境变量可覆盖，与 build-common.sh 一致） ──
+D_ASSETS="${D_ASSETS:-$WS/build}"
+D_BUILD="${D_BUILD:-$WS/build}"
+D_STAGING="${D_STAGING:-$D_BUILD/staging}"
+D_SCRIPTS="${D_SCRIPTS:-$WS/scripts}"
+
+# ----------------------------------------------------------------------------
+# build-config.yaml 解析（SPK 段覆盖 defaults：端口 + appname + 品牌元数据）
+#   全部字段一律来自配置，脚本内不写死任何可变值（no-hardcode-config）
+# ----------------------------------------------------------------------------
+eval "$(python3 -c "
+import yaml, sys
+with open('$CONFIG_FILE') as f:
+    cfg = yaml.safe_load(f) or {}
+defaults = cfg.get('defaults') or {}
+spk = cfg.get('spk') or {}
+for k, v in {**defaults, **spk}.items():
+    if v is None:
+        continue
+    print(f'CFG_{k.upper()}=\"{v}\"')
+" 2>/dev/null || true)"
+SPK_PROXY_PORT="${CFG_PROXY_PORT:-30800}"
+SPK_DSH_PORT="${CFG_DSH_PORT:-30801}"
+SPK_CONTAINER_PORT="${CFG_CONTAINER_PORT:-30802}"
+
+# ── 品牌 / 元数据（配置驱动；缺省值仅作最后兜底，正常一律命中配置） ──
+CFG_APPNAME="${CFG_APPNAME:-DeepSeekHarness-NAS}"
+CFG_BRAND_NAME="${CFG_BRAND_NAME:-$CFG_APPNAME}"
+CFG_DISPLAY_NAME="${CFG_DISPLAY_NAME:-DeepSeek Harness}"
+CFG_TITLE="${CFG_TITLE:-$CFG_DISPLAY_NAME}"
+CFG_DESC="${CFG_DESC:-}"
+CFG_DESC_SHORT="${CFG_DESC_SHORT:-$CFG_DISPLAY_NAME Web UI}"
+CFG_MAINTAINER="${CFG_MAINTAINER:-DeepSeek AI}"
+CFG_MAINTAINER_URL="${CFG_MAINTAINER_URL:-}"
+CFG_DISTRIBUTOR="${CFG_DISTRIBUTOR:-}"
+CFG_DISTRIBUTOR_URL="${CFG_DISTRIBUTOR_URL:-}"
+CFG_OS_MIN_VER="${CFG_OS_MIN_VER:-7.0-40851}"
+CFG_BRAND_VERSION_ORDER="${CFG_BRAND_VERSION_ORDER:-dsh,npm}"
+
+# ----------------------------------------------------------------------------
+# target 与元数据（build-common.sh 产物）
+# ----------------------------------------------------------------------------
+_META="$(ls -1t "$BUILD_META_DIR"/build*/build-meta.env 2>/dev/null | head -1)"
+if [ -z "$_META" ] || [ ! -f "$_META" ]; then
+  echo "✗ 未找到 build-meta.env（请先运行 ./build-common.sh 生成 target）" >&2
+  exit 1
+fi
+. "$_META"   # 提供 APP_NAME/APP_ID/PKG_VER/SPK_VERSION/FPK_VERSION/DESC/TARGET/WORK
+if [ ! -d "$TARGET" ] || [ ! -f "$TARGET/package.json" ]; then
+  echo "✗ target 缺失或不完整: $TARGET（请先运行 ./build-common.sh）" >&2
+  exit 1
+fi
+echo "使用 target : $TARGET（dsh $PKG_VER | SPK $SPK_VERSION | APP_NAME $APP_NAME）"
+
+# 排除规则（build-excludes.json dist 模式）
+mapfile -t TAR_EXCLUDES < <(python3 -c "
+import json
+with open('$EXCLUDES_FILE') as f:
+    cfg = json.load(f)
+for x in cfg.get('dist', {}).get('excludes', []):
+    if not x.startswith('_comment'):
+        print(x)
+" 2>/dev/null || true)
+
+# ----------------------------------------------------------------------------
+# start.sh 生成（SPK 端口段）
+#   函数实现已收进公共库 build/build-lib.sh 的 gen_start_sh()（SPK/FPK 共用）。
+#   ⚠ 门户描述口径：SPK 直接用 CFG_DESC_SHORT（FPK 侧空值回退口径不同，故显式传参）。
+# ----------------------------------------------------------------------------
+# 重新生成 start.sh（避免复用 target 时残留旧包名/旧端口）
+gen_start_sh "$TARGET/start.sh" "$SPK_PROXY_PORT" "$SPK_DSH_PORT" "$SPK_CONTAINER_PORT" "${CFG_DESC_SHORT}"
+
+#===============================================================================
+# 一、组装 SPK 外层（assemble）
+#===============================================================================
+echo ""
+echo "══════ SPK 打包（群晖 x86_64）══════"
+ASSEMBLE="$WORK/assemble"
+rm -rf "$ASSEMBLE"
+mkdir -p "$ASSEMBLE"
+
+# DSM 门户 ui/config（target 内；安装后 webman 软链 → webman/3rdparty/<pkg> 指向 target/ui）。
+# 键名必须与 INFO dsmappname 逐字一致，否则桌面图标点不开。
+# 由 start.sh 自带 gen-portal 生成（端口/appname 同一份构建配置，无静态模板）
+"$TARGET/start.sh" gen-portal --type url --key-prefix "SYNO.SDS." --all-users false > "$TARGET/ui/config"
+
+# INFO（版本 = SPK 前三位；desc/displayname/maintainer 等一律来自 build-config.yaml，
+#   仅 DESC 在配置留空时回退 build-meta.env 的 README 摘要）
+cat > "$ASSEMBLE/INFO" <<EOF
+package="${APP_NAME}"
+version="${SPK_VERSION}"
+description="${CFG_DESC:-$DESC}"
+arch="x86_64"
+maintainer="${CFG_MAINTAINER}${CFG_DISTRIBUTOR:+ / $CFG_DISTRIBUTOR}"
+maintainer_url="${CFG_MAINTAINER_URL}"
+distributor="${CFG_DISTRIBUTOR}"
+distributor_url="${CFG_DISTRIBUTOR_URL}"
+os_min_ver="${CFG_OS_MIN_VER}"
+reloadui="yes"
+displayname="${CFG_DISPLAY_NAME} NAS"
+dsmuidir="ui"
+dsmappname="SYNO.SDS.${APP_ID}.Application"
+checksum=""
+changelog="[独立包名 ${APP_NAME}] dsh ${PKG_VER} 全源码编译; 品牌 ${CFG_BRAND_NAME}; 版本号自动取官方前三位"
+EOF
+
+# conf: privilege（应用用户名按 APP_NAME 替换）+ resource（脚本管理时必须 {}，
+#   DSM 7 postinst worker 无法为 port-config/data-share 建系统资源 → 276 失败）
+mkdir -p "$ASSEMBLE/conf"
+sed "s/deepseek-harness-nas/${APP_NAME}/g" "$D_ASSETS/conf/privilege" > "$ASSEMBLE/conf/privilege"
+printf '{}' > "$ASSEMBLE/conf/resource"
+
+# scripts/installer：生命周期钩子（包名取运行期 $SYNOPKG_PKGNAME，零硬编码）
+mkdir -p "$ASSEMBLE/scripts"
+cat > "$ASSEMBLE/scripts/installer" <<'INSTALLER_EOF'
+#!/bin/sh
+PACKAGE_NAME="$SYNOPKG_PKGNAME"
+PACKAGE_BASE="/var/packages/${PACKAGE_NAME}/target"
+PACKAGE_SSS="/var/packages/${PACKAGE_NAME}/scripts/start-stop-status"
+PKG_VAR_DIR="/var/packages/${PACKAGE_NAME}/var"
+
+# 读取打包内嵌版本号（数据目录按版本隔离：<var>/<version>/）
+# 来源优先级与 bin/start.sh 的 resolve_pkg_version 一致（dsh 包 → npm 产物 → 顶层），
+# 顺序来自 build-config.yaml brand_version_order（打包期替换 __BRAND_VERSION_ORDER_COMMA__）
+pkg_version() {
+  local src="$1" f v
+  case "$src" in
+    dsh)
+      for f in "${PACKAGE_BASE}/node_modules/@deepseek-ai/dsh/package.json" \
+               "${PACKAGE_BASE}/node_modules/node_modules/@deepseek-ai/dsh/package.json" \
+               "${PACKAGE_BASE}/apps/cli/package.json"; do
+        [ -f "$f" ] || continue
+        v="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" 2>/dev/null | head -1)"
+        [ -n "$v" ] && { echo "$v"; return 0; }
+      done ;;
+    npm)
+      for f in "${PACKAGE_BASE}/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js" \
+               "${PACKAGE_BASE}/node_modules/node_modules/@deepseek-ai/dsh-client-ui-sidebar/lib/client.js"; do
+        [ -f "$f" ] || continue
+        v="$(sed -n 's/.*function localBuildVersion()[^{]*{[[:space:]]*return[[:space:]]*`\([^`]*\)`.*/\1/p' "$f" 2>/dev/null | head -1)"
+        [ -n "$v" ] && { echo "$v"; return 0; }
+      done ;;
+    top)
+      f="${PACKAGE_BASE}/package.json"
+      [ -f "$f" ] && sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$f" 2>/dev/null | head -1 ;;
+  esac
+  return 0
+}
+pkg_version_resolved() {
+  local s v
+  for s in __BRAND_VERSION_ORDER_COMMA__ top; do
+    v="$(pkg_version "$s")"
+    [ -n "$v" ] && { echo "$v"; return 0; }
+  done
+  echo "__FPK_VERSION__"
+}
+
+# 安装后初始化：版本隔离数据目录 + 权限修复 + dsh 命令软链
+setup_pkg_env() {
+  local VER="$(pkg_version_resolved)"
+  mkdir -p "${PKG_VAR_DIR}/${VER}"
+  chown -R "${PACKAGE_NAME}:system" "${PKG_VAR_DIR}/${VER}" 2>/dev/null || true
+  fix_ownership
+  link_dsh_cmd
+}
+
+# ── 安装向导端口覆盖（WIZARD_UIFILES/install_uifile → wizard_proxy_port 等）──
+# 用户安装时填的端口写数据目录 <PKG_VAR>/ports（版本隔离、跨升级保留），
+# start-stop-status 优先读它；未填则回退打包默认（target/var/ports）。
+# 2026-10-02 修正：ui/config 门户端口**无条件同步**（不依赖 wizard 是否填写）——
+#   重装时安装向导没填端口 → 旧逻辑 NEED 为空 → 不同步 → DSM 重新部署的
+#   ui/config 回到打包默认 30800，而服务端口（ports 文件跨版本保留的 3080）没变
+#   → 服务 3080 / 门户 30800 不一致（实测 10.10.10.64）。现在始终用
+#   「向导值 → 历史 ports 文件 → 打包默认」的最终值同步 ui/config，门户与服务恒一致。
+apply_wizard_ports() {
+  local VER="$(pkg_version_resolved)"
+  local PORTS_FILE="${PKG_VAR_DIR}/${VER}/ports"
+  # 最终端口：① 历史 ports 文件（跨升级保留）→ ② 向导值覆盖 → ③ 打包默认兜底
+  local _PP="" _DP="" _CP=""
+  if [ -f "$PORTS_FILE" ]; then
+    _PP="$(awk -F= '/^PROXY_PORT=/{print $2}' "$PORTS_FILE" 2>/dev/null)"
+    _DP="$(awk -F= '/^DSH_PORT=/{print $2}' "$PORTS_FILE" 2>/dev/null)"
+    _CP="$(awk -F= '/^CONTAINER_PORT=/{print $2}' "$PORTS_FILE" 2>/dev/null)"
+  fi
+  [ -n "${wizard_proxy_port:-}" ] && _PP="${wizard_proxy_port}"
+  [ -n "${wizard_dsh_port:-}" ] && _DP="${wizard_dsh_port}"
+  [ -n "${wizard_container_port:-}" ] && _CP="${wizard_container_port}"
+  _PP="${_PP:-__SPK_PROXY_PORT__}"
+  _DP="${_DP:-__SPK_DSH_PORT__}"
+  _CP="${_CP:-__SPK_CONTAINER_PORT__}"
+
+  # 写 ports 文件（总是写，反映最终生效端口；服务 start-stop-status 优先读它）
+  mkdir -p "${PKG_VAR_DIR}/${VER}"
+  {
+    echo "# 生效端口（2026-10-02：向导值优先，其次历史保留，缺省打包默认）"
+    echo "PROXY_PORT=${_PP}"
+    echo "DSH_PORT=${_DP}"
+    echo "CONTAINER_PORT=${_CP}"
+  } > "$PORTS_FILE"
+  chown "${PACKAGE_NAME}:system" "$PORTS_FILE" 2>/dev/null || true
+
+  # ── 无条件同步门户入口端口（ui/config 的 port 字段，打包期静态生成）──────
+  # DSM 桌面套件图标的「打开」用它；不同步则门户恒指打包默认端口。
+  # INFO 带 reloadui="yes"，DSM 会重载 UI。
+  for _ui in "/var/packages/${PACKAGE_NAME}/ui/config" "${PACKAGE_BASE}/ui/config"; do
+    if [ -f "$_ui" ]; then
+      sed -i "s/\"port\"[[:space:]]*:[[:space:]]*\"[0-9]*\"/\"port\": \"${_PP}\"/" "$_ui" 2>/dev/null || true
+      echo "[installer] 门户端口已同步: $_ui → ${_PP}" >&2
+    fi
+  done
+  echo "[installer] 生效端口: 反代 ${_PP} / DSH ${_DP} / 容器 ${_CP}" >&2
+}
+
+fix_ownership() {
+  chown -R "${PACKAGE_NAME}:system" "${PACKAGE_BASE}" 2>/dev/null || true
+  chown -R "${PACKAGE_NAME}:system" "${PACKAGE_BASE}/var" 2>/dev/null || true
+  chown -R "${PACKAGE_NAME}:system" "${PKG_VAR_DIR}" 2>/dev/null || true
+}
+
+link_dsh_cmd() {
+  mkdir -p /usr/local/bin
+  ln -sfn "${PACKAGE_BASE}/bin/dsh" /usr/local/bin/dsh 2>/dev/null || true
+}
+
+preinst() { exit 0; }
+
+postinst() {
+  setup_pkg_env
+  apply_wizard_ports
+  exit 0
+}
+
+prereplace() {
+  setup_pkg_env
+  exit 0
+}
+
+postreplace() {
+  setup_pkg_env
+  exit 0
+}
+
+# 卸载清理（群晖 CLI 卸载只执行 preuninst；postuninst 双保险）
+# 数据删除尊重安装向导 uninstall_uifile 的 wizard_delete_data：
+#   卸载时用户选「彻底删除」（true）才清数据；选「保留」（默认 false）则数据目录原样保留，
+#   重装直接恢复（2026-10-02 按用户「卸载给选项」需求实现，对齐 SynoCommunity 通用范式）。
+cleanup_uninstall() {
+  local VER="$(pkg_version_resolved)"
+  if [ "${wizard_delete_data:-false}" = "true" ]; then
+    if [ -n "$VER" ] && [ -d "${PKG_VAR_DIR}/${VER}" ]; then
+      rm -rf "${PKG_VAR_DIR}/${VER}" 2>/dev/null
+    fi
+    if [ -d "${PKG_VAR_DIR}" ] && [ -z "$(ls -A "${PKG_VAR_DIR}" 2>/dev/null)" ]; then
+      rm -rf "${PKG_VAR_DIR}" 2>/dev/null
+    fi
+  else
+    echo "[uninstall] 保留数据（wizard_delete_data=${wizard_delete_data:-false}）: ${PKG_VAR_DIR}/${VER}" >&2
+  fi
+  # 注册软链（/usr/syno/etc/packages/<pkg> → /volumeX/@appconf/<pkg>）及其指向目录
+  if [ -e "/usr/syno/etc/packages/${PACKAGE_NAME}" ]; then
+    local CONF_TARGET
+    CONF_TARGET="$(readlink "/usr/syno/etc/packages/${PACKAGE_NAME}" 2>/dev/null)"
+    rm -rf "/usr/syno/etc/packages/${PACKAGE_NAME}" 2>/dev/null
+    [ -n "$CONF_TARGET" ] && rm -rf "$CONF_TARGET" 2>/dev/null
+  fi
+  # 应用用户（群晖卸载不删，需显式删）
+  /usr/syno/sbin/synouser --del "${PACKAGE_NAME}" >/dev/null 2>&1 \
+    || userdel -r "${PACKAGE_NAME}" 2>/dev/null || true
+  # dsh 命令软链（若指向本包则清）
+  rm -f /usr/bin/dsh /usr/local/bin/dsh 2>/dev/null || true
+}
+
+preuninst() {
+  "${PACKAGE_SSS}" stop
+  cleanup_uninstall
+  exit 0
+}
+
+postuninst() {
+  cleanup_uninstall
+  exit 0
+}
+
+preupgrade() {
+  "${PACKAGE_SSS}" stop
+  exit 0
+}
+
+postupgrade() {
+  setup_pkg_env
+  exit 0
+}
+
+# hook 分发：仅当 installer **被直接运行**时执行（synopkg CLI 以 `installer <hook名>`
+# 子命令方式调用）。⚠ 独立 hook 文件（scripts/postinst 等）是 source 本文件定义函数、
+# 由薄壳调用同名函数——此时 basename 是 hook 名，绝不能进 case（否则命中 `*)` 的
+# `exit 0` 会让整个 hook 立即退出，postinst() 等函数永远不被调用，2026-10-02 实测铁证）
+if [ "$(basename "$0" 2>/dev/null)" = "installer" ]; then
+case "$1" in
+  preinst)      preinst ;;
+  postinst)     postinst ;;
+  prereplace)   prereplace ;;
+  postreplace)  postreplace ;;
+  preuninst)    preuninst ;;
+  postuninst)   postuninst ;;
+  preupgrade)   preupgrade ;;
+  postupgrade)  postupgrade ;;
+  *)            exit 0 ;;
+esac
+fi
+INSTALLER_EOF
+
+# start-stop-status：DSM 启停（端口只认 var/ports，由本脚本生成）
+cat > "$ASSEMBLE/scripts/start-stop-status" <<'SSS_EOF'
+#!/bin/sh
+PACKAGE_NAME="${SYNOPKG_PKGNAME}"
+PACKAGE_BASE="/var/packages/${PACKAGE_NAME}/target"
+START_SCRIPT="${PACKAGE_BASE}/start.sh"
+
+# 端口读取优先级（2026-10-02）：
+#   ① 数据目录 <var>/<版本>/ports（安装向导 wizard_*_port 写入，跨升级保留）→ 最高
+#   ② 打包默认 target/var/ports（build-spk.sh 依 build-config.yaml 生成）→ 回退
+PORT_FILE="${PACKAGE_BASE}/var/ports"
+# 数据目录版本隔离（与 installer pkg_version_resolved 同源：dsh → npm → top）
+for _pf in "${SYNOPKG_PKGVAR}"/*/ports "${SYNOPKG_PKGVAR}/ports"; do
+  [ -f "$_pf" ] && { PORT_FILE="$_pf"; break; }
+done
+if [ -f "$PORT_FILE" ]; then
+  . "$PORT_FILE"
+fi
+
+if [ -z "${PROXY_PORT}" ] || [ -z "${DSH_PORT}" ] || [ -z "${CONTAINER_PORT}" ]; then
+  echo "错误：未找到 ${PORT_FILE}（端口应由打包时生成），无法确定服务端口" >&2
+  exit 1
+fi
+
+
+stop() {
+  "${START_SCRIPT}" stop --proxy-port "$PROXY_PORT" --dsh-port "$DSH_PORT" --container-port "$CONTAINER_PORT" 2>/dev/null || true
+  sleep 2
+  pkill -f "bin.js web" 2>/dev/null || true
+  sleep 1
+  pkill -9 -f "start.sh" 2>/dev/null || true
+  return 0
+}
+
+start() {
+  mkdir -p "${PACKAGE_BASE}/var/logs" "${PACKAGE_BASE}/var/data"
+  export HOME="${PACKAGE_BASE}"
+  export DSH_HOME="${PACKAGE_BASE}/.dsh-home/.dsh"
+  "${START_SCRIPT}" start \
+    --proxy-port "$PROXY_PORT" \
+    --dsh-port "$DSH_PORT" \
+    --container-port "$CONTAINER_PORT" \
+    > "${PACKAGE_BASE}/var/logs/start.log" 2>&1 &
+  sleep 5
+  if ! running_dsh "$SPK_DSH_PORT" ; then
+    return 1
+  fi
+  return 0
+}
+
+status() {
+  if running_dsh "$SPK_DSH_PORT" ; then
+    echo "running"
+    exit 0
+  else
+    echo "stopped"
+    exit 1
+  fi
+}
+
+case "$1" in
+  start)   start; exit $?;;
+  stop)    stop; exit 0;;
+  status)  status;;
+  log)     echo "${PACKAGE_BASE}/var/logs/start.log"; exit 0;;
+esac
+SSS_EOF
+
+# ── 独立生命周期 hook 文件（DSM 官方机制，2026-10-02 修复）────────────────────
+# ⚠ DSM **只执行与 hook 同名的独立脚本**（preinst/postinst/preuninst/postuninst/
+#   preupgrade/postupgrade），**不会调用单一的 scripts/installer**——实测 10.10.10.64
+#   DSM 7.2 安装日志仅见文件 mv + start-stop-status，无任何 hook 执行记录；
+#   同机 aiproxy 套件正是靠这套独立薄壳文件让 wizard 值落地（其 aiproxy_key 已生成）。
+#   此前只放 installer → 端口向导/卸载选项/目录初始化全部静默失效。
+# 形态（官方 + aiproxy 实测）：source installer 定义函数 → 调用与文件名同名函数。
+for _hook in preinst postinst preuninst postuninst preupgrade postupgrade; do
+  cat > "$ASSEMBLE/scripts/$_hook" <<'HOOK_EOF'
+#!/bin/sh
+. $(dirname $0)/installer
+$(basename $0) > $SYNOPKG_TEMP_LOGFILE
+HOOK_EOF
+done
+
+chmod +x "$ASSEMBLE/scripts/"*
+# scripts 内占位符统一替换（品牌版本优先级链 / 版本兜底；不替换 → 装完数据目录名会带占位符）
+sed -i "s/__BRAND_VERSION_ORDER_COMMA__/${CFG_BRAND_VERSION_ORDER//,/ }/g; s/__FPK_VERSION__/${FPK_VERSION}/g; s/__APP_NAME__/${APP_NAME}/g; s/__SPK_PROXY_PORT__/${SPK_PROXY_PORT}/g; s/__SPK_DSH_PORT__/${SPK_DSH_PORT}/g; s/__SPK_CONTAINER_PORT__/${SPK_CONTAINER_PORT}/g" "$ASSEMBLE/scripts/"* 2>/dev/null || true
+if grep -rlE "__BRAND_VERSION_ORDER_COMMA__|__FPK_VERSION__|__APP_NAME__|__SPK_PROXY_PORT__|__SPK_DSH_PORT__|__SPK_CONTAINER_PORT__" "$ASSEMBLE/scripts/" 2>/dev/null | grep -q .; then
+  echo "[!] scripts 占位符未全部替换" >&2; exit 1
+fi
+
+# 门户图标 + 外层 ui/config（与 target 同源）
+mkdir -p "$ASSEMBLE/ui/images"
+cp "$D_ASSETS/ui/images/"*.png "$ASSEMBLE/ui/images/" 2>/dev/null || true
+cp "$TARGET/ui/config" "$ASSEMBLE/ui/config"
+cp "$D_ASSETS/PACKAGE_ICON.PNG" "$D_ASSETS/PACKAGE_ICON_256.PNG" "$ASSEMBLE/"
+
+# ── WIZARD_UIFILES 安装/卸载向导（2026-10-02 新增：安装时填端口 + 卸载保留/删除选项）──
+# 官方机制：WIZARD_UIFILES/install_uifile（安装向导）→ wizard_* 环境变量传 postinst；
+#           uninstall_uifile（卸载向导）→ wizard_delete_data 传 preuninst/postuninst。
+# 详见 syno-spk-package-guide 1.7.2 / B2（aiproxy 实测范式）。
+mkdir -p "$ASSEMBLE/WIZARD_UIFILES"
+cat > "$ASSEMBLE/WIZARD_UIFILES/install_uifile" <<WIZARD_EOF
+[
+    {
+        "step_title": "DeepSeek Harness 端口设置",
+        "items": [
+            {
+                "type": "textfield",
+                "desc": "门户端口（代理端口，默认 ${SPK_PROXY_PORT}）",
+                "subitems": [
+                    {
+                        "key": "wizard_proxy_port",
+                        "desc": "",
+                        "validator": { "allowBlank": true, "regex": { "expr": "/^\\\\d+$/", "errorText": "请输入数字端口" } }
+                    }
+                ]
+            },
+            {
+                "type": "textfield",
+                "desc": "DSH 服务端口（默认 ${SPK_DSH_PORT}）",
+                "subitems": [
+                    {
+                        "key": "wizard_dsh_port",
+                        "desc": "",
+                        "validator": { "allowBlank": true, "regex": { "expr": "/^\\\\d+$/", "errorText": "请输入数字端口" } }
+                    }
+                ]
+            },
+            {
+                "type": "textfield",
+                "desc": "容器端口（默认 ${SPK_CONTAINER_PORT}）",
+                "subitems": [
+                    {
+                        "key": "wizard_container_port",
+                        "desc": "",
+                        "validator": { "allowBlank": true, "regex": { "expr": "/^\\\\d+$/", "errorText": "请输入数字端口" } }
+                    }
+                ]
+            }
+        ]
+    }
+]
+WIZARD_EOF
+cp "$ASSEMBLE/WIZARD_UIFILES/install_uifile" "$ASSEMBLE/WIZARD_UIFILES/install_uifile_chs"
+# 卸载向导：保留/删除单选（wizard_keep_data 默认保留，wizard_delete_data 默认不删）
+cat > "$ASSEMBLE/WIZARD_UIFILES/uninstall_uifile" <<WIZARD_EOF
+[{
+  "step_title": "Uninstall package",
+  "items": [{
+    "type": "singleselect",
+    "desc": "Keep or delete package settings.",
+    "subitems": [{
+      "key": "wizard_keep_data",
+      "desc": "<b>Uninstall only.</b> Keep existing files for future re-installation.",
+      "defaultValue": true
+    }, {
+      "key": "wizard_delete_data",
+      "desc": "<b style=\"color: red\">Erase all of the package data files. (Not Recoverable)</b>",
+      "defaultValue": false
+    }]
+  }]
+}]
+WIZARD_EOF
+cat > "$ASSEMBLE/WIZARD_UIFILES/uninstall_uifile_chs" <<WIZARD_EOF
+[{
+  "step_title": "卸载套件",
+  "items": [{
+    "type": "singleselect",
+    "desc": "保留或删除套件设置。",
+    "subitems": [{
+      "key": "wizard_keep_data",
+      "desc": "<b>仅卸载。</b>保留现有文件以备将来重新安装。",
+      "defaultValue": true
+    }, {
+      "key": "wizard_delete_data",
+      "desc": "<b style=\"color: red\">删除套件所有的数据文件。（不可恢复！）</b>",
+      "defaultValue": false
+    }]
+  }]
+}]
+WIZARD_EOF
+echo "  ✓ WIZARD_UIFILES 已生成（install/uninstall × 中英）"
+
+# var/ports 落盘（start-stop-status 读取；端口全部 build-config.yaml 驱动）
+echo "▶ SPK 端口: $SPK_PROXY_PORT/$SPK_DSH_PORT/$SPK_CONTAINER_PORT"
+grep -q "${SPK_PROXY_PORT}" "$TARGET/start.sh" || echo "⚠ start.sh 未含端口 $SPK_PROXY_PORT"
+cat > "$TARGET/var/ports" <<PORTS_EOF
+# SPK 端口配置（build-config.yaml spk: 段驱动，start-stop-status 读取）
+PROXY_PORT=${SPK_PROXY_PORT}
+DSH_PORT=${SPK_DSH_PORT}
+CONTAINER_PORT=${SPK_CONTAINER_PORT}
+PORTS_EOF
+echo "  ✓ var/ports 已生成"
+
+# ----------------------------------------------------------------------------
+# 二、修正权限 + 打包
+# ----------------------------------------------------------------------------
+# DSM 要求标准权限（目录755 文件644 脚本755）；工作区 0707 会带进包 → 313/263 错误
+find "$TARGET" -type d -exec chmod 755 {} + 2>/dev/null
+find "$TARGET" -type f ! -executable -exec chmod 644 {} + 2>/dev/null
+find "$TARGET" -type f -executable -exec chmod 755 {} + 2>/dev/null
+find "$ASSEMBLE" -type d -exec chmod 755 {} + 2>/dev/null
+find "$ASSEMBLE" -type f ! -path '*/scripts/*' -exec chmod 644 {} + 2>/dev/null
+chmod 755 "$ASSEMBLE/scripts/"* 2>/dev/null || true
+chmod 644 "$ASSEMBLE/INFO" "$ASSEMBLE/conf/privilege" "$ASSEMBLE/conf/resource" \
+        "$ASSEMBLE/PACKAGE_ICON.PNG" "$ASSEMBLE/PACKAGE_ICON_256.PNG" \
+        "$ASSEMBLE/ui/config" 2>/dev/null || true
+chmod 755 "$ASSEMBLE/scripts/start-stop-status" "$ASSEMBLE/scripts/installer" 2>/dev/null || true
+
+# ── 运行时精准补包（2026-10-02 自动并入打包流程）────────────────────────────
+# 裁剪白名单（npm 链路 lock）会漏 pnpm 链路的运行时传递依赖（实测 execa 的
+# is-plain-obj 等）→ 装完 DSH 启动时内置插件 failed to import（Cannot find package）。
+# 此处探测 boot 入口 import 缺失 → 从构建副本 BUILD_SRC 精准恢复缺包（不搞全量闭包，
+# 体积保持精准级；实测只补 execa 依赖链 ~14 个小包，714M → SPK ~137MB）。
+_FIX_SCRIPT="$BUILD_ROOT/fix-runtime-deps.sh"
+if [ -x "$_FIX_SCRIPT" ] && [ -d "${WORK:-}/source/node_modules/.pnpm" ]; then
+  echo "▶ 运行时精准补包（fix-runtime-deps.sh）"
+  "$_FIX_SCRIPT" "$TARGET" "$WORK/source" || echo "  ⚠ 补包探测返回非零，继续打包"
+else
+  echo "▶ 跳过运行时补包（fix-runtime-deps.sh 缺失或其 BUILD_SRC 不完整）"
+fi
+
+# 内层 package.tgz（gzip；--hard-dereference 硬链展开；软链保留——旧包含软链可装）
+echo "▶ 打包 package.tgz（gzip, 预构建产物包, ${#TAR_EXCLUDES[@]} 条排除规则）"
+tar -czf "$ASSEMBLE/package.tgz" --hard-dereference -C "$TARGET" \
+  "${TAR_EXCLUDES[@]}" .
+if tar -xOf "$ASSEMBLE/package.tgz" 2>/dev/null | tar -tzf - 2>/dev/null | grep -q '^h'; then
+  echo "  ⚠ 仍有硬链接未展开"
+fi
+
+# 外层 SPK（未压缩 tar，无 ./ 前缀；组包前再修一次 assemble 权限）
+find "$ASSEMBLE" -type d -exec chmod 755 {} + 2>/dev/null
+find "$ASSEMBLE" -type f -exec chmod 644 {} + 2>/dev/null
+chmod 755 "$ASSEMBLE/scripts/"* 2>/dev/null || true
+chmod 755 "$ASSEMBLE/scripts/start-stop-status" "$ASSEMBLE/scripts/installer" 2>/dev/null || true
+
+OUT_SPK="$D_STAGING/${APP_NAME}_x86_64-${SPK_VERSION}.spk"
+# ⚠ staging 是 gitignore 的产物目录，CI 全新 checkout 不存在 → tar 因写不进去失败
+#   （exit code 2）。本地长期有该目录，掩盖了此问题。
+mkdir -p "$D_STAGING"
+echo "▶ 组装外层 SPK → $OUT_SPK"
+( cd "$ASSEMBLE" && tar -cf "$OUT_SPK" INFO PACKAGE_ICON.PNG PACKAGE_ICON_256.PNG conf scripts ui WIZARD_UIFILES package.tgz )
+
+sync   # CIFS 元数据滞后，不 sync 时 du 读旧大小
+_SPK_SIZE=$(du -m --apparent-size "$OUT_SPK" 2>/dev/null | cut -f1)
+echo "  ✅ SPK: $OUT_SPK (${_SPK_SIZE}MB | MD5 $(md5sum "$OUT_SPK" | awk '{print $1}'))"
+# 大小门禁：超过 600MB 说明平台裁剪失败或有意外大包
+if [ "${_SPK_SIZE:-0}" -gt 600 ]; then
+  echo "❌ SPK 体积异常: ${_SPK_SIZE}MB > 600MB 门禁。检查平台裁剪是否生效。" >&2
+  exit 1
+fi
+
+#===============================================================================
+# 三、汇总
+#===============================================================================
+echo ""
+echo "════════════════════════════════════════════════"
+echo "✅ SPK 构建完成（产物已放入暂存区，尚未验证）"
+echo "  SPK   : $OUT_SPK"
+echo "  版本  : 官方 $PKG_VER | SPK $SPK_VERSION"
+echo "  端口  : $SPK_PROXY_PORT / $SPK_DSH_PORT / $SPK_CONTAINER_PORT"
+echo "────────────────────────────────────────────────"
+echo "发布目录 $D_STAGING 只放暂存；实装验证后执行:"
+echo "  scripts/promote-release.sh <包文件名>"
+echo "════════════════════════════════════════════════"

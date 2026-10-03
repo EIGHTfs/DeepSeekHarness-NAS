@@ -1,0 +1,489 @@
+{
+  "source": "Synology Package Developer Guide",
+  "base_url": "https://help.synology.com/developer-guide",
+  "fetched_at": "2026-09-11 01:46:18",
+  "ok": 80,
+  "failed": [],
+  "pages": [
+    {
+      "path": "appendix/platarchs.html",
+      "file": "appendix__platarchs.md",
+      "title": "Appendix A: Platform and Arch Value Mapping Table",
+      "url": "https://help.synology.com/developer-guide/appendix/platarchs.html"
+    },
+    {
+      "path": "appendix/publication_review.html",
+      "file": "appendix__publication_review.md",
+      "title": "Package Review",
+      "url": "https://help.synology.com/developer-guide/appendix/publication_review.html"
+    },
+    {
+      "path": "appendix/ui_framework/application.html",
+      "file": "appendix__ui_framework__application.md",
+      "title": "Appliation",
+      "url": "https://help.synology.com/developer-guide/appendix/ui_framework/application.html"
+    },
+    {
+      "path": "appendix/ui_framework/button.html",
+      "file": "appendix__ui_framework__button.md",
+      "title": "Button",
+      "url": "https://help.synology.com/developer-guide/appendix/ui_framework/button.html"
+    },
+    {
+      "path": "appendix/ui_framework/checkbox.html",
+      "file": "appendix__ui_framework__checkbox.md",
+      "title": "Checkbox",
+      "url": "https://help.synology.com/developer-guide/appendix/ui_framework/checkbox.html"
+    },
+    {
+      "path": "appendix/ui_framework/form.html",
+      "file": "appendix__ui_framework__form.md",
+      "title": "Form",
+      "url": "https://help.synology.com/developer-guide/appendix/ui_framework/form.html"
+    },
+    {
+      "path": "appendix/ui_framework/input.html",
+      "file": "appendix__ui_framework__input.md",
+      "title": "Input",
+      "url": "https://help.synology.com/developer-guide/appendix/ui_framework/input.html"
+    },
+    {
+      "path": "appendix/ui_framework/radio.html",
+      "file": "appendix__ui_framework__radio.md",
+      "title": "Radio",
+      "url": "https://help.synology.com/developer-guide/appendix/ui_framework/radio.html"
+    },
+    {
+      "path": "appendix/ui_framework/rich_text.html",
+      "file": "appendix__ui_framework__rich_text.md",
+      "title": "Rich Text",
+      "url": "https://help.synology.com/developer-guide/appendix/ui_framework/rich_text.html"
+    },
+    {
+      "path": "appendix/ui_framework/select.html",
+      "file": "appendix__ui_framework__select.md",
+      "title": "Select Input API",
+      "url": "https://help.synology.com/developer-guide/appendix/ui_framework/select.html"
+    },
+    {
+      "path": "appendix/ui_framework/ui_framework.html",
+      "file": "appendix__ui_framework__ui_framework.md",
+      "title": "Components List",
+      "url": "https://help.synology.com/developer-guide/appendix/ui_framework/ui_framework.html"
+    },
+    {
+      "path": "breaking_changes.html",
+      "file": "breaking_changes.md",
+      "title": "Breaking Changes in 7.0",
+      "url": "https://help.synology.com/developer-guide/breaking_changes.html"
+    },
+    {
+      "path": "compile_applications/compile.html",
+      "file": "compile_applications__compile.md",
+      "title": "Compile",
+      "url": "https://help.synology.com/developer-guide/compile_applications/compile.html"
+    },
+    {
+      "path": "compile_applications/compile_open_source_projects.html",
+      "file": "compile_applications__compile_open_source_projects.md",
+      "title": "Compile Open Source Projects",
+      "url": "https://help.synology.com/developer-guide/compile_applications/compile_open_source_projects.html"
+    },
+    {
+      "path": "compile_applications/download_dsm_tool_chain.html",
+      "file": "compile_applications__download_dsm_tool_chain.md",
+      "title": "Download DSM Tool Chain",
+      "url": "https://help.synology.com/developer-guide/compile_applications/download_dsm_tool_chain.html"
+    },
+    {
+      "path": "compile_applications/manual.html",
+      "file": "compile_applications__manual.md",
+      "title": "Compile Applications",
+      "url": "https://help.synology.com/developer-guide/compile_applications/manual.html"
+    },
+    {
+      "path": "examples/compile_docker_package.html",
+      "file": "examples__compile_docker_package.md",
+      "title": "Compile Docker Package - Gitlab",
+      "url": "https://help.synology.com/developer-guide/examples/compile_docker_package.html"
+    },
+    {
+      "path": "examples/compile_nmap.html",
+      "file": "examples__compile_nmap.md",
+      "title": "Compile Open Source Project: nmap",
+      "url": "https://help.synology.com/developer-guide/examples/compile_nmap.html"
+    },
+    {
+      "path": "examples/compile_tmux.html",
+      "file": "examples__compile_tmux.md",
+      "title": "Compile Open Source Project",
+      "url": "https://help.synology.com/developer-guide/examples/compile_tmux.html"
+    },
+    {
+      "path": "examples/compile_web_package.html",
+      "file": "examples__compile_web_package.md",
+      "title": "Compile Web Package - WordPress",
+      "url": "https://help.synology.com/developer-guide/examples/compile_web_package.html"
+    },
+    {
+      "path": "examples/examples.html",
+      "file": "examples__examples.md",
+      "title": "Package Examples",
+      "url": "https://help.synology.com/developer-guide/examples/examples.html"
+    },
+    {
+      "path": "getting_started/first_package.html",
+      "file": "getting_started__first_package.md",
+      "title": "Your First Package",
+      "url": "https://help.synology.com/developer-guide/getting_started/first_package.html"
+    },
+    {
+      "path": "getting_started/gettingstarted.html",
+      "file": "getting_started__gettingstarted.md",
+      "title": "Getting Started",
+      "url": "https://help.synology.com/developer-guide/getting_started/gettingstarted.html"
+    },
+    {
+      "path": "getting_started/prepare_environment.html",
+      "file": "getting_started__prepare_environment.md",
+      "title": "Prepare Environment",
+      "url": "https://help.synology.com/developer-guide/getting_started/prepare_environment.html"
+    },
+    {
+      "path": "getting_started/system_requirement.html",
+      "file": "getting_started__system_requirement.md",
+      "title": "System Requirements",
+      "url": "https://help.synology.com/developer-guide/getting_started/system_requirement.html"
+    },
+    {
+      "path": "integrate_dsm/config.html",
+      "file": "integrate_dsm__config.md",
+      "title": "Application Config",
+      "url": "https://help.synology.com/developer-guide/integrate_dsm/config.html"
+    },
+    {
+      "path": "integrate_dsm/desktopapp.html",
+      "file": "integrate_dsm__desktopapp.md",
+      "title": "Desktop Application",
+      "url": "https://help.synology.com/developer-guide/integrate_dsm/desktopapp.html"
+    },
+    {
+      "path": "integrate_dsm/dsm_help.html",
+      "file": "integrate_dsm__dsm_help.md",
+      "title": "Application Help",
+      "url": "https://help.synology.com/developer-guide/integrate_dsm/dsm_help.html"
+    },
+    {
+      "path": "integrate_dsm/fhs.html",
+      "file": "integrate_dsm__fhs.md",
+      "title": "Package Filesystem Hierarchy Standard",
+      "url": "https://help.synology.com/developer-guide/integrate_dsm/fhs.html"
+    },
+    {
+      "path": "integrate_dsm/i18n.html",
+      "file": "integrate_dsm__i18n.md",
+      "title": "Application Internationalization",
+      "url": "https://help.synology.com/developer-guide/integrate_dsm/i18n.html"
+    },
+    {
+      "path": "integrate_dsm/integration.html",
+      "file": "integrate_dsm__integration.md",
+      "title": "Synology DSM Integration",
+      "url": "https://help.synology.com/developer-guide/integrate_dsm/integration.html"
+    },
+    {
+      "path": "integrate_dsm/ports.html",
+      "file": "integrate_dsm__ports.md",
+      "title": "Port",
+      "url": "https://help.synology.com/developer-guide/integrate_dsm/ports.html"
+    },
+    {
+      "path": "integrate_dsm/resource_monitor.html",
+      "file": "integrate_dsm__resource_monitor.md",
+      "title": "Monitor",
+      "url": "https://help.synology.com/developer-guide/integrate_dsm/resource_monitor.html"
+    },
+    {
+      "path": "integrate_dsm/web_authentication.html",
+      "file": "integrate_dsm__web_authentication.md",
+      "title": "Application Authentication",
+      "url": "https://help.synology.com/developer-guide/integrate_dsm/web_authentication.html"
+    },
+    {
+      "path": "privilege/preface.html",
+      "file": "privilege__preface.md",
+      "title": "Privilege",
+      "url": "https://help.synology.com/developer-guide/privilege/preface.html"
+    },
+    {
+      "path": "privilege/privilege_config.html",
+      "file": "privilege__privilege_config.md",
+      "title": "Privilege Config",
+      "url": "https://help.synology.com/developer-guide/privilege/privilege_config.html"
+    },
+    {
+      "path": "publish_package/get_start.html",
+      "file": "publish_package__get_start.md",
+      "title": "Get Started with Publishing",
+      "url": "https://help.synology.com/developer-guide/publish_package/get_start.html"
+    },
+    {
+      "path": "publish_package/publish.html",
+      "file": "publish_package__publish.md",
+      "title": "Publish Synology Packages",
+      "url": "https://help.synology.com/developer-guide/publish_package/publish.html"
+    },
+    {
+      "path": "publish_package/repond_to_user_issue.html",
+      "file": "publish_package__repond_to_user_issue.md",
+      "title": "Responding to User Issues",
+      "url": "https://help.synology.com/developer-guide/publish_package/repond_to_user_issue.html"
+    },
+    {
+      "path": "publish_package/summit_package_for_approval.html",
+      "file": "publish_package__summit_package_for_approval.md",
+      "title": "Submitting the Package for Approval",
+      "url": "https://help.synology.com/developer-guide/publish_package/summit_package_for_approval.html"
+    },
+    {
+      "path": "release_notes.html",
+      "file": "release_notes.md",
+      "title": "Synology Package Framework 7.2",
+      "url": "https://help.synology.com/developer-guide/release_notes.html"
+    },
+    {
+      "path": "resource_acquisition/apache22.html",
+      "file": "resource_acquisition__apache22.md",
+      "title": "Apache 2.2 Config",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/apache22.html"
+    },
+    {
+      "path": "resource_acquisition/available_workers.html",
+      "file": "resource_acquisition__available_workers.md",
+      "title": "Available Workers",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/available_workers.html"
+    },
+    {
+      "path": "resource_acquisition/config_update.html",
+      "file": "resource_acquisition__config_update.md",
+      "title": "Resource Update",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/config_update.html"
+    },
+    {
+      "path": "resource_acquisition/data_share.html",
+      "file": "resource_acquisition__data_share.md",
+      "title": "Data Share",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/data_share.html"
+    },
+    {
+      "path": "resource_acquisition/docker-project.html",
+      "file": "resource_acquisition__docker-project.md",
+      "title": "Docker Project Worker",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/docker-project.html"
+    },
+    {
+      "path": "resource_acquisition/docker.html",
+      "file": "resource_acquisition__docker.md",
+      "title": "Docker (since DSM7.0)",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/docker.html"
+    },
+    {
+      "path": "resource_acquisition/index_db.html",
+      "file": "resource_acquisition__index_db.md",
+      "title": "Index DB",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/index_db.html"
+    },
+    {
+      "path": "resource_acquisition/maria_db_10.html",
+      "file": "resource_acquisition__maria_db_10.md",
+      "title": "Maria DB 10",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/maria_db_10.html"
+    },
+    {
+      "path": "resource_acquisition/php_ini.html",
+      "file": "resource_acquisition__php_ini.md",
+      "title": "PHP INI",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/php_ini.html"
+    },
+    {
+      "path": "resource_acquisition/port_config.html",
+      "file": "resource_acquisition__port_config.md",
+      "title": "Port Config",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/port_config.html"
+    },
+    {
+      "path": "resource_acquisition/resource_specification.html",
+      "file": "resource_acquisition__resource_specification.md",
+      "title": "Resource Config",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/resource_specification.html"
+    },
+    {
+      "path": "resource_acquisition/resources.html",
+      "file": "resource_acquisition__resources.md",
+      "title": "Resource",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/resources.html"
+    },
+    {
+      "path": "resource_acquisition/syslog_config.html",
+      "file": "resource_acquisition__syslog_config.md",
+      "title": "Syslog Config",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/syslog_config.html"
+    },
+    {
+      "path": "resource_acquisition/sysnotify.html",
+      "file": "resource_acquisition__sysnotify.md",
+      "title": "System Nofitication",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/sysnotify.html"
+    },
+    {
+      "path": "resource_acquisition/systemd_user_unit.html",
+      "file": "resource_acquisition__systemd_user_unit.md",
+      "title": "Systemd User Unit",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/systemd_user_unit.html"
+    },
+    {
+      "path": "resource_acquisition/timing.html",
+      "file": "resource_acquisition__timing.md",
+      "title": "Resource Timing",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/timing.html"
+    },
+    {
+      "path": "resource_acquisition/usrlocal_linker.html",
+      "file": "resource_acquisition__usrlocal_linker.md",
+      "title": "/usr/local linker",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/usrlocal_linker.html"
+    },
+    {
+      "path": "resource_acquisition/web_config.html",
+      "file": "resource_acquisition__web_config.md",
+      "title": "Web Config (since DSM7.2)",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/web_config.html"
+    },
+    {
+      "path": "resource_acquisition/web_service.html",
+      "file": "resource_acquisition__web_service.md",
+      "title": "Web Service (since DSM7.0)",
+      "url": "https://help.synology.com/developer-guide/resource_acquisition/web_service.html"
+    },
+    {
+      "path": "synology_package/INFO.html",
+      "file": "synology_package__INFO.md",
+      "title": "INFO",
+      "url": "https://help.synology.com/developer-guide/synology_package/INFO.html"
+    },
+    {
+      "path": "synology_package/INFO_necessary_fields.html",
+      "file": "synology_package__INFO_necessary_fields.md",
+      "title": "Field Name: package",
+      "url": "https://help.synology.com/developer-guide/synology_package/INFO_necessary_fields.html"
+    },
+    {
+      "path": "synology_package/INFO_optional_fields.html",
+      "file": "synology_package__INFO_optional_fields.md",
+      "title": "Field Name: displayname",
+      "url": "https://help.synology.com/developer-guide/synology_package/INFO_optional_fields.html"
+    },
+    {
+      "path": "synology_package/conf.html",
+      "file": "synology_package__conf.md",
+      "title": "conf",
+      "url": "https://help.synology.com/developer-guide/synology_package/conf.html"
+    },
+    {
+      "path": "synology_package/introduction.html",
+      "file": "synology_package__introduction.md",
+      "title": "Package Introduction",
+      "url": "https://help.synology.com/developer-guide/synology_package/introduction.html"
+    },
+    {
+      "path": "synology_package/license.html",
+      "file": "synology_package__license.md",
+      "title": "License",
+      "url": "https://help.synology.com/developer-guide/synology_package/license.html"
+    },
+    {
+      "path": "synology_package/package_tgz/launch_app.html",
+      "file": "synology_package__package_tgz__launch_app.md",
+      "title": "Launch an App",
+      "url": "https://help.synology.com/developer-guide/synology_package/package_tgz/launch_app.html"
+    },
+    {
+      "path": "synology_package/package_tgz/package_tgz.html",
+      "file": "synology_package__package_tgz__package_tgz.md",
+      "title": "package.tgz",
+      "url": "https://help.synology.com/developer-guide/synology_package/package_tgz/package_tgz.html"
+    },
+    {
+      "path": "synology_package/pkgconx.html",
+      "file": "synology_package__pkgconx.md",
+      "title": "PKG_CONX",
+      "url": "https://help.synology.com/developer-guide/synology_package/pkgconx.html"
+    },
+    {
+      "path": "synology_package/pkgdeps.html",
+      "file": "synology_package__pkgdeps.md",
+      "title": "PKG_DEPS",
+      "url": "https://help.synology.com/developer-guide/synology_package/pkgdeps.html"
+    },
+    {
+      "path": "synology_package/script_env_var.html",
+      "file": "synology_package__script_env_var.md",
+      "title": "Script Environment Variables",
+      "url": "https://help.synology.com/developer-guide/synology_package/script_env_var.html"
+    },
+    {
+      "path": "synology_package/scripts.html",
+      "file": "synology_package__scripts.md",
+      "title": "scripts",
+      "url": "https://help.synology.com/developer-guide/synology_package/scripts.html"
+    },
+    {
+      "path": "synology_package/show_massage.html",
+      "file": "synology_package__show_massage.md",
+      "title": "Show Messages to Users",
+      "url": "https://help.synology.com/developer-guide/synology_package/show_massage.html"
+    },
+    {
+      "path": "synology_package/wizard/WIZARD_UIFILES_v2.html",
+      "file": "synology_package__wizard__WIZARD_UIFILES_v2.md",
+      "title": "WIZARD_UIFILES [7.2.2]",
+      "url": "https://help.synology.com/developer-guide/synology_package/wizard/WIZARD_UIFILES_v2.html"
+    },
+    {
+      "path": "synology_package/wizard/intro.html",
+      "file": "synology_package__wizard__intro.md",
+      "title": "Wizard UI Files",
+      "url": "https://help.synology.com/developer-guide/synology_package/wizard/intro.html"
+    },
+    {
+      "path": "toolkit/build_stage.html",
+      "file": "toolkit__build_stage.md",
+      "title": "Build Stage:",
+      "url": "https://help.synology.com/developer-guide/toolkit/build_stage.html"
+    },
+    {
+      "path": "toolkit/pack_stage.html",
+      "file": "toolkit__pack_stage.md",
+      "title": "Pack Stage:",
+      "url": "https://help.synology.com/developer-guide/toolkit/pack_stage.html"
+    },
+    {
+      "path": "toolkit/references.html",
+      "file": "toolkit__references.md",
+      "title": "References",
+      "url": "https://help.synology.com/developer-guide/toolkit/references.html"
+    },
+    {
+      "path": "toolkit/sign_package.html",
+      "file": "toolkit__sign_package.md",
+      "title": "Sign Package (only for DSM6.X)",
+      "url": "https://help.synology.com/developer-guide/toolkit/sign_package.html"
+    },
+    {
+      "path": "toolkit/toolkit.html",
+      "file": "toolkit__toolkit.md",
+      "title": "Synology Toolkit",
+      "url": "https://help.synology.com/developer-guide/toolkit/toolkit.html"
+    }
+  ]
+}
