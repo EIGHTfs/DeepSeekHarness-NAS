@@ -340,19 +340,72 @@ _BUILD_SCRIPTS = {
 }
 
 
-def start_build(step='common'):
-    """后台执行构建脚本。返回 (build_id, error_msg)。"""
+def _validate_build_step(step):
+    """校验 step 并解析脚本路径。返回 (script_rel, script_abs, error)。"""
     script_rel = _BUILD_SCRIPTS.get(step)
     if not script_rel:
-        return None, 'step 必须是 common|spk|fpk'
+        return None, None, 'step 必须是 common|spk|fpk'
     script_abs = os.path.join(WS_ROOT, script_rel)
     if not os.path.isfile(script_abs):
-        return None, '脚本不存在: %s' % script_rel
+        return script_rel, script_abs, '脚本不存在: %s' % script_rel
+    return script_rel, script_abs, ''
 
+
+def _ensure_no_running_build():
+    """同一时刻只允许一个构建（构建吃满磁盘/CPU，并发会把两者都拖死）。返回错误信息或空串。"""
     with BUILDS_LOCK:
         for bid, info in BUILDS.items():
             if info['status'] == 'running':
-                return None, '构建 %s 正在进行中，请等待完成' % bid
+                return '构建 %s 正在进行中，请等待完成' % bid
+    return ''
+
+
+def _stream_build(build_id, cmd, step):
+    """执行构建、边跑边刷新输出与阶段进度，结束（或异常）后落最终状态。"""
+    try:
+        p = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, errors='replace', cwd=WS_ROOT, env=os.environ.copy())
+        out_lines = []
+        for line in p.stdout:
+            out_lines.append(line.rstrip('\n'))
+            with BUILDS_LOCK:
+                b = BUILDS[build_id]
+                b['output'] = '\n'.join(out_lines[-BUILD_LOG_LINES:])
+                for kw, pct in _BUILD_STAGES:
+                    if kw in line:
+                        b['stage'] = kw
+                        b['progress'] = pct
+                        break
+        p.wait()
+        with BUILDS_LOCK:
+            b = BUILDS[build_id]
+            b['output'] = '\n'.join(out_lines[-BUILD_LOG_LINES:])
+            b['exit_code'] = p.returncode
+            b['status'] = 'done' if p.returncode == 0 else 'error'
+            b['progress'] = 100 if p.returncode == 0 else b['progress']
+            b['stage'] = '完成' if p.returncode == 0 else '失败'
+            b['finished'] = time.strftime('%Y-%m-%d %H:%M:%S')
+        log('BUILD done build_id=%s step=%s exit=%d' % (build_id, step, p.returncode))
+    except Exception as e:
+        with BUILDS_LOCK:
+            b = BUILDS[build_id]
+            b['output'] = '执行失败: %s' % e
+            b['status'] = 'error'
+            b['exit_code'] = 1
+            b['finished'] = time.strftime('%Y-%m-%d %H:%M:%S')
+            b['stage'] = '异常'
+        log('BUILD error build_id=%s: %s' % (build_id, e))
+
+
+def start_build(step='common'):
+    """后台执行构建脚本。返回 (build_id, error_msg)。"""
+    script_rel, script_abs, err = _validate_build_step(step)
+    if err:
+        return None, err
+    err = _ensure_no_running_build()
+    if err:
+        return None, err
 
     build_id = 'build-%d' % int(time.time())
     with BUILDS_LOCK:
@@ -364,44 +417,9 @@ def start_build(step='common'):
         }
 
     def _work():
-        env = os.environ.copy()
-        # build-common 默认走 PRUNE_BEFORE_INSTALL=1（白名单已补全类型检查包，
-        # install 前裁剪保留它们，tsc 能过；同时 target 更小，SPK < 600MB）
-        cmd = ['bash', script_abs]
-        try:
-            p = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, errors='replace', cwd=WS_ROOT, env=env)
-            out_lines = []
-            for line in p.stdout:
-                out_lines.append(line.rstrip('\n'))
-                with BUILDS_LOCK:
-                    b = BUILDS[build_id]
-                    b['output'] = '\n'.join(out_lines[-BUILD_LOG_LINES:])
-                    for kw, pct in _BUILD_STAGES:
-                        if kw in line:
-                            b['stage'] = kw
-                            b['progress'] = pct
-                            break
-            p.wait()
-            with BUILDS_LOCK:
-                b = BUILDS[build_id]
-                b['output'] = '\n'.join(out_lines[-BUILD_LOG_LINES:])
-                b['exit_code'] = p.returncode
-                b['status'] = 'done' if p.returncode == 0 else 'error'
-                b['progress'] = 100 if p.returncode == 0 else b['progress']
-                b['stage'] = '完成' if p.returncode == 0 else '失败'
-                b['finished'] = time.strftime('%Y-%m-%d %H:%M:%S')
-            log('BUILD done build_id=%s step=%s exit=%d' % (build_id, step, p.returncode))
-        except Exception as e:
-            with BUILDS_LOCK:
-                b = BUILDS[build_id]
-                b['output'] = '执行失败: %s' % e
-                b['status'] = 'error'
-                b['exit_code'] = 1
-                b['finished'] = time.strftime('%Y-%m-%d %H:%M:%S')
-                b['stage'] = '异常'
-            log('BUILD error build_id=%s: %s' % (build_id, e))
+        # 不覆盖 PRUNE_BEFORE_INSTALL：build-common.sh 默认走 1（白名单已补全类型检查包，
+        # install 前裁剪保留它们，tsc 能过；同时 target 更小，SPK < 600MB）。
+        _stream_build(build_id, ['bash', script_abs], step)
 
     threading.Thread(target=_work, daemon=True).start()
     log('BUILD start build_id=%s step=%s' % (build_id, step))
