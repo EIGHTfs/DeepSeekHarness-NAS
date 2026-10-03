@@ -47,6 +47,11 @@ jobs:
       # ⚠ 该 job 的日志 GitHub 时常不归档（BlobNotFound）。单步构建（BUILD_STAGE=all）
       #   保证失败时 failure() 能捕获；日志靠 artifact 兜底。
       - name: 公共预编译 pnpm install + build + 裁剪
+        env:
+          # install 前裁剪会删掉白名单包（vite/@types/semver 等传递依赖）的顶层提升软链，
+          # 导致 tsc 报 TS2307/TS7016。本地实测：跳过 install 前裁剪即可通过；
+          # 最终裁剪仍是模式 B + 完整白名单，出货体积不受影响。
+          PRUNE_BEFORE_INSTALL: "0"
         run: ./build/build-common.sh
 
       - uses: ./.github/actions/upload-build-logs
@@ -85,6 +90,11 @@ jobs:
       - uses: ./.github/actions/ci-clean
 
       - name: 公共预编译 pnpm install + build + 裁剪
+        env:
+          # install 前裁剪会删掉白名单包（vite/@types/semver 等传递依赖）的顶层提升软链，
+          # 导致 tsc 报 TS2307/TS7016。本地实测：跳过 install 前裁剪即可通过；
+          # 最终裁剪仍是模式 B + 完整白名单，出货体积不受影响。
+          PRUNE_BEFORE_INSTALL: "0"
         run: ./build/build-common.sh
 
       - name: 打 FPK（源码构建，消费 target）
