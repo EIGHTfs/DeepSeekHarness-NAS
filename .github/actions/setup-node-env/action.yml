@@ -1,0 +1,20 @@
+name: setup-node-env
+description: 安装 Node 22 + 指定打包用 NODE_SRC（build-spk/build-fpk 共用）
+inputs:
+  node-version:
+    description: Node 版本
+    required: false
+    default: '22'
+runs:
+  using: composite
+  steps:
+    - name: 安装 Node 22（打包与运行均需 >=22.19）
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    # build-common.sh 默认取 /usr/bin/node（runner 系统旧版），
+    # 显式指向 setup-node 装的新版，避免打到 20.x 打包进套件
+    - name: 指定打包用 node 路径
+      shell: bash
+      run: echo "NODE_SRC=$(command -v node)" >> "$GITHUB_ENV"

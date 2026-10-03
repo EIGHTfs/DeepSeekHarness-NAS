@@ -1,0 +1,30 @@
+name: ci-clean
+description: 清理 runner 磁盘 + 环境诊断（源码构建前需要，释放 ~20G）
+inputs:
+  enabled:
+    description: 是否执行（'true'/'false'）
+    required: false
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - name: 清理 runner 磁盘空间（释放 ~20G）
+      if: ${{ inputs.enabled == 'true' }}
+      shell: bash
+      run: |
+        echo "清理前:"
+        df -h /
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+        sudo docker image prune -af 2>/dev/null || true
+        echo "清理后:"
+        df -h /
+
+    - name: 环境诊断（磁盘/内存，CI 排查用）
+      if: ${{ inputs.enabled == 'true' }}
+      shell: bash
+      run: |
+        df -h /
+        echo "-----"
+        free -h
+        echo "-----"
+        nproc

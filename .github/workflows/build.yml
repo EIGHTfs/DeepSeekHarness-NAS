@@ -13,18 +13,16 @@ on:
 permissions:
   contents: write
 
-# ── 构建开关（仓库变量 vars.BUILD_SPK / vars.BUILD_FPK 控制各产物是否构建）──
-#   job 级 if 只能用 vars 上下文（GitHub Actions 限制：if 里不可用 env）。
-#   设置方式：仓库 Settings → Secrets and variables → Actions → Variables
-#   新增 BUILD_FPK = 'false' 即临时关闭 FPK 构建（不设置或 'true' = 构建）。
-#   也可用 API：PUT /repos/{owner}/{repo}/actions/variables/BUILD_FPK
-#   默认（变量未设置）两个都构建。
-#
-# ── FPK 构建方式选择（vars.FPK_MODE）──
-#   FPK_MODE = 'npm'  → npm 链路（npm 装官方包 → app_root → --npm 打包，免源码编译，体积更小）
-#   FPK_MODE = 未设置/其他 → 源码构建（默认，与 SPK 同源：build-common.sh 编译 target → build-fpk.sh，
-#                            品牌 DeepSeekHarness-NAS，2026-09-15 本地实测 114MB 实机可装）
-#   设置方式同上：Settings → Variables 新增 FPK_MODE = 'npm'
+# ── 构建开关（仓库变量 vars.* 控制；未设置均默认构建）───────────────────────
+#   BUILD_SPK = 'false'   关闭 SPK 构建（不设置或 'true' = 构建）
+#   BUILD_FPK = 'false'   关闭 FPK 构建
+#   FPK 链路：**源码构建 + npm 链路一律都构建**（2026-10-03 起）
+#       原先由 vars.FPK_MODE（both/source/npm）选择，现取消该参数：
+#       两条链路产物用途不同（源码版验证完整链路；npm 版体积小、装得快），
+#       单链路开关只会让 Release 缺项、文案出现"跳过"，故固定都构建。
+#       要少跑一条链路请直接改本文件（临时排障），不要恢复成仓库变量开关。
+#   设置方式：Settings → Secrets and variables → Actions → Variables；
+#   也可用 API：PUT /repos/{owner}/{repo}/actions/variables/{NAME}
 
 jobs:
   # ── 群晖 SPK：源码链路（需完整 pnpm install + build + 裁剪）──
@@ -35,53 +33,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 Node 22（打包与运行均需 >=22.19）
-        uses: actions/setup-node@v4
+      - uses: ./.github/actions/setup-node-env
+
+      - uses: ./.github/actions/fetch-latest
         with:
-          node-version: 22
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # build-common.sh 默认取 /usr/bin/node（runner 系统旧版），
-      # 显式指向 setup-node 装的新版，避免打到 20.x 打包进套件
-      - name: 指定打包用 node 路径
-        run: echo "NODE_SRC=$(command -v node)" >> "$GITHUB_ENV"
-
-      - name: 拉取官方最新源码到 src/deepseek-ai/{tag}
-        run: ./scripts/fetch-dsh-latest.sh
-        env:
-          DS_FETCH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 清理 runner 磁盘空间（释放 ~20G）
-        run: |
-          echo "清理前:"
-          df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL 2>/dev/null || true
-          sudo docker image prune -af 2>/dev/null || true
-          echo "清理后:"
-          df -h /
-
-      - name: 环境诊断（磁盘/内存，CI 排查用）
-        run: |
-          df -h /
-          echo "-----"
-          free -h
-          echo "-----"
-          nproc
+      - uses: ./.github/actions/ci-clean
 
       # ⚠ 该 job 的日志 GitHub 时常不归档（BlobNotFound）。单步构建（BUILD_STAGE=all）
       #   保证失败时 failure() 能捕获；日志靠 artifact 兜底。
       - name: 公共预编译 pnpm install + build + 裁剪
         run: ./build/build-common.sh
 
-      # 失败时上传完整构建日志（GitHub 日志 blob 经常丢失）
-      - name: 失败时上传构建日志（诊断）
-        if: failure()
-        uses: actions/upload-artifact@v4
+      - uses: ./.github/actions/upload-build-logs
         with:
-          name: build-spk-debug-log
-          path: |
-            build/master-build/build-*/pnpm-build.log
-          retention-days: 7
-          if-no-files-found: ignore
+          artifact-name: build-spk-debug-log
 
       - name: 打 SPK
         run: ./build/SPK/build-spk.sh
@@ -94,93 +61,86 @@ jobs:
             build/staging/*.spk
           retention-days: 14
 
-  # ── 飞牛 FPK：npm 链路（npm 装官方 dsh 包，无需 monorepo 编译，快、体积小）──
-  #    与 build-spk 并行；start.sh 母版、build-config.yaml 两边共用，改一处同步。
-  build-fpk:
+  # ── 飞牛 FPK · 源码链路（独立 job）────────────────────────────────────────
+  #    与 npm 链路**各自独立 job、独立 artifact、独立 Release**（2026-10-03）：
+  #    两条链失败互不阻塞、可并行；产物不再共用一个 fpk-dist 靠文件名分拣。
+  #    start.sh 母版、build-config.yaml 两边共用，改一处同步。
+  build-fpk-source:
     if: ${{ vars.BUILD_FPK != 'false' }}
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装 Node 22（打包与运行均需 >=22.19）
-        uses: actions/setup-node@v4
+      - uses: ./.github/actions/setup-node-env
+
+      - uses: ./.github/actions/fetch-latest
         with:
-          node-version: 22
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 指定打包用 node 路径
-        run: echo "NODE_SRC=$(command -v node)" >> "$GITHUB_ENV"
+      # 源码链路需要完整源码编译（npm 链路只取版本号对齐）
+      - uses: ./.github/actions/ci-clean
 
-      # 源码链路需要完整源码编译；npm 链路只需取版本号对齐（fetch 都跑，保证产物版本一致）
-      - name: 拉取官方最新源码到 src/deepseek-ai/{tag}
-        run: ./scripts/fetch-dsh-latest.sh
-        env:
-          DS_FETCH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # ── FPK 构建方式：vars.FPK_MODE 选择 ──
-      #   'npm' = npm 链路（npm 装官方包 → app_root → --npm 打包，免源码编译，体积更小）
-      #   其他/未设置 = 源码构建（默认，与 build-spk 同源：build-common.sh 编译 target → build-fpk.sh）
-      - name: 清理 runner 磁盘空间（源码构建需要，释放 ~20G）
-        if: ${{ vars.FPK_MODE != 'npm' }}
-        run: |
-          echo "清理前:"
-          df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL 2>/dev/null || true
-          sudo docker image prune -af 2>/dev/null || true
-          echo "清理后:"
-          df -h /
-
-      - name: 环境诊断（磁盘/内存，CI 排查用）
-        if: ${{ vars.FPK_MODE != 'npm' }}
-        run: |
-          df -h /
-          echo "-----"
-          free -h
-          echo "-----"
-          nproc
-
-      - name: 公共预编译 pnpm install + build + 裁剪（源码链路）
-        if: ${{ vars.FPK_MODE != 'npm' }}
+      - name: 公共预编译 pnpm install + build + 裁剪
         run: ./build/build-common.sh
 
-      # 失败时上传完整构建日志（GitHub 日志 blob 经常丢失）
-      - name: 失败时上传构建日志（诊断）
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-fpk-debug-log
-          path: |
-            build/master-build/build-*/pnpm-build.log
-          retention-days: 7
-          if-no-files-found: ignore
-
-      - name: 构建 npm 应用体（npm 装官方包 → app_root，npm 链路）
-        if: ${{ vars.FPK_MODE == 'npm' }}
-        run: ./build/FPK/build-npm-fpk-app.sh
-
       - name: 打 FPK（源码构建，消费 target）
-        if: ${{ vars.FPK_MODE != 'npm' }}
         run: ./build/FPK/build-fpk.sh
 
-      - name: 打 FPK（--npm 消费 app_root，npm 链路）
-        if: ${{ vars.FPK_MODE == 'npm' }}
-        run: ./build/FPK/build-fpk.sh --npm
+      - uses: ./.github/actions/upload-build-logs
+        with:
+          artifact-name: build-fpk-source-debug-log
 
-      - name: 上传 FPK 产物
+      - name: 上传 FPK 源码版产物
         uses: actions/upload-artifact@v4
         with:
-          name: fpk-dist
+          name: fpk-source-dist
           path: |
             build/staging/*.fpk
           retention-days: 14
 
-  # ── 自动发布 Release（与官方同 tag；spk 缺失时先发 fpk，修好后再补）──
-  #   任何触发（定时/手动/tag）都走这里：产物构建完成后，解析官方最新 tag
-  #   （fetch-dsh-latest.sh --print-tag，与官方 dsh 版本对齐），同名 tag 的
-  #   Release 已存在则覆盖资产（滚动刷新），不存在则自动创建。
+  # ── 飞牛 FPK · npm 链路（独立 job，不需要源码编译）────────────────────────
+  build-fpk-npm:
+    if: ${{ vars.BUILD_FPK != 'false' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-node-env
+
+      # 只取官方版本号对齐（产物版本与源码链一致），不做完整编译
+      - uses: ./.github/actions/fetch-latest
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建 npm 应用体（npm 装官方包 → app_root）
+        run: ./build/FPK/build-npm-fpk-app.sh
+
+      - name: 打 FPK（--npm 消费 app_root）
+        run: ./build/FPK/build-fpk.sh --npm
+
+      - uses: ./.github/actions/upload-build-logs
+        with:
+          artifact-name: build-fpk-npm-debug-log
+
+      - name: 上传 FPK npm 版产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: fpk-npm-dist
+          path: |
+            build/staging/*.fpk
+          retention-days: 14
+
+  # ── 自动发布 Release（两条链路分开：各自独立 job / artifact / Release）──
+  #   链路①源码：build-spk + build-fpk-source → Release `<官方tag>`（SPK + FPK 源码版）
+  #   链路②npm ：build-fpk-npm               → Release `<官方tag>-npm`（FPK npm 版）
+  #   任何触发（定时/手动/tag）都走这里：解析官方最新 tag（fetch-dsh-latest.sh
+  #   --print-tag，与官方 dsh 版本对齐），同名 tag 的 Release 已存在则覆盖资产。
+  #   文案/标题/更新日志统一由 build/release-note.sh 生成
+  #   （MODE=main 源码链 / MODE=npm 独立链），workflow 不写任何中文文案。
   release:
-    needs: [build-spk, build-fpk]
-    # always() 容忍 build-spk 失败：有 fpk 就先发布，Release 说明里标注 spk 缺失
+    needs: [build-spk, build-fpk-source, build-fpk-npm]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
@@ -195,72 +155,115 @@ jobs:
         env:
           DS_FETCH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 下载产物（spk 可能缺失，容忍失败）
+      # 按链路分别下载到各自目录：两条链路产物不再共用一个 artifact、也不再靠
+      # 文件名（*-npm.fpk）分拣（2026-10-03）
+      - name: 下载源码链路产物（SPK + FPK 源码版）
         uses: actions/download-artifact@v4
         with:
-          path: dist
-          pattern: '*-dist'
-          merge-multiple: true
+          name: spk-dist
+          path: dist-main
         continue-on-error: true
 
-      - name: 检查产物 + 记录 spk/fpk 状态 + 计算 SHA256
+      - name: 下载源码链路产物（FPK 源码版）
+        uses: actions/download-artifact@v4
+        with:
+          name: fpk-source-dist
+          path: dist-main
+        continue-on-error: true
+
+      - name: 下载 npm 链路产物（FPK npm 版）
+        uses: actions/download-artifact@v4
+        with:
+          name: fpk-npm-dist
+          path: dist-npm
+        continue-on-error: true
+
+      - name: 检查产物 + 记录状态 + 计算 SHA256
         id: check
         run: |
-          if ls dist/* >/dev/null 2>&1; then
+          # 两条链路各自独立 artifact，已分别落在 dist-main / dist-npm
+          has_main=no; ls dist-main/* >/dev/null 2>&1 && has_main=yes
+          has_npm=no;  ls dist-npm/*  >/dev/null 2>&1 && has_npm=yes
+          echo "HAS_MAIN=$has_main" >> "$GITHUB_ENV"
+          echo "HAS_NPM=$has_npm"   >> "$GITHUB_ENV"
+          if [ "$has_main" = yes ] || [ "$has_npm" = yes ]; then
             echo "HAS_FILES=yes" >> "$GITHUB_OUTPUT"
-            ls -lh dist
+            ls -lh dist-main dist-npm 2>/dev/null || true
           else
             echo "HAS_FILES=no" >> "$GITHUB_OUTPUT"
             echo "（无任何产物，跳过发布）"
           fi
-          if [ "${{ needs.build-spk.result }}" = "success" ]; then
-            echo "SPK_STATUS=✅ 有（源码链路构建成功）" >> "$GITHUB_ENV"
-          elif [ "${{ needs.build-spk.result }}" = "skipped" ]; then
-            echo "SPK_STATUS=⏭️ 跳过（BUILD_SPK=false）" >> "$GITHUB_ENV"
-          else
-            echo "SPK_STATUS=❌ 缺失（源码链路 CI 失败，修复中）" >> "$GITHUB_ENV"
-          fi
-          if [ "${{ needs.build-fpk.result }}" = "success" ]; then
-            if [ "${{ vars.FPK_MODE }}" = "npm" ]; then
-              echo "FPK_STATUS=✅ 有（npm 链路，x86）" >> "$GITHUB_ENV"
-            else
-              echo "FPK_STATUS=✅ 有（源码构建，x86）" >> "$GITHUB_ENV"
-            fi
-          elif [ "${{ needs.build-fpk.result }}" = "skipped" ]; then
-            echo "FPK_STATUS=⏭️ 跳过（BUILD_FPK=false）" >> "$GITHUB_ENV"
-          else
-            if [ "${{ vars.FPK_MODE }}" = "npm" ]; then
-              echo "FPK_STATUS=❌ 缺失（npm 链路 CI 失败）" >> "$GITHUB_ENV"
-            else
-              echo "FPK_STATUS=❌ 缺失（源码构建 CI 失败）" >> "$GITHUB_ENV"
-            fi
-          fi
+          # 状态徽标数据：拆分后每条链各自 job 的结果，互不牵连
+          _status() { case "$1" in success) echo success ;; skipped) echo skipped ;; *) echo fail ;; esac; }
+          echo "SPK_STATUS=$(_status '${{ needs.build-spk.result }}')" >> "$GITHUB_ENV"
+          echo "SPK_DESC=源码链路" >> "$GITHUB_ENV"
+          echo "FPK_SOURCE_STATUS=$(_status '${{ needs.build-fpk-source.result }}')" >> "$GITHUB_ENV"
+          echo "FPK_SOURCE_DESC=源码构建,x86" >> "$GITHUB_ENV"
+          echo "FPK_NPM_STATUS=$(_status '${{ needs.build-fpk-npm.result }}')" >> "$GITHUB_ENV"
+          echo "FPK_NPM_DESC=npm 链路,x86" >> "$GITHUB_ENV"
           # 产物 SHA256 校验值（发布描述自带，作验证依据）
-          if ls dist/* >/dev/null 2>&1; then
-            {
-              echo 'RELEASE_SHA<<EOF'
-              (cd dist && sha256sum *) 2>/dev/null
-              echo 'EOF'
-            } >> "$GITHUB_ENV"
-          fi
+          for _d in dist-main dist-npm; do
+            if ls "$_d"/* >/dev/null 2>&1; then
+              echo "${_d}_SHA<<EOF" >> "$GITHUB_ENV"
+              (cd "$_d" && sha256sum *) 2>/dev/null >> "$GITHUB_ENV" || true
+              echo "EOF" >> "$GITHUB_ENV"
+            fi
+          done
 
-      - name: 发布 Release（tag=官方 tag；已有同名则覆盖资产）
+      - name: 生成源码链路 Release 文案 + 标题（release-note.sh MODE=main）
+        id: note-main
+        if: steps.check.outputs.HAS_FILES == 'yes' && env.HAS_MAIN == 'yes'
+        env:
+          MODE: main
+          TRIGGER: ${{ github.event_name }}
+          RELEASE_TAG: ${{ steps.reltag.outputs.TAG }}
+          SPK_STATUS: ${{ env.SPK_STATUS }}
+          SPK_DESC: ${{ env.SPK_DESC }}
+          FPK_SOURCE_STATUS: ${{ env.FPK_SOURCE_STATUS }}
+          FPK_SOURCE_DESC: ${{ env.FPK_SOURCE_DESC }}
+          BUILD_TIME: ${{ github.event.repository.updated_at }}
+          SHA256: ${{ env.dist_main_SHA }}
+          # 更新日志抓取（api.github.com）带上 token，避免匿名限流
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./build/release-note.sh > /tmp/release-body-main.md
+          echo "TITLE=$(./build/release-note.sh title)" >> "$GITHUB_OUTPUT"
+
+      - name: 发布源码链路 Release（tag=官方 tag）
         if: steps.check.outputs.HAS_FILES == 'yes'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.reltag.outputs.TAG }}
-          name: "${{ steps.reltag.outputs.TAG }} 自动构建"
-          body: |
-            自动构建产物（触发方式: ${{ github.event_name }}）
-            - 官方版本: ${{ steps.reltag.outputs.TAG }}
-            - FPK: ${{ env.FPK_STATUS }}
-            - SPK: ${{ env.SPK_STATUS }}
-            - 构建时间: ${{ github.event.repository.updated_at }}
-            - SHA256 校验:
-            ```
-            ${{ env.RELEASE_SHA }}
-            ```
-          files: dist/*
-          # 2026-09-16：自动构建统一发正式 Release（不标 prerelease）
+          # 标题文案由 build/release-note.sh 的 title() 统一控制，workflow 不写字面文案
+          name: ${{ steps.note-main.outputs.TITLE }}
+          body_path: /tmp/release-body-main.md
+          files: dist-main/*
+          prerelease: false
+          fail_on_unmatched_files: false
+
+      - name: 生成 npm 链路 Release 文案 + 标题（release-note.sh MODE=npm）
+        id: note-npm
+        if: steps.check.outputs.HAS_FILES == 'yes' && env.HAS_NPM == 'yes'
+        env:
+          MODE: npm
+          TRIGGER: ${{ github.event_name }}
+          RELEASE_TAG: ${{ steps.reltag.outputs.TAG }}-npm
+          FPK_NPM_STATUS: ${{ env.FPK_NPM_STATUS }}
+          FPK_NPM_DESC: ${{ env.FPK_NPM_DESC }}
+          BUILD_TIME: ${{ github.event.repository.updated_at }}
+          SHA256: ${{ env.dist_npm_SHA }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./build/release-note.sh > /tmp/release-body-npm.md
+          echo "TITLE=$(./build/release-note.sh title)" >> "$GITHUB_OUTPUT"
+
+      - name: 发布 npm 链路 Release（tag=官方 tag-npm）
+        if: steps.check.outputs.HAS_FILES == 'yes' && env.HAS_NPM == 'yes'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.reltag.outputs.TAG }}-npm
+          name: ${{ steps.note-npm.outputs.TITLE }}
+          body_path: /tmp/release-body-npm.md
+          files: dist-npm/*
           prerelease: false
           fail_on_unmatched_files: false
