@@ -27,7 +27,7 @@ TARGETS = [".github/workflows/build.yml"] + [
     for d in sorted(os.listdir(os.path.join(ROOT, ".github", "actions")))
     if os.path.isdir(os.path.join(ROOT, ".github", "actions", d))
 ]
-KEYVAL = re.compile(r"^(\s*)([A-Za-z_][\w.\-]*):\s+(\S.*)$")
+KEYVAL = re.compile(r"^(\s*)(?:-\s+)?([A-Za-z_][\w.\-]*):\s+(\S.*)$")
 
 
 def check(path):
