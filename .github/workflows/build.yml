@@ -33,8 +33,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: README 覆盖度守卫（脚本/开关必须在 README 出现）
-        run: python3 scripts/check-readme-coverage.py
+      - name: 守卫套件（README 覆盖度 / 公共函数唯一性 / 破坏性操作 / 命名 / 事故回归）
+        run: |
+          set -e
+          python3 scripts/check-readme-coverage.py
+          python3 scripts/check-common-functions.py
+          python3 scripts/check-destructive-ops.py
+          python3 scripts/check-build-naming.py
+          bash test/safe-rm-rf.test.sh
 
       - uses: ./.github/actions/setup-node-env
 
