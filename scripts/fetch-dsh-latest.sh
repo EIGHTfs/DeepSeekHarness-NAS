@@ -12,8 +12,8 @@
 #
 # 策略:
 #   版本: 从 GitHub 拉取全部 tags，用严格 semantic version(含 pre-release)比较，自动选最高 tag。
-#   通道: 版本信息一律走 api.github.com；下载优先 git clone(github 443 通时)，不通/失败自动
-#         回退到 api/zipball 下载解压。
+#   通道: 版本信息一律走 api.github.com；下载**优先本地 git 缓存增量拉取**（复用旧快照/
+#         镜像，只下增量，`git archive` 出快照），再退化到 git clone，最后回退 api/zipball。
 #   去重: 目标 src/deepseek-ai/{tag} 目录已存在且非空 → 跳过不覆盖，重复运行不重复下载。
 #
 set -euo pipefail
@@ -57,6 +57,18 @@ fi
 # ---------- 确定存放目录 ----------
 [[ "$SRC_DIR" == "$DEFAULT_SRC" ]] && SRC_DIR="$WS/src/deepseek-ai"
 mkdir -p "$SRC_DIR"
+
+# ---------- 解析 git 可执行文件（不假设 PATH 里有 git） ----------
+# 实测（193，2026-10-03）：群晖上 git 在 /var/packages/git/target/bin，PATH 里没有 →
+#   原脚本 `git clone` 直接 "git: command not found" 静默失败、每次都退化成全量 zipball。
+#   这里显式解析，并把「没有 git」明确告知（而不是让人以为只是网络问题）。
+GIT_BIN="$(command -v git 2>/dev/null || true)"
+if [[ -z "$GIT_BIN" ]]; then
+  for _c in /var/packages/git/target/bin/git /usr/local/bin/git /usr/bin/git /bin/git; do
+    [[ -x "$_c" ]] && { GIT_BIN="$_c"; break; }
+  done
+fi
+[[ -n "$GIT_BIN" ]] || echo "… 本机未找到 git，跳过增量通道（可装 git 或设 DSH_GIT_BIN）…" >&2
 
 # ---------- 利用 python3 做严格 semver 比较并选出最高 tag（含 pre-release） ----------
 pick_latest_tag() {
@@ -138,12 +150,64 @@ WORK="$SRC_DIR/$TMP_PREFIX"
 mkdir -p "$WORK"
 trap 'rm -rf "$WORK"' EXIT
 
-# ---------- 方法A: git clone（优先，github 443 直连通时） ----------
+# ---------- 方法0: 本地 git 缓存增量拉取（首选） ----------
+# 依据（2026-10-03 用户要求）：官方是 **git 仓库**，不该每次全量下快照；且**旧源码可复用**。
+#   复用优先级：
+#     ① 已有镜像 <SRC_DIR>/.cache/<repo>.git  → 直接 fetch（只下增量）
+#     ② 无镜像但已有旧快照（浅克隆、带 .git）→ 就地当种子（补 origin 后 fetch）
+#     ③ 都没有 → 建镜像 git clone --filter=blob:none --no-checkout（仅首次；blob 按需拉取）
+#   出快照一律用 `git archive`：只落该 tag 的树，不二次克隆、不污染镜像工作区。
+#   实测收益：换版下载量由 zipball 的 ~185MB 降到增量级（git 只传本地缺失的对象）。
+CACHE_NAME="$(echo "$REPO" | tr '/' '-')"
+CACHE_DIR="$SRC_DIR/.cache/$CACHE_NAME.git"
+REPO_URL="${DS_FETCH_GIT_URL:-https://github.com/$REPO}"
+
+cache_prepare_seed() {
+  if [[ -d "$CACHE_DIR" ]]; then printf '%s' "$CACHE_DIR"; return 0; fi
+  local d
+  for d in "$SRC_DIR"/*/; do
+    [[ -d "${d%/}/.git" ]] || continue
+    printf '%s' "${d%/}"; return 0      # 复用旧快照当种子
+  done
+  mkdir -p "$SRC_DIR/.cache" 2>/dev/null || true
+  echo "… 首次建立本地镜像（--filter=blob:none --no-checkout，blob 按需拉取）…" >&2
+  if timeout 300 "$GIT_BIN" -c 'safe.directory=*' clone --filter=blob:none --no-checkout --quiet "$REPO_URL" "$CACHE_DIR" 2>/dev/null; then
+    printf '%s' "$CACHE_DIR"
+  fi
+  return 0
+}
+
+SEED=""
+[[ -n "$GIT_BIN" ]] && SEED="$(cache_prepare_seed)"
+if [[ -n "$SEED" ]]; then
+  # 复用旧快照时它可能没有 origin（实测 0.2.0 快照 remote/tags 都是空的）
+  if "$GIT_BIN" -c 'safe.directory=*' -C "$SEED" remote get-url origin >/dev/null 2>&1; then
+    "$GIT_BIN" -c 'safe.directory=*' -C "$SEED" remote set-url origin "$REPO_URL" 2>/dev/null || true
+  else
+    "$GIT_BIN" -c 'safe.directory=*' -C "$SEED" remote add origin "$REPO_URL" 2>/dev/null || true
+  fi
+  echo "… 增量拉取 $SAFE_TAG（缓存: $SEED）…" >&2
+  # --depth 1 + 显式 refspec：只要该 tag 的提交与树；已有对象 git 不会重下
+  if "$GIT_BIN" -c 'safe.directory=*' -C "$SEED" fetch --depth 1 --no-tags -v origin "refs/tags/$SAFE_TAG:refs/tags/$SAFE_TAG" 2>"$WORK/fetch.err" \
+     || "$GIT_BIN" -c 'safe.directory=*' -C "$SEED" fetch --depth 1 --no-tags -v origin "refs/tags/$SAFE_TAG" 2>>"$WORK/fetch.err"; then
+    # 打印本次真实下载量（证据：增量而非全量）
+    grep -oE "Receiving objects: *[0-9]+% \([0-9]+/[0-9]+\)[^,]*" "$WORK/fetch.err" | tail -1 | sed 's/^/    /' >&2 || true
+    if "$GIT_BIN" -c 'safe.directory=*' -C "$SEED" archive --format=tar "$SAFE_TAG" 2>/dev/null | { mkdir -p "$TARGET" && tar -xf - -C "$TARGET"; }; then
+      echo "✓ 已通过本地缓存增量拉取: $REPO@$SAFE_TAG → $TARGET"
+      exit 0
+    fi
+    echo "… git archive 失败，继续回退 …" >&2
+  else
+    echo "… 缓存 fetch 失败（详见 $WORK/fetch.err），继续回退 …" >&2
+  fi
+fi
+
+# ---------- 方法A: git clone（回退②，github 443 直连通时） ----------
 GH_CODE="$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 6 https://github.com || true)"
 CHOSEN="git clone"
-if [[ "$GH_CODE" != "000" ]]; then
+if [[ -n "$GIT_BIN" ]] && [[ "$GH_CODE" != "000" ]]; then
   echo "… 尝试 git clone --depth 1（github 443 可达，code=$GH_CODE）…"
-  if timeout 120 git clone --depth 1 --branch "$SAFE_TAG" \
+  if timeout 120 "$GIT_BIN" -c 'safe.directory=*' clone --depth 1 --branch "$SAFE_TAG" \
        "https://github.com/$REPO" "$WORK/clone" 2>/dev/null; then
     mv "$WORK/clone" "$TARGET"
     echo "✓ 已通过 git clone 拉取: $REPO@$SAFE_TAG → $TARGET"
