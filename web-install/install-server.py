@@ -132,6 +132,41 @@ def _upload_release_asset(upload_url, token, filepath, name):
         return 0, {'message': str(e)}
 
 
+# ── Release 文案：唯一出处 build/release-note.sh（禁止在本文件另写一套）──────────
+#   与 CI（.github/workflows/build.yml）调用同一脚本渲染标题与正文（含官方更新日志），
+#   保证「改一处、三条发布路径一致」：CI 源码链 / CI npm 链 / 本 web 端。
+def _release_note(kind, tag, mode=None, fname=None):
+    """取 release-note.sh 渲染的文案；任何失败返回 ''（由调用方回退，不阻断发布）。"""
+    script = os.path.join(WS_ROOT, 'build', 'release-note.sh')
+    if not os.path.isfile(script):
+        log('RELEASE note script missing: %s' % script)
+        return ''
+    if mode is None:
+        mode = 'npm' if tag.endswith('-npm') else 'main'
+    env = dict(os.environ, MODE=mode, RELEASE_TAG=tag)
+    # 状态徽标：web 端发布没有 CI 结果可读，按"本次发布的产物"如实置位，
+    #   否则正文会渲染成「缺失（CI 失败）」，与正在发布的事实矛盾。
+    _low = (fname or '').lower()
+    if _low.endswith('.spk'):
+        env.update(SPK_STATUS='success', SPK_DESC='web 端本地构建,源码链路')
+    elif _low.endswith('.fpk'):
+        if mode == 'npm':
+            env.update(FPK_NPM_STATUS='success', FPK_NPM_DESC='web 端本地构建,npm 链路')
+        else:
+            env.update(FPK_SOURCE_STATUS='success', FPK_SOURCE_DESC='web 端本地构建,源码链路')
+    try:
+        r = subprocess.run(['bash', script, kind, tag], env=env, cwd=WS_ROOT,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60)
+        if r.returncode != 0:
+            log('RELEASE note %s failed rc=%d: %s' % (kind, r.returncode,
+                r.stderr.decode('utf-8', 'replace')[:200]))
+            return ''
+        return r.stdout.decode('utf-8', 'replace').strip()
+    except Exception as e:
+        log('RELEASE note %s error: %s' % (kind, e))
+        return ''
+
+
 def publish_package_to_github(file_path, tag):
     """将指定包文件发布到 GitHub Release。
     1. 将文件复制到 release/<tag>/ 目录
@@ -164,8 +199,8 @@ def publish_package_to_github(file_path, tag):
     if status == 404:
         status, rel = _github_api('POST', '/repos/%s/releases' % GITHUB_REPO, token, {
             'tag_name': tag,
-            'name': 'Release %s' % tag,
-            'body': 'Published via install-server.py\nVersion: %s' % tag.lstrip('v'),
+            'name': _release_note('title', tag, fname=fname) or ('Release %s' % tag),
+            'body': _release_note('body', tag, fname=fname) or ('Version: %s' % tag.lstrip('v')),
             'draft': False,
             'prerelease': '-' in tag,
         })
