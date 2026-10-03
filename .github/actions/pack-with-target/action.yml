@@ -42,6 +42,7 @@ runs:
         tar -xzf "$TAR" -C "$T"
         [ -d "$T/target" ] || { echo "✗ 解包后缺少 $T/target"; exit 1; }
         [ -f "$T/build-meta.env" ] || { echo "✗ 解包后缺少 $T/build-meta.env"; exit 1; }
+        [ -f "$T/.build-done" ] || { echo "✗ 解包后缺少 $T/.build-done（复用判据，缺失说明打包时漏了）"; exit 1; }
         echo "✓ 复用 target: $(du -sh "$T/target" | cut -f1)（未重新构建）"
         echo "✓ meta: $(wc -c < "$T/build-meta.env") 字节"
         echo "  解包自: $TAR（$(du -h "$TAR" | cut -f1)）"

@@ -111,7 +111,8 @@ runs:
         tar -xzf "$TAR" -C "$T"
         echo "✓ target 缓存命中（${{ steps.tag.outputs.tag }}）：已解包 $(du -sh "$T/target" 2>/dev/null | cut -f1)"
         echo "  build-common.sh 将走 SKIP_BUILD 复用分支（跳过 20 分钟编译）"
-        ls -la "$T/.build-done" 2>/dev/null || echo "  ⚠ 未见到 .build-done 标记，SKIP_BUILD 可能不生效"
+        [ -f "$T/.build-done" ] || { echo "✗ 解包后缺少 $T/.build-done（SKIP_BUILD 判据）"; exit 1; }
+        echo "  ✓ .build-done 就位 → build-common.sh 会走 SKIP_BUILD 复用分支"
 
     - name: 未命中则说明将完整构建
       if: steps.cache-target.outputs.cache-hit != 'true'
@@ -136,7 +137,10 @@ runs:
         #   它逐文件处理，745M+ 海量文件会爆 4GB 堆。改为**先 tar 成单文件再上传**：
         #   一个文件几乎不占内存，问题直接消失；不去调 NODE_OPTIONS（对官方 action 无效）。
         TAR="$RUNNER_TEMP/build-target.tar.gz"
-        tar -czf "$TAR" -C "$T" target build-meta.env
+        # ⚠ 必须带上 .build-done：build-common.sh 的复用判据是
+        #   [ -f "$WORK/.build-done" ] && [ -d "$TARGET" ] && [ -f "$TARGET/package.json" ]
+        #   漏了它 → 解包后判据不成立 → 依旧完整重编（2026-10-04 自查发现）。
+        tar -czf "$TAR" -C "$T" target build-meta.env .build-done
         echo "✓ 已打包单文件: $TAR（$(du -h "$TAR" | cut -f1)）"
         echo "  上传后 pack-* job 解包即得同样的 target/ 与 build-meta.env"
         echo "ARTIFACT_TAR=$TAR" >> "$GITHUB_ENV"
