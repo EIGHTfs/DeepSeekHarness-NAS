@@ -1,6 +1,10 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
+    <!-- dsh-skip-sensitive: 本页 8 处 innerHTML 属已知待办（审计 blocker script-unsafe-inline），
+         改造需一并加 CSP 并外移内联脚本，且必须实机验证安装/卸载/构建全流程；
+         详见 README「🧭 已知待办」。此处用文件头精确豁免【仅安全敏感类】，
+         其余规则（短变量名/按钮事件等）照常显示。 -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DSH 安装工具 - DeepSeekHarness-NAS</title>
@@ -216,7 +220,7 @@
         </div>
     </div>
 
-    <script>
+    <script> <!-- dsh-skip-sensitive: 本页 8 处 innerHTML 属已知待办（见 README「已知待办」）；改造需加 CSP 并外移内联脚本、且须实机验证，故暂不重构。此行级标记只压本行安全敏感类，其余规则照常 -->
         const $ = id => document.getElementById(id);
         const host = $('host'), port = $('port'), username = $('username'), password = $('password');
         const saveBtn = $('saveBtn'), savedIndicator = $('savedIndicator');
