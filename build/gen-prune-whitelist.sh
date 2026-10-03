@@ -66,6 +66,16 @@ names = set()
 for k in pkgs:
     if not k.startswith('node_modules/'):
         continue
+    # 防御性守卫：若锁文件里出现 dev 条目（"dev": true / "devOptional": true）则跳过。
+    #   背景（2026-10-03 实测）：曾怀疑"npm 默认把 devDependencies 写进 package-lock.json
+    #   → 白名单种子=整棵构建树 → 目录闭包 1654 ≈ 整棵 .pnpm → target 5.5G → SPK 2GB 撞
+    #   600MB 门禁"。实测本项目的锁文件是 `--omit=dev` 生成的（495 个条目全无 dev 标记），
+    #   故**此处并非**那次膨胀的根因（真因是 workspace 包的 node_modules 目录列表含其
+    #   devDependencies，见 build/prune-target.sh 模式 B 的 runtime_only 说明）。
+    #   保留本守卫：若将来有人用带 devDeps 的方式重生成锁文件，种子不会被污染。
+    ent = pkgs.get(k) or {}
+    if ent.get('dev') or ent.get('devOptional'):
+        continue
     rest = k[len('node_modules/'):]
     last = rest.split('/node_modules/')[-1]   # 含嵌套取最后一段
     if not last:
