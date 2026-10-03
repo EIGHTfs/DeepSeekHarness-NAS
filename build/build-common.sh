@@ -32,6 +32,11 @@
 #   ./build-spk.sh    → build/staging/<APP_NAME>_x86_64-<SPK_VERSION>.spk
 #   ./build-fpk.sh    → build/staging/<APP_NAME>_x86-<FPK_VERSION>.fpk
 #===============================================================================
+
+# ── 公共函数库（safe_rm_rf：强制 --one-file-system + 挂载点检测）──
+_DSH_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/lib/common.sh"
+[ -f "$_DSH_LIB" ] && . "$_DSH_LIB"
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -111,7 +116,7 @@ ensure_pnpm_engine() {
     ( cd "$_tmp" && npm pack "pnpm@$_ver" --silent 2>/dev/null ) \
       && tar -xzf "$_tmp"/pnpm-*.tgz -C "$WS/tools/pnpm" --strip-components=1 2>/dev/null
   fi
-  rm -rf "$_tmp"
+  safe_rm_rf "$_tmp"
   if [ -f "$WS/tools/pnpm/dist/pnpm.mjs" ]; then
     echo "  ✓ pnpm 引擎就绪 (tools/pnpm/dist/pnpm.mjs, v$_ver)"
   else
@@ -394,7 +399,7 @@ fi
 if [ "$SKIP_BUILD" = "1" ] && [ -f "$WORK/.build-done" ] && [ -d "$TARGET" ] && [ -f "$TARGET/package.json" ]; then
   # 断点续传：构建已完成（有 .build-done 标记）→ 跳过，直接复用 target
   echo "▶ 复用已有 target（$WORK/.build-done 存在，跳过编译）"
-  rm -rf "$ASSEMBLE"
+  safe_rm_rf "$ASSEMBLE"
   mkdir -p "$ASSEMBLE"
   _BUILD_SKIPPED=1
 elif [ "$BUILD_STAGE" != "all" ] && [ -f "$BUILD_SRC/package.json" ]; then
@@ -402,7 +407,7 @@ elif [ "$BUILD_STAGE" != "all" ] && [ -f "$BUILD_SRC/package.json" ]; then
   echo "▶ 分阶段模式 (stage=$BUILD_STAGE)：复用已有 WORK $WORK"
   mkdir -p "$WORK" "$TARGET" "$ASSEMBLE"
 else
-  rm -rf "$WORK"
+  safe_rm_rf "$WORK"
   mkdir -p "$WORK" "$TARGET" "$ASSEMBLE"
 fi
 
@@ -428,7 +433,7 @@ else
   #   且留下半成品 BUILD_SRC 让下次重跑继续踩。
   #   改用 **tar 管道 + --hard-dereference**（硬链展开为真实文件、软链保留），与
   #   build/FPK/build-fpk.sh 的 app.tgz 段同一套实现（那里也是为规避深目录复制失败）。
-  rm -rf "$BUILD_SRC"
+  safe_rm_rf "$BUILD_SRC"
   mkdir -p "$BUILD_SRC"
   ( cd "$SRC" && tar -cf - --hard-dereference . ) | ( cd "$BUILD_SRC" && tar -xf - )
 fi
@@ -688,7 +693,7 @@ for c in "$D_TOOLS/pnpm" "/usr/lib/node_modules/pnpm" "/usr/local/lib/node_modul
 done
 if [ -n "$PNPM_SRC" ]; then
   echo "▶ 随附 pnpm: $PNPM_SRC"
-  rm -rf "$TARGET/pnpm"
+  safe_rm_rf "$TARGET/pnpm"
   mkdir -p "$TARGET/pnpm"
   cp -a "$PNPM_SRC/bin" "$PNPM_SRC/dist" "$TARGET/pnpm/" 2>/dev/null || true
   cp "$PNPM_SRC/package.json" "$TARGET/pnpm/package.json" 2>/dev/null || true
