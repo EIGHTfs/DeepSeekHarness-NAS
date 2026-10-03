@@ -18,6 +18,13 @@
 #     NODE_VERSION node 版本（缺省 24.4.0）
 #   产物: build/master-build/npm-app-VERSION/  app_root/  +  npm-meta.env
 #===============================================================================
+# ⚠ 2026-10-04 状态：**留档，不在 CI 执行**（用户口径）
+#   本脚本产出 FPK 的 npm 应用体（app_root）。在线构建已改为**只跑源码链路**：
+#     · CI job 仅 2 个：build-target（唯一构建）+ pack-and-release（打 SPK/FPK 并发布）
+#     · 本脚本与 build-fpk.sh 的 --npm 分支**保留代码**，供本地/将来手动执行：
+#         ./build/FPK/build-npm-fpk-app.sh && ./build/FPK/build-fpk.sh --npm
+#   改回自动执行时，请同步恢复 workflow 的 npm 打包与 npm Release 步骤。
+
 set -euo pipefail
 
 # ── 本脚本引用的脚本/目录路径（常量；改路径只改这里，引用点一律用常量） ──

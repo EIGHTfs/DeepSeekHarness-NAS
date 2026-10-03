@@ -47,99 +47,8 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
   # ── 打包：SPK · 源码链路（复用 build-target 的 artifact，不重复构建）──────────
-  pack-spk-source:
-    if: ${{ vars.BUILD_SPK != 'false' }}
+  pack-and-release:
     needs: [build-target]
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: ./.github/actions/pack-with-target
-
-      - name: 打 SPK（消费复用的 target）
-        run: ./build/SPK/build-spk.sh
-
-      - uses: ./.github/actions/upload-build-logs
-        with:
-          artifact-name: pack-spk-source-debug-log
-
-      - name: 上传 SPK 产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: spk-dist
-          path: |
-            build/staging/*.spk
-          retention-days: 14
-
-  pack-fpk-source:
-    needs: [build-target]
-    if: ${{ vars.BUILD_FPK != 'false' }}
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      # 源码链路需要完整源码编译（npm 链路只取版本号对齐）
-      - uses: ./.github/actions/pack-with-target
-
-      - name: 打 FPK（源码构建，消费 target）
-        run: ./build/FPK/build-fpk.sh
-
-      - uses: ./.github/actions/upload-build-logs
-        with:
-          artifact-name: build-fpk-source-debug-log
-
-      - name: 上传 FPK 源码版产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: fpk-source-dist
-          path: |
-            build/staging/*.fpk
-          retention-days: 14
-
-  # ── 飞牛 FPK · npm 链路（独立 job，不需要源码编译）────────────────────────
-  pack-fpk-npm:
-    if: ${{ vars.BUILD_FPK != 'false' }}
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: ./.github/actions/setup-node-env
-
-      # 只取官方版本号对齐（产物版本与源码链一致），不做完整编译
-      - uses: ./.github/actions/fetch-latest
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 构建 npm 应用体（npm 装官方包 → app_root）
-        run: ./build/FPK/build-npm-fpk-app.sh
-
-      - name: 打 FPK（--npm 消费 app_root）
-        run: ./build/FPK/build-fpk.sh --npm
-
-      - uses: ./.github/actions/upload-build-logs
-        with:
-          artifact-name: build-fpk-npm-debug-log
-
-      - name: 上传 FPK npm 版产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: fpk-npm-dist
-          path: |
-            build/staging/*.fpk
-          retention-days: 14
-
-  # ── 自动发布 Release（两条链路分开：各自独立 job / artifact / Release）──
-  #   链路①源码：build-spk + build-fpk-source → Release `<官方tag>`（SPK + FPK 源码版）
-  #   链路②npm ：build-fpk-npm               → Release `<官方tag>-npm`（FPK npm 版）
-  #   任何触发（定时/手动/tag）都走这里：解析官方最新 tag（fetch-dsh-latest.sh
-  #   --print-tag，与官方 dsh 版本对齐），同名 tag 的 Release 已存在则覆盖资产。
-  #   文案/标题/更新日志统一由 build/release-note.sh 生成
-  #   （MODE=main 源码链 / MODE=npm 独立链），workflow 不写任何中文文案。
-  release:
-    needs: [pack-spk-source, pack-fpk-source, pack-fpk-npm]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
@@ -147,6 +56,23 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # ── 打包（复用 build-target 的 artifact，不重复构建）──
+      - uses: ./.github/actions/pack-with-target
+
+      - name: 打 SPK（源码链路）
+        run: ./build/SPK/build-spk.sh
+
+      - name: 打 FPK（源码链路）
+        run: ./build/FPK/build-fpk.sh
+
+      - name: 汇总产物到 dist-main（供后续检查与发布）
+        run: |
+          set -e
+          # dist-npm 仅为兼容后续检查步骤而建空目录（FPK npm 链路已留档、CI 不执行）
+          mkdir -p dist-main dist-npm
+          cp -a build/staging/*.spk build/staging/*.fpk dist-main/ 2>/dev/null || true
+          ls -lh dist-main || true
 
       - name: 解析官方最新 tag（与官方同 tag 发布）
         id: reltag
@@ -156,27 +82,6 @@ jobs:
 
       # 按链路分别下载到各自目录：两条链路产物不再共用一个 artifact、也不再靠
       # 文件名（*-npm.fpk）分拣（2026-10-03）
-      - name: 下载源码链路产物（SPK + FPK 源码版）
-        uses: actions/download-artifact@v4
-        with:
-          name: spk-dist
-          path: dist-main
-        continue-on-error: true
-
-      - name: 下载源码链路产物（FPK 源码版）
-        uses: actions/download-artifact@v4
-        with:
-          name: fpk-source-dist
-          path: dist-main
-        continue-on-error: true
-
-      - name: 下载 npm 链路产物（FPK npm 版）
-        uses: actions/download-artifact@v4
-        with:
-          name: fpk-npm-dist
-          path: dist-npm
-        continue-on-error: true
-
       - name: 检查产物 + 记录状态 + 计算 SHA256
         id: check
         run: |
@@ -237,32 +142,5 @@ jobs:
           name: ${{ steps.note-main.outputs.TITLE }}
           body_path: /tmp/release-body-main.md
           files: dist-main/*
-          prerelease: false
-          fail_on_unmatched_files: false
-
-      - name: 生成 npm 链路 Release 文案 + 标题（release-note.sh MODE=npm）
-        id: note-npm
-        if: steps.check.outputs.HAS_FILES == 'yes' && env.HAS_NPM == 'yes'
-        env:
-          MODE: npm
-          TRIGGER: ${{ github.event_name }}
-          RELEASE_TAG: ${{ steps.reltag.outputs.TAG }}-npm
-          FPK_NPM_STATUS: ${{ env.FPK_NPM_STATUS }}
-          FPK_NPM_DESC: ${{ env.FPK_NPM_DESC }}
-          BUILD_TIME: ${{ github.event.repository.updated_at }}
-          SHA256: ${{ env.dist_npm_SHA }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          ./build/release-note.sh > /tmp/release-body-npm.md
-          echo "TITLE=$(./build/release-note.sh title)" >> "$GITHUB_OUTPUT"
-
-      - name: 发布 npm 链路 Release（tag=官方 tag-npm）
-        if: steps.check.outputs.HAS_FILES == 'yes' && env.HAS_NPM == 'yes'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.reltag.outputs.TAG }}-npm
-          name: ${{ steps.note-npm.outputs.TITLE }}
-          body_path: /tmp/release-body-npm.md
-          files: dist-npm/*
           prerelease: false
           fail_on_unmatched_files: false
