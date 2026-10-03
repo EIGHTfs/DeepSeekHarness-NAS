@@ -399,7 +399,8 @@ else
 # 装前先停+卸载（防 repair 死锁 / 263 / 313）
 /usr/syno/bin/synopkg stop $APP_NAME >/dev/null 2>&1
 /usr/syno/bin/synopkg uninstall $APP_NAME >/dev/null 2>&1
-rm -rf /var/packages/$APP_NAME /vol*/@appstore/$APP_NAME /vol*/@appconf/$APP_NAME \
+# ⚠ 2026-10-04 事故防线：必须 --one-file-system（跨挂载点删除会在源端删光数据）
+rm -rf --one-file-system /var/packages/$APP_NAME /vol*/@appstore/$APP_NAME /vol*/@appconf/$APP_NAME \
        /vol*/@appdata/$APP_NAME /vol*/@apphome/$APP_NAME /vol*/@apptemp/$APP_NAME \
        /vol*/@appshare/$APP_NAME /vol*/@eaDir/$APP_NAME
 rm -f /usr/syno/synoman/webman/3rdparty/$APP_NAME
