@@ -758,89 +758,101 @@ class Handler(BaseHTTPRequestHandler):
         status, payload = handler()
         self._json(status, payload)
 
+    def _api_save(self, body):
+        if not body:
+            return 400, {'success': False, 'error': '空请求体'}
+        write_config(body)
+        safe = dict(body)
+        if safe.get('password'):
+            safe['password'] = '******'
+        log('SAVE config host=%s user=%s' % (safe.get('host', ''), safe.get('username', '')))
+        return 200, {'success': True, 'config': safe, 'file': CONFIG_FILE}
+
+    def _api_detect(self, body):
+        host = str(body.get('host', '')).strip()
+        port = int(body.get('port') or 22)
+        username = str(body.get('username', '')).strip()
+        password = str(body.get('password', '') or read_config().get('password', '')).strip()
+        if not host or not username:
+            return 400, {'success': False, 'error': '缺少 host/username'}
+        log('DETECT host=%s@%s:%s' % (username, host, port))
+        system, features = detect_system(host, port, username, password)
+        log('DETECT result=%s features=%s' % (system, features))
+        return 200, {
+            'success': system != 'error',
+            'system': system,
+            # package_type 供前端决定推 SPK 还是 FPK 安装包，勿删
+            'package_type': 'spk' if system == 'dsm' else ('fpk' if system == 'fnos' else ''),
+            'features': features,
+            'hint': {'dsm': '✅ 群晖 DSM → 装 SPK 套件',
+                     'fnos': '✅ 飞牛 fnOS → 装 FPK 应用',
+                     'unknown': '⚠️ 未识别系统（两者特征都未命中）',
+                     'error': '❌ 探测失败'}.get(system, ''),
+        }
+
+    def _api_run(self, body):
+        cmd = str(body.get('cmd', '')).strip()
+        spk = str(body.get('spk', '')).strip()
+        system = str(body.get('system', '')).strip()
+        note = str(body.get('note', '')).strip()[:200]   # 备注上限 200 字，仅本地历史落盘
+        if cmd not in ('install', 'uninstall', 'check', 'repair'):
+            return 400, {'success': False, 'error': 'cmd 必须是 install|uninstall|check|repair'}
+        _kd = body.get('keep_data', True)
+        keep_data = False if str(_kd).lower() in ('0', 'false', 'no') else True
+        run_id = run_script(cmd, spk, system, note, keep_data)
+        log('RUN cmd=%s spk=%s system=%s note=%s -> run_id=%s'
+            % (cmd, os.path.basename(spk) if spk else '', system, note, run_id))
+        return 200, {'success': True, 'run_id': run_id, 'cmd': cmd}
+
+    def _api_build(self, body):
+        step = str(body.get('step', '')).strip()
+        if step not in ('common', 'spk', 'fpk'):
+            return 400, {'success': False, 'error': 'step 必须是 common|spk|fpk'}
+        build_id, err = start_build(step)
+        if err:
+            return 409, {'success': False, 'error': err}
+        return 200, {'success': True, 'build_id': build_id, 'step': step}
+
+    def _api_publish(self, body):
+        package = str(body.get('package', '')).strip()
+        if not package:
+            return 400, {'success': False, 'error': '缺少 package 参数'}
+        # 从包名提取版本号，构造 tag
+        version = extract_version(package)
+        if not version:
+            return 400, {'success': False, 'error': '无法从包名提取版本号: %s' % package}
+        tag = 'v%s' % version
+        file_path = _find_package_file(package)
+        if not file_path:
+            return 404, {'success': False, 'error': '未找到包文件: %s' % package}
+        log('PUBLISH package=%s tag=%s file=%s' % (package, tag, file_path))
+        ok, msg = publish_package_to_github(file_path, tag)
+        log('PUBLISH result: ok=%s msg=%s' % (ok, msg))
+        if ok:
+            return 200, {'success': True, 'message': msg, 'tag': tag}
+        return 500, {'success': False, 'error': msg}
+
     def do_POST(self):
+        """POST 路由：每条路由一个返回 (状态码, 载荷) 的小函数。
+
+        与 do_GET 同样的小函数约定 —— 校验分支（400/404）不触发副作用，可脱离服务器单测；
+        有副作用的路径（写配置/起进程/发布）行为逐字保持。
+        """
         path = urlparse(self.path).path
         body = self._read_body()
-        if path == '/api/save':
-            if not body:
-                self._json(400, {'success': False, 'error': '空请求体'})
-                return
-            write_config(body)
-            safe = dict(body)
-            if safe.get('password'):
-                safe['password'] = '******'
-            log('SAVE config host=%s user=%s' % (safe.get('host',''), safe.get('username','')))
-            self._json(200, {'success': True, 'config': safe,
-                             'file': CONFIG_FILE})
-        elif path == '/api/detect':
-            host = str(body.get('host', '')).strip()
-            port = int(body.get('port') or 22)
-            username = str(body.get('username', '')).strip()
-            password = str(body.get('password', '') or read_config().get('password', '')).strip()
-            if not host or not username:
-                self._json(400, {'success': False, 'error': '缺少 host/username'})
-                return
-            log('DETECT host=%s@%s:%s' % (username, host, port))
-            system, features = detect_system(host, port, username, password)
-            log('DETECT result=%s features=%s' % (system, features))
-            self._json(200, {
-                'success': system != 'error',
-                'system': system,
-                'package_type': 'spk' if system == 'dsm' else ('fpk' if system == 'fnos' else ''),
-                'features': features,
-                'hint': {'dsm': '✅ 群晖 DSM → 装 SPK 套件',
-                         'fnos': '✅ 飞牛 fnOS → 装 FPK 应用',
-                         'unknown': '⚠️ 未识别系统（两者特征都未命中）',
-                         'error': '❌ 探测失败'}.get(system, ''),
-            })
-        elif path == '/api/run':
-            cmd = str(body.get('cmd', '')).strip()
-            spk = str(body.get('spk', '')).strip()
-            system = str(body.get('system', '')).strip()
-            note = str(body.get('note', '')).strip()[:200]   # 备注上限 200 字，仅本地历史落盘
-            if cmd not in ('install', 'uninstall', 'check', 'repair'):
-                self._json(400, {'success': False, 'error': 'cmd 必须是 install|uninstall|check|repair'})
-                return
-            _kd = body.get('keep_data', True)
-            keep_data = False if str(_kd).lower() in ('0', 'false', 'no') else True
-            run_id = run_script(cmd, spk, system, note, keep_data)
-            log('RUN cmd=%s spk=%s system=%s note=%s -> run_id=%s' % (cmd, os.path.basename(spk) if spk else '', system, note, run_id))
-            self._json(200, {'success': True, 'run_id': run_id, 'cmd': cmd})
-        elif path == '/api/build':
-            step = str(body.get('step', '')).strip()
-            if step not in ('common', 'spk', 'fpk'):
-                self._json(400, {'success': False, 'error': 'step 必须是 common|spk|fpk'})
-                return
-            build_id, err = start_build(step)
-            if err:
-                self._json(409, {'success': False, 'error': err})
-            else:
-                self._json(200, {'success': True, 'build_id': build_id, 'step': step})
-        elif path == '/api/publish':
-            package = str(body.get('package', '')).strip()
-            if not package:
-                self._json(400, {'success': False, 'error': '缺少 package 参数'})
-                return
-            # 从包名提取版本号，构造 tag
-            version = extract_version(package)
-            if not version:
-                self._json(400, {'success': False, 'error': '无法从包名提取版本号: %s' % package})
-                return
-            tag = 'v%s' % version
-            # 查找文件
-            file_path = _find_package_file(package)
-            if not file_path:
-                self._json(404, {'success': False, 'error': '未找到包文件: %s' % package})
-                return
-            log('PUBLISH package=%s tag=%s file=%s' % (package, tag, file_path))
-            ok, msg = publish_package_to_github(file_path, tag)
-            log('PUBLISH result: ok=%s msg=%s' % (ok, msg))
-            if ok:
-                self._json(200, {'success': True, 'message': msg, 'tag': tag})
-            else:
-                self._json(500, {'success': False, 'error': msg})
-        else:
+        routes = {
+            '/api/save': lambda: self._api_save(body),
+            '/api/detect': lambda: self._api_detect(body),
+            '/api/run': lambda: self._api_run(body),
+            '/api/build': lambda: self._api_build(body),
+            '/api/publish': lambda: self._api_publish(body),
+        }
+        handler = routes.get(path)
+        if handler is None:
             self._json(404, {'success': False, 'error': f'未知路径: {path}'})
+            return
+        status, payload = handler()
+        self._json(status, payload)
 
     def log_message(self, fmt, *args):
         sys.stderr.write('[%s] %s\n' % (self.log_date_time_string(), fmt % args))
