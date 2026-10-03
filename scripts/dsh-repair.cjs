@@ -20,6 +20,10 @@
  *   node dsh-repair.cjs            # 自动扫描运行中 DSH 进程定位（脚本目录/同级优先）
  * start.sh 内嵌的是同一份逻辑（走环境变量），本文件为独立维护版。
  */
+// ---- 等待时长（抽成命名常量：审计 magic-number 命中，且数值含义本就不直观）----
+const WAIT_PORT_RELEASE_MS = 2000; // 发完 SIGKILL 后等旧进程真正退出、端口释放
+const WAIT_DSH_START_MS = 3000;    // 启动 DSH 后等它监听就绪，再挂反代与容器页
+
 // ---- standalone CLI shim：把 --xxx 参数映射为 DSH_REPAIR_* 环境变量 ----
 (function shim() {
   const argv = process.argv;
@@ -150,7 +154,7 @@ function killOldProcesses() {
     // 有意忽略：ps/execSync 本身可能失败（容器内无 ps 等）；此处是"尽力多停几个旧实例"的补充手段，
     // 前面基于 PID 文件的停法已经执行过，故失败不影响后续启动
   }
-  return new Promise(resolve => setTimeout(resolve, 2000));
+  return new Promise(resolve => setTimeout(resolve, WAIT_PORT_RELEASE_MS));
 }
 
 function buildPolyfillScript() {
@@ -270,7 +274,7 @@ async function main() {
     setTimeout(() => process.exit(code || 0), 1000);
   });
 
-  await new Promise(r => setTimeout(r, 3000));
+  await new Promise(r => setTimeout(r, WAIT_DSH_START_MS));
 
   const polyfill = buildPolyfillScript();
   const proxyServer = http.createServer((clientReq, clientRes) => {
