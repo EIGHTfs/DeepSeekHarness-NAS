@@ -230,7 +230,10 @@ function secureDshTree(dshHome) {
           if (ent.isSymbolicLink()) continue;
           if (ent.isDirectory()) { fs.chmodSync(p, 0o700); walk(p); }
           else { fs.chmodSync(p, 0o600); }
-        } catch {}
+        } catch {
+          // 有意忽略：单个条目 chmod 失败（非属主 EPERM / 已被删除）不影响其余条目；
+          // 本函数整体是"尽力而为"，结束时只在函数级报一次警告
+        }
       }
     };
     walk(dshHome);
@@ -307,9 +310,14 @@ function killOldProcesses(dshDir) {
     );
     for (const pid of out.trim().split('\n').filter(Boolean)) {
       if (pid === selfPid) continue;
-      try { process.kill(parseInt(pid, 10), 'SIGTERM'); } catch {}
+      try { process.kill(parseInt(pid, 10), 'SIGTERM'); } catch {
+        // 有意忽略：该进程可能已退出（ESRCH），继续处理列表里的下一个
+      }
     }
-  } catch {}
+  } catch {
+    // 有意忽略：ps/execSync 可能失败；本段是"额外清理匹配 dsh-repair 特征的 node 进程"，
+    // 属尽力而为的补充手段（前面已按 PID 文件与 cwd 匹配停过），失败不影响启动
+  }
   // 等待端口释放
   return new Promise(resolve => setTimeout(resolve, 2000));
 }
@@ -321,7 +329,9 @@ function buildPolyfillScript() {
   // ownsHost 声明：使 isLoopback=true → persistence='host' → settings 可用
   try {
     var g = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : this;
-    if (!g.__DSH_TRANSPORT__) { try { g.__DSH_TRANSPORT__ = {}; } catch(e){} }
+    if (!g.__DSH_TRANSPORT__) { try { g.__DSH_TRANSPORT__ = {}; } catch(e){
+      // 有意忽略：部分浏览器对全局属性赋值受限，失败时后面的 if 会跳过，polyfill 降级但不报错
+    } }
     if (g.__DSH_TRANSPORT__) {
       try { Object.defineProperty(g.__DSH_TRANSPORT__, 'ownsHost', { value: true, writable: false, configurable: false }); }
       catch(e) { g.__DSH_TRANSPORT__.ownsHost = true; }
@@ -341,7 +351,9 @@ function buildPolyfillScript() {
   }
   try {
     var g = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : this;
-    if (!g.crypto) { try { g.crypto = {}; } catch(e){} }
+    if (!g.crypto) { try { g.crypto = {}; } catch(e){
+      // 有意忽略：浏览器里 crypto 可能是只读属性，赋值失败也不影响后续 randomUUID 兜底
+    } }
     if (g.crypto) {
       try { if (!g.crypto.randomUUID) { Object.defineProperty(g.crypto, 'randomUUID', { value: createUUID, writable: true, configurable: true, enumerable: true }); } }
       catch(e) { g.crypto.randomUUID = createUUID; }
