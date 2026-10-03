@@ -110,7 +110,11 @@ try {
   const p = JSON.parse(fs.readFileSync(process.env.DSH_PKG_JSON, 'utf-8'));
   process.stdout.write(Object.keys(p.dependencies || {})
     .filter(d => d.startsWith('@deepseek-ai/dsh-')).join(','));
-} catch {}
+} catch (e) {
+  // 有意静默：本段是**探测**用途（读某 bundle 的 package.json，列出其宿主侧插件名），
+  // 文件不存在 / JSON 损坏 / 无读权限都属预期情况；此时 stdout 留空，调用方按"该 bundle
+  // 未声明宿主插件"处理即可。若在此打印，会把 stderr 混进下面 extract_miss 的解析输入。
+}
 DEPS_EOF
 )
 
