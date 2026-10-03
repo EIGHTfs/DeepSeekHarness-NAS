@@ -1,0 +1,76 @@
+#===============================================================================
+# .github/actions/build-target/action.yml — **唯一构建**公共 action
+#
+# 2026-10-04 在线构建重设计（用户批准方案第 8 步）：
+#   原先 `build-spk` 与 `build-fpk-source` **各自逐字重复**一遍
+#   「setup-node-env → fetch-latest → ci-clean → build-common.sh」，
+#   等于把同一套 install+build+裁剪跑两遍（每次约 20 分钟）。
+#   现抽成本 action：**构建只做一次**，产出的 target 作为 artifact 传给各打包 job。
+#
+# 【调用方约定】
+#   · 调用前必须 actions/checkout（本 action 不 checkout，避免重复）
+#   · 调用后方可下载 target artifact（见 .github/actions/pack-with-target）
+#
+# 【产物】artifact 名 `build-target`，内容为 build/master-build/build 下的
+#   target/ 与 build-meta.env（打包器消费这两个即可）。
+#===============================================================================
+name: build-target
+description: 唯一构建入口：准备环境 → 拉官方源码 → 预编译 + 裁剪 → 上传 target 供各打包 job 复用
+
+inputs:
+  token:
+    description: 拉取官方源码/Release 用的 token
+    required: false
+    default: ${{ github.token }}
+  artifact-name:
+    description: target artifact 名称
+    required: false
+    default: build-target
+  retention-days:
+    description: artifact 保留天数
+    required: false
+    default: "7"
+
+runs:
+  using: composite
+  steps:
+    - name: 随包 node / pnpm 环境
+      uses: ./.github/actions/setup-node-env
+
+    - name: 拉取官方最新源码（增量）
+      uses: ./.github/actions/fetch-latest
+      with:
+        token: ${{ inputs.token }}
+
+    - name: 构建目录清理
+      uses: ./.github/actions/ci-clean
+
+    # ⚠ 单步构建（BUILD_STAGE=all）保证失败时 failure() 能捕获；日志靠 artifact 兜底。
+    - name: 公共预编译 pnpm install + build + 裁剪（唯一一次）
+      shell: bash
+      run: ./build/build-common.sh
+
+    - name: 校验 target 与 meta 已产出
+      shell: bash
+      run: |
+        set -e
+        T="build/master-build/build"
+        [ -d "$T/target" ] || { echo "✗ 缺少 target 目录: $T/target"; exit 1; }
+        [ -f "$T/build-meta.env" ] || { echo "✗ 缺少 build-meta.env（构建未完成）"; exit 1; }
+        echo "✓ target: $(du -sh "$T/target" | cut -f1)"
+        echo "✓ meta  : $(wc -c < "$T/build-meta.env") 字节"
+
+    - name: 上传 target（供 pack-* job 复用，避免重复构建）
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: |
+          build/master-build/build/target
+          build/master-build/build/build-meta.env
+        retention-days: ${{ inputs.retention-days }}
+        compression-level: 6
+
+    - name: 上传构建日志
+      uses: ./.github/actions/upload-build-logs
+      with:
+        artifact-name: build-target-debug-log

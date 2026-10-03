@@ -1,0 +1,42 @@
+#===============================================================================
+# .github/actions/pack-with-target/action.yml — 打包 job 复用 target
+#
+# 2026-10-04 在线构建重设计（第 8 步）：
+#   各打包 job（pack-spk-source / pack-fpk-source …）**不再自己跑一遍构建**，
+#   而是下载 `build-target` artifact 解包回 build/master-build/build/，
+#   然后只做打包（SPK/FPK），把 20 分钟的构建省成几秒的解包。
+#
+# 【调用方约定】
+#   · 调用前必须 actions/checkout（打包脚本本身在仓库里）
+#   · 调用后直接运行对应打包器：./build/SPK/build-spk.sh 或 ./build/FPK/build-fpk.sh
+#
+# 说明：artifact 的路径结构由 build-target action 的上传路径决定（公共祖先为
+#   build/master-build/build），故这里**下载到工作区根目录**即可还原同样的相对路径。
+#===============================================================================
+name: pack-with-target
+description: 下载唯一构建产出的 target 并解包（打包 job 复用，不重新构建）
+
+inputs:
+  artifact-name:
+    description: target artifact 名称（须与 build-target action 一致）
+    required: false
+    default: build-target
+
+runs:
+  using: composite
+  steps:
+    - name: 下载 target artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: .
+
+    - name: 校验 target 与 meta 就位
+      shell: bash
+      run: |
+        set -e
+        T="build/master-build/build"
+        [ -d "$T/target" ] || { echo "✗ 解包后缺少 $T/target（artifact 名是否与 build-target 一致？）"; exit 1; }
+        [ -f "$T/build-meta.env" ] || { echo "✗ 解包后缺少 $T/build-meta.env"; exit 1; }
+        echo "✓ 复用 target: $(du -sh "$T/target" | cut -f1)（未重新构建）"
+        echo "✓ meta: $(wc -c < "$T/build-meta.env") 字节"
