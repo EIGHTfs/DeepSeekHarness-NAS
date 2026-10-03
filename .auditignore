@@ -5,7 +5,10 @@
 # 真实代码问题应修复而非豁免。与 .gitignore 叠加生效（2026-09-16 插件支持）。
 
 # ── 第三方打包产物：pnpm 官方工具链 bundle（构建必需，代码风格为工具生成）──
-tools/pnpm/dist/
+# 举证：tools/pnpm/ 整个目录是随包分发的 pnpm 发行版（含 bin/ 启动器与 dist/ 打包产物），
+# 不是本项目代码；原先只豁免了 dist/，导致 tools/pnpm/bin/pnpm.mjs 被 magic-number-smart 命中。
+# 故整目录豁免（仍受 git 跟踪，只是不参与审计）。
+tools/pnpm/
 
 # ── 下载的官方文档留档（fetch-official-docs.py 产物，示例代码不属本项目）──
 docs/官方文档/
