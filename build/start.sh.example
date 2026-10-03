@@ -2,7 +2,7 @@
 # ============================================================
 #  DSH 实例启动脚本 (dsh-v0.1.2-alpha.4) —— 自包含版
 #  数据区: <DSH_DIR>/.dsh-home/.dsh (自动定位)
-#  用法:   ./start.sh [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps]
+#  用法:   ./start.sh [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store]
 #
 #  ⚠ 本文件是【逻辑母版】，不是最终运行脚本：
 #     最终 start.sh 由 build-spk.sh / build-fpk.sh 依 build-config.yaml 生成，
@@ -261,9 +261,9 @@ while [[ $# -gt 0 ]]; do
     --owner=*)          OWNER_ARG="${1#*=}" ; shift ;;
     --owner)            OWNER_ARG="$2" ; shift 2 ;;
     --deep)             CHECK_DEEP=1 ; shift ;;
-    start|stop|restart|status|check|fix-owner|fix-deps) DSH_CMD="$1" ; shift ;;
+    start|stop|restart|status|check|fix-owner|fix-deps|fix-store) DSH_CMD="$1" ; shift ;;
     -h|--help)
-      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps]"
+      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store]"
       echo "  --proxy-port N       反代端口（默认 __PROXY_PORT__，环境变量 DSH_PROXY_PORT）"
       echo "  --dsh-port N         DSH 内部端口（默认 __DSH_PORT__，环境变量 DSH_DSH_PORT）"
       echo "  --container-port N   容器页面端口（默认 __CONTAINER_PORT__，环境变量 DSH_CONTAINER_PORT）"
@@ -275,7 +275,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "[!] 未知参数: $1" >&2
-      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps]" >&2
+      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store]" >&2
       exit 1
       ;;
   esac
@@ -1178,6 +1178,9 @@ cmd_fix_owner() {
 
 # ---------- start ----------
 cmd_start() {
+  # pnpm storeDir 记录自愈：随包记录来自打包机，目标机可能不匹配 → 一切 pnpm 操作失败。
+  #   只读几个小文件、无网络；仅在真改动或异常时打印（正常启动零噪音）。
+  fix_pnpm_store_dir 2>&1 | grep -v "已一致" || true
   # dsh 命令软链：让系统里直接敲 `dsh` 调 DSH CLI（优先 /usr/bin——
   # 群晖 SSH 的 PATH 只含 /usr/bin:/bin:/usr/sbin:/sbin，不含 /usr/local/bin）。
   # 放在 is_running 之前：无论 DSH 是否已在运行，start 时都确保软链存在；
@@ -1487,6 +1490,82 @@ cmd_fix_deps() {
   rescue_deps $pkgs
 }
 
+# ============================================================================
+# pnpm storeDir 记录修复（脚本自愈；pnpm 11 读 pnpm-workspace.yaml 的 storeDir）
+# ----------------------------------------------------------------------------
+# 【病症】随包发布的 node_modules/.modules.yaml 里记着**打包机**的 store 路径，目标机上
+#   pnpm 解析到另一个（常常是空的）store → pnpm 报 storeDir 不匹配，此后 dsh plugin add
+#   等一切 pnpm 操作都失败（实测 193：记录是 0.1.6 迁移前的路径，pnpm 现解析
+#   /volume1/.pnpm-store/v11，仅 27M 近乎空）。
+# 【修法】把**记录里的** store 写进同级 pnpm-workspace.yaml 的 storeDir，让 pnpm 解析回
+#   那个已经装了内容的 store —— 无需重装、不下载任何包（193 实测该 store 有 825M 内容）。
+# 【为什么不是别的做法】
+#   · `pnpm install --store-dir <path>` 不是修复：只对那一次命令生效、不改写记录，
+#     下一条命令照旧失败（用户实测 pnpm 11.7 / 11.22 均如此）。
+#   · `.npmrc` 的 `store-dir` 在 pnpm 11 上**本机实测不生效**，必须写 pnpm-workspace.yaml。
+#   · 反向切换到 pnpm 现解析的 store 等于清空重装（每包重新下载）；只在记录里的 store
+#     已不存在时才退而求其次（此时删掉记录项，让 pnpm 用默认 store，不再卡死）。
+# 【扫描范围】实例根 + DSH_HOME 及其下各 profile（插件管理器/主题各自一棵 node_modules）。
+# 【无网络、可回滚】只读写两个文件，改动前留 .bak-storerecord。
+# ============================================================================
+fix_pnpm_store_dir_one() {
+  # ⚠ 必须分两条语句：同一 local 语句里 $dir 尚未生效（shell 先展开各词再赋值），
+  #   写成 local dir="$1" my="$dir/..." 会得到 /node_modules/.modules.yaml（实测踩坑）。
+  local dir="$1" my rec ws cur
+  my="$dir/node_modules/.modules.yaml"
+  [ -f "$my" ] || return 0
+  rec="$(sed -n 's/.*"storeDir"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$my" | head -1)"
+  [ -n "$rec" ] || return 0
+  ws="$dir/pnpm-workspace.yaml"
+  cur=""
+  [ -f "$ws" ] && cur="$(sed -n 's/^storeDir:[[:space:]]*//p' "$ws" | head -1)"
+  if [ "$cur" = "$rec" ]; then
+    echo "  ✓ storeDir 已一致: $dir"
+    return 0
+  fi
+  if [ ! -d "$rec" ]; then
+    # 记录里的 store 在本机不存在：反向修复不可行 → 删掉记录项，pnpm 用自己解析的 store
+    # （代价是下次安装需重新下载，但不再报错卡死一切 pnpm 操作）
+    echo "  ⚠ $dir: 记录中的 store 不存在（$rec）→ 移除记录项，改用 pnpm 默认 store"
+    [ -f "$my.bak-storerecord" ] || cp -p "$my" "$my.bak-storerecord" 2>/dev/null || true
+    sed -i '/"storeDir"/d' "$my" 2>/dev/null || true
+    return 0
+  fi
+  if [ -f "$ws" ]; then
+    [ -f "$ws.bak-storerecord" ] || cp -p "$ws" "$ws.bak-storerecord" 2>/dev/null || true
+    if [ -n "$cur" ]; then
+      sed -i "s|^storeDir:.*|storeDir: $rec|" "$ws"
+    else
+      printf 'storeDir: %s\n' "$rec" >> "$ws"
+    fi
+  else
+    printf 'storeDir: %s\n' "$rec" > "$ws"
+  fi
+  echo "  ✓ 已修: $dir → storeDir=$rec"
+  return 0
+}
+
+# 扫描并修复所有相关树（实例根 + DSH_HOME + 各 profile）
+fix_pnpm_store_dir() {
+  local d
+  fix_pnpm_store_dir_one "$DSH_DIR"
+  if [ -n "${DSH_HOME_DIR:-}" ]; then
+    fix_pnpm_store_dir_one "$DSH_HOME_DIR"
+    # ⚠ DSH_HOME_DIR 本身就以 .dsh 结尾（如 …/0.2.0-rc.2/.dsh），profiles 在它**下面**，
+    #   不要再拼 .dsh/profiles（会变成 .dsh/.dsh/profiles，永远扫不到）。
+    for d in "$DSH_HOME_DIR"/profiles/*; do
+      [ -d "$d" ] && fix_pnpm_store_dir_one "$d"
+    done
+  fi
+  return 0
+}
+
+# fix-store：手动执行
+cmd_fix_store() {
+  echo "── pnpm storeDir 记录修复（无需重装、不下载）──"
+  fix_pnpm_store_dir
+}
+
 # ---------- main ----------
 case "$DSH_CMD" in
   start)   cmd_start ;;
@@ -1496,8 +1575,9 @@ case "$DSH_CMD" in
   check)   cmd_check ;;
   fix-owner) cmd_fix_owner ;;
   fix-deps) cmd_fix_deps ;;
+  fix-store) cmd_fix_store ;;
   *)
-    echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps]"
+    echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store]"
     exit 1
     ;;
 esac
