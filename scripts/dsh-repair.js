@@ -38,7 +38,10 @@ const path = require('path');
 const DEFAULT_DSH_PORT = 30801;
 const DEFAULT_PROXY_PORT = 30800;
 const DEFAULT_CONTAINER_PORT = 30802;
-const PID_FILE = '/tmp/dsh-repair.pid';
+// PID 文件名带 uid：同一台机器上多用户各跑一次时，共用 /tmp/dsh-repair.pid 会互相覆盖、
+// 进而被 killOldProcesses() 照着杀掉对方实例。dsh-repair.cjs 早有这个补丁，本文件此前没有。
+const _uid = typeof process.getuid === 'function' && process.getuid() !== undefined ? process.getuid() : 'x';
+const PID_FILE = process.env.DSH_REPAIR_PID_FILE || `/tmp/dsh-repair-${_uid}.pid`;
 const RUNNER_LOG = '/tmp/dsh-repair-runner.log';
 const CONTAINER_LOG = '/tmp/dsh-repair-container.log';
 
