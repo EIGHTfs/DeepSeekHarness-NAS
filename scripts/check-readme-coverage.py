@@ -36,6 +36,12 @@ EXEMPT = {
     'DSH_REPAIR_CONTAINER_PORT', 'DSH_REPAIR_PID_FILE', 'DSH_REPAIR_TMPDIR',
     # ↑ dsh-repair 内联脚本的一次性传参，由 start.sh 自己拼装
     'FORCE_EXCLUDE',        # 白名单数据结构内的字段名，非用户开关
+    'DSH_INSTALL_ROOT',     # migrate-session 内部：目标安装根
+    'DSH_PROBE_NAMES',      # fix-runtime-deps 内部：待探测包名列表
+    'DSH_PKG_JSON',         # fix-runtime-deps 内部：package.json 路径
+    'PRUNE_SCRIPT',         # build-common 内部：prune-target.sh 路径
+    'DSH_OWNER',            # build-fpk 内部：目标属主
+    'build-placeholder.py',  # 仅被留档脚本 first-build-logic.sh 引用（打包流程不使用）
 }
 
 # 扫描时跳过的目录（vendored / 产物 / 垃圾桶 / 官方源码快照）

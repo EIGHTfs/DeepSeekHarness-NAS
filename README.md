@@ -192,6 +192,11 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | `NPM_MODE` | `0` | FPK 走 npm 链路（`build-fpk.sh --npm`）时置 1；影响产物命名后缀 `-npm` |
 | `PRUNE_COMMON_DIR` | 脚本同级 | `prune_common.py` 所在目录（供内联 python 导入） |
 | `DRY_RUN` | `0` | 预演：只打印计划不执行（多数脚本支持 `--dry-run` 或该环境变量） |
+| `DSH_GIT_BIN` | 自探测 | git 可执行文件路径覆盖（群晖 git 在 `/var/packages/git/target/bin`，PATH 里常没有） |
+| `DS_FETCH_GIT_URL` | 官方仓库 | `fetch-dsh-latest.sh` 的 git 远端覆盖（走镜像/内网时用） |
+| `DSH_PROXY_PORT` | `30800` | 反代端口覆盖（等价 `--proxy-port`） |
+| `DSH_SLIM_SKIP_NATIVE` | `0` | 置 1 跳过 native 构建（`first-build-logic.sh` 留档脚本用） |
+| `DSH_TOKEN_FILE` | 自动探测 | GitHub token 文件路径覆盖（`fetch-release-mt.sh` 下载本仓 Release 资产时用） |
 
 **失败症状对照**（先查白名单，再怀疑"没装"）：
 

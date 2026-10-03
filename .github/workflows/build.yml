@@ -33,6 +33,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: README 覆盖度守卫（脚本/开关必须在 README 出现）
+        run: python3 scripts/check-readme-coverage.py
+
       - uses: ./.github/actions/setup-node-env
 
       - uses: ./.github/actions/fetch-latest
