@@ -341,8 +341,8 @@ async function main() {
   console.log('  DSH 修复完成');
   console.log('═══════════════════════════════════════');
   if (dshToken) {
-    console.log(`  首次认证: http://127.0.0.1:${dshPort}/?token=${dshToken}`);
-    console.log(`  首次认证: http://<NAS-IP>:${proxyPort}/?token=${dshToken}`);
+    console.log(`  首次认证: http://127.0.0.1:${dshPort}/?token=${dshToken}`); // dsh-skip-sensitive: 打印运行时生成的认证地址给用户，非硬编码凭据
+    console.log(`  首次认证: http://<NAS-IP>:${proxyPort}/?token=${dshToken}`); // dsh-skip-sensitive: 同上，展示给用户的运行时认证地址
     console.log('');
   }
   console.log(`  认证后访问: http://<NAS-IP>:${proxyPort}/`);
