@@ -94,6 +94,23 @@ def main():
     except Exception:
         pass
 
+    # 3.6) 语法检查（2026-10-04 审核发现：scripts/diagnose/dsh-plugin-install-fix.sh
+    #      因多写一个引号导致 bash -n 失败，而守卫套件此前不做语法检查 → 一直没被发现）
+    import subprocess as _sp2
+    _sh = _sp2.run(["git", "ls-files", "*.sh"], cwd=ROOT, capture_output=True, text=True, timeout=30)
+    if _sh.returncode == 0:
+        for _f in [x for x in _sh.stdout.split() if not x.startswith("tools/")]:
+            _r = _sp2.run(["bash", "-n", _f], cwd=ROOT, capture_output=True, text=True, timeout=30)
+            if _r.returncode != 0:
+                v.append("%s 语法错误（bash -n）：%s" % (_f, (_r.stderr or "").strip().splitlines()[0][:90] if _r.stderr else "?"))
+    _py = _sp2.run(["git", "ls-files", "*.py"], cwd=ROOT, capture_output=True, text=True, timeout=30)
+    if _py.returncode == 0:
+        for _f in [x for x in _py.stdout.split() if not x.startswith("tools/")]:
+            _r = _sp2.run(["python3", "-c", "import ast,sys;ast.parse(open(sys.argv[1],encoding='utf-8').read())", _f],
+                          cwd=ROOT, capture_output=True, text=True, timeout=30)
+            if _r.returncode != 0:
+                v.append("%s 语法错误（ast）：%s" % (_f, (_r.stderr or "").strip().splitlines()[-1][:90] if _r.stderr else "?"))
+
     # 4) scripts/ 下的 kebab-case
     sdir = os.path.join(ROOT, "scripts")
     for base, dirs, files in os.walk(sdir):
