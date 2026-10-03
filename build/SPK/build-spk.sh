@@ -84,7 +84,7 @@ CFG_BRAND_VERSION_ORDER="${CFG_BRAND_VERSION_ORDER:-dsh,npm}"
 # ----------------------------------------------------------------------------
 # target 与元数据（build-common.sh 产物）
 # ----------------------------------------------------------------------------
-_META="$(ls -1t "$BUILD_META_DIR"/build-*/build-meta.env 2>/dev/null | head -1)"
+_META="$(ls -1t "$BUILD_META_DIR"/build*/build-meta.env 2>/dev/null | head -1)"
 if [ -z "$_META" ] || [ ! -f "$_META" ]; then
   echo "✗ 未找到 build-meta.env（请先运行 ./build-common.sh 生成 target）" >&2
   exit 1

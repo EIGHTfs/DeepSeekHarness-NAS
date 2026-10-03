@@ -118,7 +118,7 @@ if [ "$NPM_MODE" = "1" ]; then
   WORK="$(dirname "$_NPM_META")"
   echo "使用 npm 应用体: $APP_ROOT（dsh $PKG_VER | FPK $FPK_VERSION | APP_NAME $APP_NAME）"
 else
-  _META="$(ls -1t "$BUILD_META_DIR"/build-*/build-meta.env 2>/dev/null | head -1)"
+  _META="$(ls -1t "$BUILD_META_DIR"/build*/build-meta.env 2>/dev/null | head -1)"
   if [ -z "$_META" ] || [ ! -f "$_META" ]; then
     echo "✗ 未找到 build-meta.env（请先运行 ./build-common.sh 生成 target）" >&2
     exit 1
