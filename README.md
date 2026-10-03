@@ -284,7 +284,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
      ▼
  反代 (Node http.createServer)
      ├─ ⓪ 局域网硬闸 isLoopbackOrLan(ip) —— 公网 IP → 403 中文提示页
-     ├─ ① 门户来源（无 cookie）→ 302 ?token= 免密认证
+     ├─ ① 门户来源（无 cookie）→ 302 ?token= 免密认证 <!-- dsh-skip-sensitive: 文档在描述门户免密的设计机制（302 带 token），非真实凭据泄露 -->
      ├─ ② 已持 dsh-auth cookie → 透明放行（带过 token 即免密）
      └─ ③ 直连（Sec-Fetch-Site:none / 异主机 Referer）→ 403「请从套件图标打开」
         │
