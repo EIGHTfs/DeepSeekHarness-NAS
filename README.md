@@ -93,6 +93,8 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | `scripts/lib/common.sh` | **唯一公共函数库**（全仓库唯一实现，禁止各脚本再自定义）：日志文案 `info/ok/warn/miss/err/die/log_msg/section`、`safe_rm_rf`/`has_mount_under`（事故防线）、`rssh`/`rssh_remote_tmp`、`resolve_node`、`fetch_url`（断点续传 `-C -`）/`extract_tar`、`md5_of`/`b64_*`、`json_get`/`json_set`、`load_build_meta`、`resolve_pkg_version`、`check_pkg_size`、`running_dsh`、`pkg_*`、`gen_start_sh` | `. \"$ROOT/scripts/lib/common.sh\"` |
 | `scripts/check-common-functions.py` | **公共函数唯一性守卫**：从公共库派生函数清单，断言其它 `.sh` 不得再定义（**剔除 heredoc 生成区段**，否则误伤打包器生成的运行时同名函数）；带显式豁免表 | `python3 scripts/check-common-functions.py` |
 | `scripts/check-destructive-ops.py` | **破坏性操作守卫**：敏感路径（`@app*`/`/volume*`）的 `rm -rf` 必须带 `--one-file-system`；`web-install/` 不得自定义清理/挂载检测实现（分叉指纹）；`web-install/` 不得有未跟踪文件 | `python3 scripts/check-destructive-ops.py` |
+| `scripts/check-workflow-yaml.py` | **YAML 结构守卫**：拦 `.github/**` 里会导致 action 加载失败的写法（未加引号的值含 `: `、缩进用 Tab、action 必需键缺失），并断言 `needs`/`needs.X.result` 引用的 job **必须存在**（实测：job 重构后引用悬空 → 状态误判 fail → Release 正文被写成"❌ 缺失"） | `python3 scripts/check-workflow-yaml.py` |
+| `scripts/check-build-naming.py` | **命名与语法守卫**：job/action/脚本命名规范；**全部 `.sh` 跑 `bash -n`、全部 `.py` 跑 `ast.parse`**；`.sh/.py` 必须带可执行位（实测：`release-note.sh` 是 644 → CI 里 `./` 调用 exit 126）；排除 vendored `tools/` | `python3 scripts/check-build-naming.py` |
 | `scripts/clean-dsm-residue.sh` | **清理唯一实现**（web 端与套件端共用；内含挂载点硬保护，绝不跨挂载点删） | `scripts/clean-dsm-residue.sh <套件名> [主机] [SSH用户]` |
 | `scripts/gh-commit.py` | **无 git 提交推送**（GitHub Git Data API：blobs→tree→commit→更新 ref；原子多文件；author 固定 `EIGHTfs`；冲突自动重试） | `python3 scripts/gh-commit.py <仓库根> \"<提交信息>\" <文件...>` |
 | `test/safe-rm-rf.test.sh` | **事故回归测试**：断言含挂载点的目录绝不被删（用 `/proc` 验证检出能力，无需 root） | `bash test/safe-rm-rf.test.sh` |
@@ -212,6 +214,8 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 |---|---|---|
 | `lockfileDeps` | `build/gen-prune-whitelist.sh` 从 npm 链路 `package-lock.json` 的 packages 键解析包名全集 | 脚本自动生成 |
 | `workspaceRuntimeDeps` | 动态扫描 `target/packages/**/package.json` 的 `dependencies`（运行时必需） | 打包期自动收集 |
+
+> **口径提醒（2026-10-04 审核修正）**：`extra`（构建工具/类型检查包）**只在模式 A**（install 前）用于保护 tsc，**不进最终 target** —— 模式 B 的白名单是 `lockfileDeps` + `workspaceRuntimeDeps`（代码与文件头表均已按此口径修正）。
 | `extra` + `_autoLearned` | 手工补充的强制保留项；`_autoLearned` 由 `scripts/learn-prune-whitelist.sh` **自动学习** | 手工 + 自动学习 |
 
 **自动学习（`scripts/learn-prune-whitelist.sh`）**：把「构建期真正 import 到、但不在白名单」的包
