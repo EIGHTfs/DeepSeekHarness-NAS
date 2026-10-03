@@ -12,6 +12,14 @@ on:
 # 创建/更新 Release 需要写权限
 permissions:
   contents: write
+# 用户口径（2026-10-04）：**每次新构建开始前，把上一个正在跑的停掉** ——
+# 保证同一时刻只有一个构建（禁并发），也省 runner 分钟（比两个并行更省）。
+# 注：曾用 cancel-in-progress: false 试过"排队"，实测会取消正在跑的运行且不排队，故按用户口径
+# 明确改为 true（新运行主动停掉旧的）。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 
 
 # ── 构建开关（仓库变量 vars.* 控制；未设置均默认构建）───────────────────────
