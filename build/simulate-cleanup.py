@@ -65,13 +65,11 @@ def glob_matches(target, pat):
     return [p for p in glob.glob(os.path.join(target, pat)) if os.path.isdir(p) and not os.path.islink(p)]
 
 
-def main():
-    white = json.load(open(WHITE_FILE, encoding="utf-8"))
-    print(f"白名单 : {WHITE_FILE}")
-    print(f"target : {TARGET}")
-    print(f".pnpm  : {PNPM}")
+def build_whitelist(white):
+    """组装纯白名单集合：lockfileDeps + workspaceRuntimeDeps（**不含 extra**）。
 
-    # 白名单集合（纯白名单模式：只用 lockfileDeps + workspaceRuntimeDeps，不用 extra）
+    与 prune-target.sh 模式 B 一致：extra 里的类型检查包只在模式 A 保护 tsc，不进最终 target。
+    """
     whitelist = set(white.get("lockfileDeps", []))
     if white.get("workspaceRuntimeDeps"):
         pkgs_root = os.path.join(TARGET, "packages")
@@ -82,31 +80,38 @@ def main():
                     whitelist.update((d.get("dependencies") or {}).keys())
                 except Exception:
                     pass
-    print(f"白名单 : {len(whitelist)} 个（lockfileDeps + workspaceRuntimeDeps，不含 extra）")
+    return whitelist
 
-    # 纯白名单裁剪决策：不在白名单（或在 force_exclude）→ 删
+
+def decide(whitelist):
+    """纯白名单裁剪决策：不在白名单（或在 force_exclude）→ 删。返回 (kept, deleted)。"""
     kept, deleted = [], []
-    if os.path.isdir(PNPM):
-        for d in sorted(os.listdir(PNPM)):
-            full = os.path.join(PNPM, d)
-            if not os.path.isdir(full):
-                continue
-            name = pkg_name(full)
-            if name in whitelist and name not in FORCE_EXCLUDE:
-                kept.append(full)
-            else:
-                deleted.append(full)
+    if not os.path.isdir(PNPM):
+        return kept, deleted
+    for d in sorted(os.listdir(PNPM)):
+        full = os.path.join(PNPM, d)
+        if not os.path.isdir(full):
+            continue
+        name = pkg_name(full)
+        if name in whitelist and name not in FORCE_EXCLUDE:
+            kept.append(full)
+        else:
+            deleted.append(full)
+    return kept, deleted
 
-    del_total = sum(dir_size(d) for d in deleted)
-    print(f"\n纯白名单: 保留 {len(kept)} 个 / 删除 {len(deleted)} 个（预计释放 {del_total/1024/1024:.1f} MB）")
 
+def report_forced(deleted):
+    """单列被 force_exclude 硬删的包（即使在白名单里）。"""
     forced = sorted(d for d in deleted if pkg_name(d) in FORCE_EXCLUDE)
-    if forced:
-        print(f"\n💥 force_exclude 硬删 {len(forced)} 个（即使在白名单）:")
-        for d in forced:
-            print(f"    删除 {pkg_name(d)}  ← {os.path.basename(d)}")
+    if not forced:
+        return
+    print(f"\n💥 force_exclude 硬删 {len(forced)} 个（即使在白名单）:")
+    for d in forced:
+        print(f"    删除 {pkg_name(d)}  ← {os.path.basename(d)}")
 
-    # 关键运行时依赖校验（应全保留）
+
+def check_key_deps(kept):
+    """关键运行时依赖校验：这些必须保留，缺任何一个都说明白名单有问题。"""
     key_deps = ["js-yaml", "sharp", "execa", "lexical", "mdast-util-from-markdown",
                 "mdast-util-gfm", "micromark-extension-gfm", "koffi", "esbuild"]
     print("\n=== 关键运行时依赖校验（应全保留）===")
@@ -119,7 +124,9 @@ def main():
         else:
             print(f"  {dep}: ❌ 不在白名单被删（异常，需查）")
 
-    # native 校验
+
+def check_native():
+    """native/ 是 node-addon 软链的真身，缺了 DSH 启动必挂，故单列校验。"""
     print("\n=== native 保留校验 ===")
     native = os.path.join(TARGET, "native")
     if os.path.isdir(native) and os.path.isfile(os.path.join(native, "system/packages/linux-x64/package.json")):
@@ -129,7 +136,9 @@ def main():
     else:
         print("  ✗ native/ 缺失（node-addon-system-linux-x64 软链真身丢失，DSH 启动必挂）")
 
-    # sourceDirs 硬编码列表（与 prune-target.sh 一致；native/ 永远保留）
+
+def report_source_dirs():
+    """sourceDirs 硬编码裁剪列表（与 prune-target.sh 一致；native/ 永远保留）。"""
     print("\n=== 源码目录裁剪（sourceDirs 硬编码，native 保留）===")
     source_dirs = ['packages/*/src', 'packages/*/docs', 'packages/*/benchmark*',
                    'apps/*/src', 'apps/*/docs', 'apps/*/__tests__', 'apps/*/__test__',
@@ -138,6 +147,25 @@ def main():
     for pat in source_dirs:
         hits = glob_matches(TARGET, pat)
         print(f"  {pat}: 将删 {len(hits)} 个" if hits else f"  {pat}: 无匹配")
+
+
+def main():
+    white = json.load(open(WHITE_FILE, encoding="utf-8"))
+    print(f"白名单 : {WHITE_FILE}")
+    print(f"target : {TARGET}")
+    print(f".pnpm  : {PNPM}")
+
+    whitelist = build_whitelist(white)
+    print(f"白名单 : {len(whitelist)} 个（lockfileDeps + workspaceRuntimeDeps，不含 extra）")
+
+    kept, deleted = decide(whitelist)
+    del_total = sum(dir_size(d) for d in deleted)
+    print(f"\n纯白名单: 保留 {len(kept)} 个 / 删除 {len(deleted)} 个（预计释放 {del_total/1024/1024:.1f} MB）")
+
+    report_forced(deleted)
+    check_key_deps(kept)
+    check_native()
+    report_source_dirs()
 
     if LIST_ALL:
         print("\n=== 完整删除清单 ===")
