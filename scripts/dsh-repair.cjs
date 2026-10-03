@@ -70,7 +70,9 @@ function writeTmpFile(file, content) {
     const code = err && err.code;
     if (code !== 'EACCES' && code !== 'EPERM') throw err;
   }
-  try { fs.unlinkSync(file); } catch {} // 有意忽略：写入前先删旧文件，文件不存在属正常（首次写入）
+  try { fs.unlinkSync(file); } catch {
+    // 有意忽略：写入前先删旧文件，文件不存在属正常（首次写入）
+  }
   fs.writeFileSync(file, content, 'utf-8');
 }
 
