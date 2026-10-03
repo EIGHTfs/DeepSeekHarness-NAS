@@ -314,7 +314,11 @@ if white.get('workspaceRuntimeDeps'):
 #   pnpm 不会把依赖的 devDependencies 放进它的 node_modules）。
 #   体积膨胀的真凶应在**种子侧**（workspaceRuntimeDeps 是否含 devDependencies）排查，而不是
 #   在闭包口径上动刀 —— 见 README「裁剪白名单」(#prune-whitelist) 与 learn-prune-whitelist.sh。
-whitelist, runtime_closure = expand_closure(whitelist, pnpm)
+# 【2026-10-03 最终结论】模式 B **不做依赖闭包**：只用纯白名单（lockfileDeps +
+#   workspaceRuntimeDeps + extra）。闭包会把 target 撑到 5.3G（实测：留 848 个 .pnpm
+#   目录 = 4.9G；纯白名单留 327 个 ≈ 778MB）。缺的运行期包由打包阶段的
+#   fix-runtime-deps.sh **运行时探测**补齐（那是它的职责，且已验证可用）。
+runtime_closure = set()   # 不再扩闭包
 
 # 强制排除（即使在白名单里也不保留：体积大 / disabled preset / 非目标平台）
 force_exclude = {'@openai/codex', 'claude-agent-sdk', '@anthropic-ai/claude',
