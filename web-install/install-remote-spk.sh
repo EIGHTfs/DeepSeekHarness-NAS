@@ -51,31 +51,63 @@ read_ports() {
   [ "$sys" = "fnos" ] && secname="fpk"
   # 传真实脚本目录（stdin 执行时 __file__=<stdin> 不可靠，abspath 会基于 cwd 解析）
   python3 - "$secname" "$WS" <<'PYEOF'
-import sys, os
+import sys, os, re
 secname, script_dir = sys.argv[1], sys.argv[2]
 base = script_dir
 # 候选路径：权威在 build/（打包脚本同级）；旧根副本兜底（2026-09-12 迁移）
 cands = [os.path.join(base, '..', 'build', 'build-config.yaml'),
          os.path.join(base, '..', 'build-config.yaml'),
          os.path.join(base, 'build-config.yaml')]
-try:
-    import yaml
-except ImportError:
-    sys.exit(0)
+
+
+def _minimal_parse(text):
+    """无 PyYAML 时的回退解析：只认本项目 build-config.yaml 的扁平结构
+    （顶层段名 + 缩进的 proxy_port/dsh_port/container_port 值）。
+
+    背景（2026-10-03 实测）：DSM 的系统 python3 **没有 yaml 模块**，原实现
+    `except ImportError: sys.exit(0)` 会**静默退出**（不输出端口），上层于是误报
+    「未从 build-config.yaml 读到 dsm 端口段」—— 冤枉了配置文件，实际是缺依赖。
+    改为回退解析，安装链路不再依赖 PyYAML。
+    """
+    cfg, cur = {}, None
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        m = re.match(r'^([A-Za-z_][\w-]*):\s*$', line)
+        if m:
+            cur = m.group(1)
+            cfg.setdefault(cur, {})
+            continue
+        m = re.match(r'^\s+([A-Za-z_][\w-]*):\s*([^#\s]+)', line)
+        if m and cur:
+            cfg[cur][m.group(1)] = m.group(2).strip().strip('\'"')
+    return cfg
+
+
+def _load_cfg(path):
+    try:
+        import yaml
+        return yaml.safe_load(open(path, encoding='utf-8')) or {}
+    except ImportError:
+        try:
+            return _minimal_parse(open(path, encoding='utf-8').read())
+        except Exception:
+            return {}
+    except Exception:
+        return {}
+
+
 for cand in cands:
     if os.path.exists(cand):
-        try:
-            cfg = yaml.safe_load(open(cand, encoding='utf-8'))
-            d = cfg.get('defaults', {}) or {}          # 通用默认段
-            sec = (cfg.get(secname) or {}) if secname else {}  # 专属段（fpk 可能为 None）
-            # 读取优先级：专属段字段 > 通用默认字段（fpk 留空自然回落通用）
-            proxy = sec.get('proxy_port') or d.get('proxy_port') or ''
-            dsh = sec.get('dsh_port') or d.get('dsh_port') or ''
-            cont = sec.get('container_port') or d.get('container_port') or ''
-            if proxy and dsh and cont:
-                print('%s %s %s' % (proxy, dsh, cont))
-        except Exception:
-            pass
+        cfg = _load_cfg(cand)
+        d = cfg.get('defaults', {}) or {}          # 通用默认段
+        sec = (cfg.get(secname) or {}) if secname else {}  # 专属段（fpk 可能为 None）
+        # 读取优先级：专属段字段 > 通用默认字段（fpk 留空自然回落通用）
+        proxy = sec.get('proxy_port') or d.get('proxy_port') or ''
+        dsh = sec.get('dsh_port') or d.get('dsh_port') or ''
+        cont = sec.get('container_port') or d.get('container_port') or ''
+        if proxy and dsh and cont:
+            print('%s %s %s' % (proxy, dsh, cont))
         break
 PYEOF
 }
