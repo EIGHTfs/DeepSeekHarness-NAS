@@ -140,7 +140,7 @@ function buildPolyfillScript() {
   // ownsHost 声明：使 isLoopback=true → persistence='host' → settings 可用
   try {
     var g = typeof globalThis !== 'undefined' ? globalThis : typeof window !== 'undefined' ? window : typeof self !== 'undefined' ? self : this;
-    if (!g.__DSH_TRANSPORT__) { try { g.__DSH_TRANSPORT__ = {}; } catch(e){} }
+    if (!g.__DSH_TRANSPORT__) { try { g.__DSH_TRANSPORT__ = {}; } catch(e){} } // 有意忽略：部分浏览器对全局属性赋值受限，失败时后面的 if 会跳过，polyfill 降级但不报错
     if (g.__DSH_TRANSPORT__) {
       try { Object.defineProperty(g.__DSH_TRANSPORT__, 'ownsHost', { value: true, writable: false, configurable: false }); }
       catch(e) { g.__DSH_TRANSPORT__.ownsHost = true; }
@@ -351,10 +351,12 @@ async function main() {
 
   function shutdown(signal) {
     console.log(`\n[!] 收到 ${signal}，正在停止...`);
-    try { fs.unlinkSync(PID_FILE); } catch {}
-    try { if (dshProcess && !dshProcess.killed) dshProcess.kill('SIGKILL'); } catch {}
-    try { proxyServer.close(); } catch {}
-    try { containerServer.close(); } catch {}
+    // 以下四步都是"尽力而为的收尾"：任一失败都必须继续走完并 exit(0)，
+    // 否则会卡在关停流程里。各自的预期失败原因：
+    try { fs.unlinkSync(PID_FILE); } catch {}                                    // PID 文件可能已被删除或不可写
+    try { if (dshProcess && !dshProcess.killed) dshProcess.kill('SIGKILL'); } catch {} // 子进程可能已自行退出（ESRCH）
+    try { proxyServer.close(); } catch {}                                        // 服务端可能已关闭（ERR_SERVER_NOT_RUNNING）
+    try { containerServer.close(); } catch {}                                    // 同上
     process.exit(0);
   }
   process.on('SIGTERM', () => shutdown('SIGTERM'));
@@ -364,6 +366,6 @@ async function main() {
 
 main().catch(err => {
   console.error('[!] 修复失败:', err.message);
-  try { fs.unlinkSync(PID_FILE); } catch {}
+  try { fs.unlinkSync(PID_FILE); } catch {} // 有意忽略：清理 PID 文件是收尾动作，文件可能本就不存在或不可写；此处已在上行打印了真正的失败原因，不能再因清理失败掩盖它
   process.exit(1);
 });
