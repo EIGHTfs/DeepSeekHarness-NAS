@@ -43,6 +43,11 @@ BUILD_META_DIR="$BUILD_ROOT/master-build"                    # 源码链路 targ
 NPM_META_DIR="$BUILD_ROOT/master-build"                      # npm 链路 app 元数据根（同根目录，不同子目录）
 NPM_APP_SCRIPT="$BUILD_ROOT/FPK/build-npm-fpk-app.sh"        # FPK npm 链路脚本（本目录）
 EXCLUDES_FILE="$BUILD_ROOT/build-excludes.json"              # tar 排除规则（通用，build/ 根）
+BUILD_LIB="$BUILD_ROOT/build-lib.sh"                         # 公共函数库（构建级共用）
+
+# 公共函数库：gen_start_sh 等（SPK/FPK 共用，改一处生效；库头有完整梳理口径）
+[ -f "$BUILD_LIB" ] || { echo "✗ 缺少公共函数库: $BUILD_LIB" >&2; exit 1; }
+. "$BUILD_LIB"
 
 # ── 参数：--npm 走 npm 装包链路（默认源码 target 链路不变） ──
 NPM_MODE=0
@@ -141,26 +146,11 @@ for _x in "${TAR_EXCLUDES[@]}"; do
 done
 
 # ----------------------------------------------------------------------------
-# start.sh 生成（FPK 端口段；母版占位符 → 配置值）
+# start.sh 生成（FPK 端口段）
+#   函数实现已收进公共库 build/build-lib.sh 的 gen_start_sh()（SPK/FPK 共用）。
+#   ⚠ 门户描述口径：FPK 在 CFG_DESC_SHORT 为空时回退 "<display_name> Web UI"
+#     （与 SPK 不同，故显式传参，不在公共库内做兜底）。
 # ----------------------------------------------------------------------------
-gen_start_sh() {
-  local out="$1" proxy="$2" dsh="$3" cont="$4"
-  sed -e "s|__PROXY_PORT__|${proxy}|g" \
-      -e "s|__DSH_PORT__|${dsh}|g" \
-      -e "s|__CONTAINER_PORT__|${cont}|g" \
-      -e "s|__APP_NAME__|${APP_NAME}|g" \
-      -e "s|__APP_ID__|${APP_ID}|g" \
-      -e "s|__BRAND_NAME__|${CFG_BRAND_NAME}|g" \
-      -e "s|__BRAND_VERSION_ORDER__|${CFG_BRAND_VERSION_ORDER}|g" \
-      -e "s|__FPK_VERSION__|${FPK_VERSION}|g" \
-      -e "s|__PORTAL_TITLE__|${CFG_TITLE}|g" \
-      -e "s|__PORTAL_DESC__|${CFG_DESC_SHORT:-$CFG_DISPLAY_NAME Web UI}|g" \
-      "$BUILD_ROOT/start.sh.example" > "$out"
-  chmod +x "$out"
-  if grep -qE "__PROXY_PORT__|__DSH_PORT__|__CONTAINER_PORT__|__APP_NAME__|__APP_ID__|__BRAND_NAME__|__BRAND_VERSION_ORDER__|__FPK_VERSION__|__PORTAL_TITLE__|__PORTAL_DESC__" "$out"; then
-    echo "[!] start.sh 占位符未全部替换: $out" >&2; exit 1
-  fi
-}
 
 #===============================================================================
 # 一、FPK 应用体（target → app）
@@ -180,7 +170,7 @@ echo "▶ 复制 target → fpk 应用体"
 ( cd "$TARGET" && tar -cf - --hard-dereference . ) | ( cd "$FPK_APP" && tar -xf - )
 
 echo "▶ 生成 fpk start.sh（端口 $FPK_PROXY_PORT/$FPK_DSH_PORT/$FPK_CONTAINER_PORT）"
-gen_start_sh "$FPK_APP/bin/start.sh" "$FPK_PROXY_PORT" "$FPK_DSH_PORT" "$FPK_CONTAINER_PORT"
+gen_start_sh "$FPK_APP/bin/start.sh" "$FPK_PROXY_PORT" "$FPK_DSH_PORT" "$FPK_CONTAINER_PORT" "${CFG_DESC_SHORT:-$CFG_DISPLAY_NAME Web UI}"
 
 # var/ports 重写为 FPK 端口段（target 里可能是 SPK 段残留的 30800，必须覆盖；
 # npm 布局 app_root 可能无 var/，先建目录保证可写）
@@ -694,7 +684,12 @@ sed -i "s|__SHARE_WORKSPACE_DIR__|${CFG_SHARE_WORKSPACE_DIR}|g; s|__SHARE_DATA_D
 if grep -rl "__APP_NAME__\|__BRAND_VERSION_ORDER_COMMA__\|__FPK_VERSION__\|__SHARE_WORKSPACE_DIR__\|__SHARE_DATA_DIR__" "$FPK_SRC/cmd/" 2>/dev/null | grep -q .; then
   echo "[!] cmd 占位符未全部替换" >&2; exit 1
 fi
-OUT_FPK="$D_STAGING/${APP_NAME}_x86-${FPK_VERSION}.fpk"
+# 双链路产物命名（2026-10-03）：源码链路无后缀；npm 链路加 -npm，避免与源码版覆盖
+#   （build.yml 双链都构建时，release 同时收 DeepSeekHarness-NAS_x86-<ver>.fpk 与
+#     DeepSeekHarness-NAS_x86-<ver>-npm.fpk，文案由 release-note.sh 分别展示）
+_FPK_SUFFIX=""
+[ "$NPM_MODE" = "1" ] && _FPK_SUFFIX="-npm"
+OUT_FPK="$D_STAGING/${APP_NAME}_x86-${FPK_VERSION}${_FPK_SUFFIX}.fpk"
 # ⚠ staging 是 gitignore 的产物目录，CI 全新 checkout 不存在 → tar 写不进去
 #   报 exit code 2（stderr 被 2>/dev/null 吞掉，只留一句 exit 2，极难定位）。
 mkdir -p "$D_STAGING"

@@ -36,6 +36,11 @@ BUILD_META_DIR="$BUILD_ROOT/master-build"                    # build-common.sh �
 PRUNE_SCRIPT="$BUILD_ROOT/prune-target.sh"                   # 通用裁剪（留 build/ 根）
 BUILD_COMMON_SCRIPT="$BUILD_ROOT/build-common.sh"            # 公共预编译（通用留根）
 EXCLUDES_FILE="$BUILD_ROOT/build-excludes.json"              # tar 排除规则（通用，build/ 根）
+BUILD_LIB="$BUILD_ROOT/build-lib.sh"                         # 公共函数库（构建级共用）
+
+# 公共函数库：gen_start_sh 等（SPK/FPK 共用，改一处生效；库头有完整梳理口径）
+[ -f "$BUILD_LIB" ] || { echo "✗ 缺少公共函数库: $BUILD_LIB" >&2; exit 1; }
+. "$BUILD_LIB"
 
 # ── 工作区分类目录（环境变量可覆盖，与 build-common.sh 一致） ──
 D_ASSETS="${D_ASSETS:-$WS/build}"
@@ -102,29 +107,12 @@ for x in cfg.get('dist', {}).get('excludes', []):
 " 2>/dev/null || true)
 
 # ----------------------------------------------------------------------------
-# start.sh 生成（SPK 端口段；母版占位符 → 配置值）
+# start.sh 生成（SPK 端口段）
+#   函数实现已收进公共库 build/build-lib.sh 的 gen_start_sh()（SPK/FPK 共用）。
+#   ⚠ 门户描述口径：SPK 直接用 CFG_DESC_SHORT（FPK 侧空值回退口径不同，故显式传参）。
 # ----------------------------------------------------------------------------
-gen_start_sh() {
-  local out="$1" proxy="$2" dsh="$3" cont="$4"
-  sed -e "s|__PROXY_PORT__|${proxy}|g" \
-      -e "s|__DSH_PORT__|${dsh}|g" \
-      -e "s|__CONTAINER_PORT__|${cont}|g" \
-      -e "s|__APP_NAME__|${APP_NAME}|g" \
-      -e "s|__APP_ID__|${APP_ID}|g" \
-      -e "s|__BRAND_NAME__|${CFG_BRAND_NAME}|g" \
-      -e "s|__BRAND_VERSION_ORDER__|${CFG_BRAND_VERSION_ORDER}|g" \
-      -e "s|__FPK_VERSION__|${FPK_VERSION}|g" \
-      -e "s|__PORTAL_TITLE__|${CFG_TITLE}|g" \
-      -e "s|__PORTAL_DESC__|${CFG_DESC_SHORT}|g" \
-      "$BUILD_ROOT/start.sh.example" > "$out"
-  chmod +x "$out"
-  if grep -qE "__PROXY_PORT__|__DSH_PORT__|__CONTAINER_PORT__|__APP_NAME__|__APP_ID__|__BRAND_NAME__|__BRAND_VERSION_ORDER__|__FPK_VERSION__|__PORTAL_TITLE__|__PORTAL_DESC__" "$out"; then
-    echo "[!] start.sh 占位符未全部替换: $out" >&2; exit 1
-  fi
-}
-
 # 重新生成 start.sh（避免复用 target 时残留旧包名/旧端口）
-gen_start_sh "$TARGET/start.sh" "$SPK_PROXY_PORT" "$SPK_DSH_PORT" "$SPK_CONTAINER_PORT"
+gen_start_sh "$TARGET/start.sh" "$SPK_PROXY_PORT" "$SPK_DSH_PORT" "$SPK_CONTAINER_PORT" "${CFG_DESC_SHORT}"
 
 #===============================================================================
 # 一、组装 SPK 外层（assemble）
