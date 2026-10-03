@@ -50,7 +50,7 @@ jobs:
   # ── 打包：SPK · 源码链路（复用 build-target 的 artifact，不重复构建）──────────
   pack-and-release:
     needs: [build-target]
-    if: ${{ always() && !cancelled() }}
+    # 构建失败时不跑（口径：宁失败不发缺项；artifact 缺失时本就无法打包）
     runs-on: ubuntu-latest
     permissions:
       contents: write
