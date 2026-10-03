@@ -1,8 +1,13 @@
 # fnpack 使用文档（飞牛 fnOS 官方 fpk 打包工具）
 
-> 官方工具：`/usr/local/bin/fnpack`（dpkg 安装，Version 1.0.0，Maintainer anna <nas@teiron-inc.cn>）
+> 官方工具：`/usr/local/bin/fnpack`（dpkg 安装，Version 1.0.0，Maintainer 邮箱已脱敏：`nas@<厂商域名>`）
 > 本项目副本：`tools/fnpack`
-> 2026-08-22 实测记录。配套 skill：`fnos-fpk-package-guide`（权威源 `.dsh/skills/`）。
+>
+> 说明：上面这行是**官方 dpkg 包自带的元数据**，不是本项目的联系人信息；此处按隐私规范**隐去具体邮箱域名**
+> （保留"官方包维护者"这一事实，便于日后核对版本来源）。审计规则 `secret-email` 命中的就是这一处，
+> 属**真问题**（第三方个人信息不应原样入库），故**修**而不是豁免。
+>
+> 实测记录（详见下文各命令的验证结果）。配套 skill：`fnos-fpk-package-guide`（权威源 `.dsh/skills/`）。
 
 ## 一、命令
 
