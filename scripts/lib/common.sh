@@ -2,10 +2,14 @@
 #===============================================================================
 # scripts/lib/common.sh — **唯一公共函数库**（build / scripts / web-install 三方共用）
 #
-# 设计口径（用户 2026-10-04）：
+# 设计口径（用户明确）：
 #   「此次一鼓作气把所有能公共的都公共」——审计出的重复实现一律收进本文件，
-#   各脚本只允许**调用**，不允许再定义同名副本（由
-#   scripts/check-common-functions.sh 在 CI 强制）。
+#   各脚本只允许**调用**，不允许再定义同名副本。
+#
+#   【谁在强制】scripts/check-common-functions.py（CI 守卫套件的一环，见 README「脚本一览」）。
+#   它从本文件**派生**出允许被定义/被调用的函数清单，再断言全仓库不存在第二处同名定义。
+#   因此：**新增公共函数只需写在本文件**，守卫会自动纳入白名单；反之，若在别处新定义同名函数，
+#   CI 会直接红——这是有意的，防止公共化成果被后续改动悄悄拆掉。
 #
 # 【使用方式】只 source，不执行：
 #     . "$(dirname "$0")/../scripts/lib/common.sh"      # 或按各自相对位置
@@ -13,13 +17,27 @@
 #
 # 【硬性约束】
 #   1. 本文件 **无副作用**：不 set -e/-u、不 cd、不写文件、不打印任何东西。
+#      原因：它被 build/scripts/web-install 三方在不同 cwd、不同 set -e 状态下 source；
+#      任何副作用都会改变调用方的行为，进而让"本地能过、CI 不过"这类问题重新出现。
 #   2. 只依赖 bash + coreutils + /proc；可选依赖（sshpass/curl/tar/python3）
 #      一律**运行时探测**，缺失时给出明确报错，绝不静默降级。
+#      原因：本地 NAS 与 CI runner 的可选工具集不同，静默降级会让同一份输入产生两种产物。
 #   3. 所有破坏性删除必须走 safe_rm_rf()：强制 --one-file-system 且逐级检测
-#      挂载点（2026-10-03 数据丢失事故的直接防线）。
+#      挂载点（数据丢失事故的直接防线）。
+#      原因：历史上 `rm -rf /volume1/@appdata/<PKG>` 会**递归进入其下的挂载点**并删光内容
+#      （本机 @appdata/<PKG>/<版本>/工作区 正是工作区挂载点，源端数据因此不可恢复）。
+#      safe_rm_rf 的两道保险缺一不可：--one-file-system 阻止跨设备递归，
+#      has_mount_under 在删除前先判定目标本身或其下是否有挂载点（含"目标即挂载点"）。
 #
-# 【哪些【不要】收口（2026-10-04 审计纠错，务必先读）】
+# 【哪些【不要】收口（审计纠错，务必先读）】
 #   按"函数名重复"做的审计会**误报**：同名但**作用域不同**的代码不能抽，硬抽会破坏生成物。
+#   判据（先问这三个问题，任一为"是"就不要抽）：
+#     ① 这段代码**运行在哪个机器**上？若是**目标机/远端**（DSM/fnOS 上），则该机器上没有本文件，
+#        抽成函数调用会直接坏包 —— 必须保持自包含。
+#     ② 它是**构建期烘焙**还是**运行时求值**？看变量是否被 \${} 转义：未转义＝构建期把值写死，
+#        其语义是"目标机上要执行的文本"，不是"本机要执行的逻辑"。
+#     ③ 它是否属于**平台专有回调**（DSM 的 preinst/postinst/preuninst/postuninst/start/status，
+#        fnOS 的 install_callback/service_*）？这类由平台按名调用，名字本身是接口，不能合并。
 #   已确认的误报（保留各自实现，勿动）：
 #     · log_msg —— build/FPK/pack-fpk.sh 里出现两次，但都在 **heredoc 生成的 fnOS 运行时
 #       脚本**内（写 ${LOG_FILE}/${TRIM_PKGVAR} 日志），与构建侧日志**不是一回事**。
@@ -28,14 +46,14 @@
 #     · preinst/postinst/preuninst/postuninst/start/status（DSM 专有）与
 #       install_callback/service_*（fnOS 专有）—— 平台专有，保留各自实现。
 #     · scripts/migrate-session.sh、fix-login-shell.sh、fetch-release-mt.sh 的领域逻辑。
-#     · **打包器里嵌入目标运行时的 rm -rf 也不要收口**（2026-10-04 新增，甄别启发式的假阴性）：
+#     · **打包器里嵌入目标运行时的 rm -rf 也不要收口**（甄别启发式的假阴性）：
 #       例 build/SPK/pack-spk.sh 的 preuninst/postuninst 段（与 synouser --del 同段）——
 #       它**未用 \${} 转义**（值在构建期烘焙），但命令是在**目标机卸载时执行**，目标机上
-#       没有 scripts/lib/common.sh → 换成 safe_rm_rf 会直接坏包。判据：看**变量是否被
+#       没有 scripts/lib/common.sh → 换成 safe_rm_rf 会直接坏包。判据同上：看**变量是否被
 #       烘焙**（未转义）+ 是否伴随 synouser/userdel/TRIM_*/PKG_VAR 等运行时语义。
 #       已实测安全并收口的只有构建期临时目录类（build-common.sh 5 处、fetch-*、diff-report）。
 #
-#     · **sshpass / synopkg / base64 的剩余出现不要盲目收口**（2026-10-04 审计结论）：
+#     · **sshpass / synopkg / base64 的剩余出现不要盲目收口**（审计结论）：
 #       - `synopkg` 多出现在**远端执行**的脚本里（web-install/install-remote-*.sh、
 #         scripts/clean-dsm-residue.sh 的 REMOTE_EOF 段）——目标机上**没有** scripts/lib/
 #         common.sh，收口成 pkg_*() 会直接坏掉；它们必须自包含。
