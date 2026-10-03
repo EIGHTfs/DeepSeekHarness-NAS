@@ -70,10 +70,36 @@ def index_pnpm(pnpm):
     return name2dirs
 
 
-def expand_closure(whitelist, pnpm):
+def pkg_runtime_deps(full):
+    """只取**运行期**依赖名（package.json 的 dependencies + optionalDependencies）。
+
+    为什么需要它（2026-10-03 实测）：pkg_deps() 读的是 node_modules **目录列表**，会把
+    提升进来的 dev 依赖一并纳入 → 闭包爆炸（490 声明 → 1654 闭包 ≈ 整棵 .pnpm）→ 最终裁剪
+    几乎不删（保留 1546 / 删除 8）→ target 5.5G → SPK 2GB 撞 600MB 体积门禁。
+    运行期闭包只该沿 dependencies 边展开；构建期工具由白名单 extra 负责（模式 C 用全闭包）。
+    """
+    import json as _json
+    out = set()
+    try:
+        with open(os.path.join(full, 'package.json'), encoding='utf-8') as _f:
+            _pj = _json.load(_f)
+    except Exception:
+        return out
+    for _key in ('dependencies', 'optionalDependencies'):
+        for _name in (_pj.get(_key) or {}):
+            out.add(_name)
+    return out
+
+
+def expand_closure(whitelist, pnpm, runtime_only=False):
     """从白名单种子出发，沿 .pnpm 依赖软链 BFS，返回 (扩充后的白名单, 闭包集合)。
 
     必须做闭包的原因见模块 docstring：纯名字白名单会漏掉外部包的传递依赖。
+
+    runtime_only=True：只沿**运行期**依赖边展开（package.json 的 dependencies/
+      optionalDependencies），用于**最终出货裁剪（模式 B）** —— 决定 SPK 里有什么；
+      用目录列表会把 dev 依赖带进来导致闭包爆炸（见 pkg_runtime_deps 注释）。
+    runtime_only=False：沿用目录列表（含构建期工具），用于 **build 前裁剪（模式 C）**。
     """
     name2dirs = index_pnpm(pnpm)
     seen = set()
@@ -84,7 +110,7 @@ def expand_closure(whitelist, pnpm):
             continue
         seen.add(n)
         for d in name2dirs.get(n, []):
-            for dep in pkg_deps(d):
+            for dep in (pkg_runtime_deps(d) if runtime_only else pkg_deps(d)):
                 if dep not in seen:
                     stack.append(dep)
     return whitelist | seen, seen

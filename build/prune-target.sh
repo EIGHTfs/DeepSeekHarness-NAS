@@ -306,7 +306,11 @@ if white.get('workspaceRuntimeDeps'):
 # 【为何只漏模式 B】模式 C（build 前）早已有闭包，模式 B（最终 target）只做纯名单
 #   匹配 → 模式 C 保住的包在最后一步又被删掉。
 # 【修法】调公共 expand_closure，与模式 C 同款（见 build/prune_common.py）。
-whitelist, runtime_closure = expand_closure(whitelist, pnpm)
+# 【2026-10-03 二次修】加 runtime_only=True：只沿**运行期**依赖边展开。
+#   背景：模式 B 用目录列表算闭包会把 dev 依赖带进来 → 490 声明膨胀到 1654 闭包
+#   ≈ 整棵 .pnpm → 几乎不删（保留 1546 / 删除 8）→ target 5.5G、SPK 2GB 撞 600MB 门禁。
+#   构建期工具不靠闭包，靠白名单 extra（模式 C 仍用全闭包）。
+whitelist, runtime_closure = expand_closure(whitelist, pnpm, runtime_only=True)
 
 # 强制排除（即使在白名单里也不保留：体积大 / disabled preset / 非目标平台）
 force_exclude = {'@openai/codex', 'claude-agent-sdk', '@anthropic-ai/claude',
