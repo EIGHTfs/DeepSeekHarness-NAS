@@ -1439,17 +1439,124 @@ missing_from_log() {
     | sed "s/Cannot find package '//; s/'\$//" | sort -u
 }
 
-# 在线补齐指定包：随包 pnpm 解析闭包 → 平铺复制进实例 node_modules
-rescue_deps() {
-  [ $# -gt 0 ] || { echo "[deps] 未指定要补的包，跳过"; return 0; }
-  [ -x "$DSH_DIR/bin/pnpm" ] || { echo "[deps] 随包 pnpm 不存在（$DSH_DIR/bin/pnpm），跳过兜底"; return 0; }
-  local specs=() p v
-  for p in "$@"; do
-    v="$(resolve_missing_spec "$p")"
-    if [ -n "$v" ]; then specs+=("$v"); else specs+=("$p"); fi
+# 列出某棵树里所有悬空软链（绝对路径，每行一条）
+list_dangling_links() {
+  find "$1/node_modules" -xtype l 2>/dev/null
+}
+
+# 悬空软链的目标路径（**词法**归一，绝不 chdir）
+#   ⚠ 不能用 cd 归一化：死链的目标目录正是因为缺失才成为死链，cd 必然失败，
+#     会得到 /<name> 这种残缺路径（实测踩坑：dangling_spec 因此对真死链全部返回失败）。
+#   软链目标形如 <n>×"../" + "<flat>@<ver>/node_modules/<name>"，按层数削基目录即可。
+dangling_dest() {
+  local link="$1" t base up
+  t="$(readlink "$link" 2>/dev/null)" || return 1
+  [ -n "$t" ] || return 1
+  case "$t" in /*) printf '%s' "$t"; return 0 ;; esac
+  base="$(dirname "$link")"
+  up=0
+  while case "$t" in ../*) true ;; *) false ;; esac; do
+    up=$((up + 1)); t="${t#../}"
   done
-  echo "[deps] 兜底补齐: ${specs[*]}  (registry=$DEP_RESCUE_REGISTRY)"
-  local work
+  while case "$t" in ./*) true ;; *) false ;; esac; do t="${t#./}"; done
+  while [ "$up" -gt 0 ]; do
+    base="$(dirname "$base")"; up=$((up - 1))
+  done
+  printf '%s/%s' "$base" "$t"
+}
+
+# 由一条悬空软链反解「该处需要的精确包规格」<pkg>@<ver>；解不出返回 1
+#   例：…/.pnpm/got@14.6.6/node_modules/@sindresorhus/is
+#        -> ../../../@sindresorhus+is@7.2.0/node_modules/@sindresorhus/is
+#       得 @sindresorhus/is@7.2.0
+#   ⚠ 必须**逐条软链**反解，不能按包名取第一个匹配：同名包在不同父包下要不同版本
+#     （实测 got@11.8.6 要 @sindresorhus/is@4.6.0、got@14.6.6 要 7.2.0；按包名取首个
+#      曾把 4.6.0 补给了 14.6.6，于是 dsh-otel 依旧 failed to import）。
+dangling_spec() {
+  local link="$1" dest flat ver name
+  dest="$(dangling_dest "$link")" || return 1
+  [ -n "$dest" ] || return 1
+  case "$dest" in */.pnpm/*/node_modules/*) ;; *) return 1 ;; esac
+  flat="$(printf '%s' "$dest" | sed -n 's|.*/\.pnpm/\([^/]*\)/node_modules/.*|\1|p')"
+  [ -n "$flat" ] || return 1
+  ver="${flat##*@}"
+  name="${flat%@*}"
+  [ -n "$name" ] && [ -n "$ver" ] && [ "$ver" != "$flat" ] || return 1
+  printf '%s@%s\n' "${name//+/\/}" "$ver"
+}
+
+# 需要兜底的树：实例根 + DSH_HOME + 各 profile
+#   （插件装在各 profile 树的 node_modules 里，插件依赖从**那棵树**解析，只补实例根不够）
+rescue_trees() {
+  local d
+  [ -n "${DSH_DIR:-}" ] && printf '%s\n' "$DSH_DIR"
+  if [ -n "${DSH_HOME_DIR:-}" ]; then
+    printf '%s\n' "$DSH_HOME_DIR"
+    for d in "$DSH_HOME_DIR"/profiles/*; do
+      # 只要 profile 目录本身；glob 会命中 profiles/node_modules（那是各 profile 的
+      # 依赖目录，不是独立树），必须排掉，否则会把它当成一棵树去改
+      case "$(basename "$d")" in node_modules) continue ;; esac
+      [ -d "$d" ] && printf '%s\n' "$d"
+    done
+  fi
+  return 0
+}
+
+# 补齐物的属主规整：root 跑兜底时补进来的文件属主是 root，服务用户读不到 →
+#   DSH 启动期 scandir EACCES 直接崩（实测：profiles/web/node_modules/@modelcontextprotocol）。
+#   只认目标树本来就有的属主；非 root 运行（本就同属主）时传空跳过。
+resc_own() {  # $1=路径  $2=目标属主（空=跳过）
+  [ -n "$1" ] && [ -n "$2" ] && chown -R "$2" "$1" 2>/dev/null
+  return 0
+}
+
+# 在线补齐：随包 pnpm 解析闭包 → 按 pnpm 布局合并进各树 .pnpm（悬空软链随之复活）
+#            + 按规格名平铺到树根（hoisted 布局靠树根解析）
+#   入参：包名（或 包名@版本）。版本**逐条悬空软链反解**（同名多版本全补）；
+#   裸名且无软链线索时才退回 registry 最新。
+rescue_deps() {
+  [ -x "$DSH_DIR/bin/pnpm" ] || { echo "[deps] 随包 pnpm 不存在（$DSH_DIR/bin/pnpm），跳过兜底"; return 0; }
+  [ $# -gt 0 ] || { echo "[deps] 未指定要补的包，跳过"; return 0; }
+  local names=() specs=() trees="" t="" link="" spec="" p="" work="" copied=0 d="" n=""
+  local ptree="" edest="" ename="" ev="" eflat="" src="" missing="" svc="" svcg=""
+  # ⚠ 必须在 local 声明**之后**取值：local 里的 svc="" 会清空先前赋值（实测踩坑：
+  #   赋值放前面 → svc 恒为空 → 补齐物停留在 root 属主 → 服务用户 scandir EACCES 崩溃）
+  if [ "$(id -u 2>/dev/null)" = "0" ]; then
+    svc="$(stat -c %U "$DSH_DIR/node_modules" 2>/dev/null)"
+    svcg="$(stat -c %G "$DSH_DIR/node_modules" 2>/dev/null)"
+    [ "$svc" = "root" ] && svc=""
+    [ -n "$svc" ] && [ -n "$svcg" ] && svc="$svc:$svcg"
+  fi
+  # 区分「裸名」与「名@版本」：⚠ scoped 包名开头的 @ 不是版本分隔符
+  #   （@sindresorhus/is 是裸名；@sindresorhus/is@7.2.0 才带版本）。
+  #   曾用 case "$p" in *@*) 判定，导致 @scope/name 被当带版本 → 名字解析成空串、
+  #   收集不到任何版本化规格、死链照旧（实测踩坑）。
+  for p in "$@"; do
+    case "$p" in
+      @*/*@*) names+=("${p%@*}"); specs+=("$p") ;;   # scoped 且带版本
+      @*)     names+=("$p") ;;                        # scoped 裸名
+      *@*)    names+=("${p%@*}"); specs+=("$p") ;;    # 普通包且带版本
+      *)      names+=("$p") ;;                        # 普通裸名
+    esac
+  done
+  trees="$(rescue_trees)"
+  # 逐条悬空软链，把命中这些名字的精确版本全收进来（同名多版本各补各的）
+  while IFS= read -r t; do
+    [ -d "$t/node_modules" ] || continue
+    while IFS= read -r link; do
+      spec="$(dangling_spec "$link")" || continue
+      [ -n "$spec" ] || continue
+      for p in "${names[@]}"; do
+        if [ "${spec%@*}" = "$p" ]; then specs+=("$spec"); break; fi
+      done
+    done < <(list_dangling_links "$t")
+  done <<< "$trees"
+  # 去重（包名/版本不含空白，安全）
+  if [ "${#specs[@]}" -gt 0 ]; then
+    specs=($(printf '%s\n' "${specs[@]}" | sort -u))
+  fi
+  [ "${#specs[@]}" -gt 0 ] || { echo "[deps] 目标包在悬空软链里没有线索，跳过"; return 0; }
+  echo "[deps] 兜底补齐: $(printf '%s ' "${specs[@]}" | sed 's/ $//')  (registry=$DEP_RESCUE_REGISTRY)"
   work="$(mktemp -d "${TMPDIR:-/tmp}/dsh-rescue.XXXXXX" 2>/dev/null)" || { echo "[deps] 建临时目录失败，跳过"; return 0; }
   printf '{}\n' > "$work/package.json"
   if ! "$DSH_DIR/bin/pnpm" add --dir "$work" --registry "$DEP_RESCUE_REGISTRY" \
@@ -1458,15 +1565,68 @@ rescue_deps() {
     tail -6 "$work/pnpm.log" 2>/dev/null | sed 's/^/    /'
     rm -rf "$work"; return 0
   fi
-  # 平铺复制：pnpm 真实包在 <work>/node_modules/.pnpm/<flat>@<ver>/node_modules/<name>；
-  #   用 -L 解引用（pnpm 顶层是软链，直接复制软链会留下新的死链）
-  local copied=0 d name
-  while IFS= read -r d; do
-    name="$(basename "$d")"
-    [ -e "$DSH_DIR/node_modules/$name" ] && continue
-    cp -aL "$d" "$DSH_DIR/node_modules/$name" 2>/dev/null && copied=$((copied+1))
-  done < <(find "$work/node_modules/.pnpm" -mindepth 3 -maxdepth 3 -type d -path "*/node_modules/*" 2>/dev/null)
-  echo "[deps] 已补入 $copied 个包（悬空软链现 $(count_dangling_links) 条）"
+  while IFS= read -r t; do
+    [ -d "$t/node_modules" ] || continue
+    mkdir -p "$t/node_modules/.pnpm" 2>/dev/null || true
+    # 该树里「被点名包」的死链 → 期望落地路径清单（只处理点名的包，避免把
+    # 200+ 条构建期 devDeps 全拉下来）
+    ptree="$(mktemp "${TMPDIR:-/tmp}/dsh-rescue-tree.XXXXXX" 2>/dev/null)" || ptree=""
+    if [ -n "$ptree" ]; then
+      while IFS= read -r link; do
+        spec="$(dangling_spec "$link")" || continue
+        case " ${names[*]} " in *" ${spec%@*} "*) ;; *) continue ;; esac
+        edest="$(dangling_dest "$link")" || continue
+        [ -n "$edest" ] && printf '%s|%s\n' "$spec" "$edest" >> "$ptree"
+      done < <(list_dangling_links "$t")
+    fi
+    # ① 合并 .pnpm 条目（目录名即 <flat>@<ver>；版本化目录不会遮蔽任何东西）
+    #    用 cp -a 保留内部软链：pnpm 布局内是相对软链，合并后自然生效；
+    #    -aL 会把整棵依赖树解引用成实体目录、体积爆炸，禁用。
+    while IFS= read -r d; do
+      n="$(basename "$d")"
+      [ -e "$t/node_modules/.pnpm/$n" ] && continue
+      cp -a "$d" "$t/node_modules/.pnpm/$n" 2>/dev/null && { copied=$((copied+1)); resc_own "$t/node_modules/.pnpm/$n" "$svc"; }
+    done < <(find "$work/node_modules/.pnpm" -maxdepth 1 -mindepth 1 -type d 2>/dev/null)
+    # ② 逐条死链按**期望路径**精确落地，不依赖 pnpm 的版本去重结局。
+    #    实测教训：pnpm 临时工程里 cacheable-request 解析成 7.0.4 而死链期望 13.0.19，
+    #    只做 ① 时死链照旧、Node 上溯到树根拿到错版本，报
+    #    "Named export 'CacheError' not found"（CJS/ESM 混用）。
+    #    只认**精确版本**目录；取不到就明确告警，绝不用其它版本顶替。
+    if [ -n "$ptree" ] && [ -s "$ptree" ]; then
+      while IFS='|' read -r spec edest; do
+        [ -e "$edest" ] && continue
+        ename="${spec%@*}"; ev="${spec##*@}"; eflat="${ename//\//+}@$ev"
+        src="$work/node_modules/.pnpm/$eflat/node_modules/$ename"
+        if [ -e "$src" ]; then
+          mkdir -p "$(dirname "$edest")" 2>/dev/null || true
+          if cp -a "$src" "$edest" 2>/dev/null; then
+            copied=$((copied+1))
+            # 交还属主：整个 .pnpm/<flat>@<ver> 子树——mkdir 出来的**父目录**也是 root，
+            # 只 chown 内层包目录会让父目录留在 root（沙箱实测）。
+            resc_own "$(printf '%s' "$edest" | sed -n 's|\(.*/\.pnpm/[^/]*\)/node_modules/.*|\1|p')" "$svc"
+            continue
+          fi
+        fi
+        missing="$missing $spec"
+      done < "$ptree"
+    fi
+    rm -f "$ptree" 2>/dev/null || true
+    # ③ 树根平铺**仅**用于纯 hoisted 树（无 .pnpm）。pnpm 布局树绝不平铺：
+    #    树根同名条目会遮蔽 .pnpm 里的正确版本（scoped 还必须用完整名，否则
+    #    @swc/helpers 会被放成 helpers）—— 两处都是实测踩过的坑。
+    if [ ! -d "$t/node_modules/.pnpm" ]; then
+      for spec in "${specs[@]}"; do
+        n="${spec%@*}"
+        [ -e "$t/node_modules/$n" ] && continue
+        [ -e "$work/node_modules/$n" ] || continue
+        mkdir -p "$(dirname "$t/node_modules/$n")" 2>/dev/null || true
+        cp -a "$work/node_modules/$n" "$t/node_modules/$n" 2>/dev/null && { copied=$((copied+1)); resc_own "$t/node_modules/$n" "$svc"; }
+      done
+    fi
+    echo "  $t: 悬空软链剩余 $(find "$t/node_modules" -xtype l 2>/dev/null | wc -l | tr -d ' ') 条"
+  done <<< "$trees"
+  echo "[deps] 已补入 $copied 项"
+  [ -n "$missing" ] && echo "[deps] ⚠ registry 未取到（已跳过，不用其它版本顶替）:$missing"
   rm -rf "$work"
   return 0
 }
