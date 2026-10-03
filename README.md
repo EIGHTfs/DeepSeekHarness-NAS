@@ -761,7 +761,7 @@ sudo synopkg stop deepseek-harness-nas
 ### 裁剪优化
 | 功能 | 说明 |
 |------|------|
-| 纯白名单裁剪 | `prune-target.sh` 模式 B：只保留 lockfileDeps 运行时依赖，其余全删，target 从 1.8G→385MB |
+| 纯白名单裁剪 | `prune-target.sh` 模式 B：只保留 `lockfileDeps` + `workspaceRuntimeDeps`（运行时依赖，不含 extra），其余全删，target 从 1.8G→385MB |
 | install 前裁剪 | `prune-target.sh --before-install`：pnpm install 前剥离非白名单 devDeps，解决 CI 磁盘爆盘 |
 | 裁剪白名单自动生成 | `gen-prune-whitelist.sh` 从 npm 锁文件自动生成（489 个），手动追加部分不覆盖 |
 | 补丁声明同步清理 | 裁剪 devDeps 后同步移除 pnpm-workspace.yaml 中悬空的 patchedDependencies 条目 |

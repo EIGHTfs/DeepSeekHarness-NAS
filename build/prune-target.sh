@@ -326,7 +326,9 @@ if white.get('workspaceRuntimeDeps'):
 #   体积膨胀的真凶应在**种子侧**（workspaceRuntimeDeps 是否含 devDependencies）排查，而不是
 #   在闭包口径上动刀 —— 见 README「裁剪白名单」(#prune-whitelist) 与 learn-prune-whitelist.sh。
 # 【2026-10-03 最终结论】模式 B **不做依赖闭包**：只用纯白名单（lockfileDeps +
-#   workspaceRuntimeDeps + extra）。闭包会把 target 撑到 5.3G（实测：留 848 个 .pnpm
+#   workspaceRuntimeDeps，**不含 extra** —— extra 里的类型检查包只在模式 A 保护 tsc，
+#   不进最终 target；2026-10-04 审核修正此注释，原写"+ extra"与代码不符）。
+#   闭包会把 target 撑到 5.3G（实测：留 848 个 .pnpm
 #   目录 = 4.9G；纯白名单留 327 个 ≈ 778MB）。缺的运行期包由打包阶段的
 #   fix-runtime-deps.sh **运行时探测**补齐（那是它的职责，且已验证可用）。
 runtime_closure = set()   # 不再扩闭包
