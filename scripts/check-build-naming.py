@@ -77,6 +77,23 @@ def main():
             else:
                 listing.append("script: build/%s/%s" % (fmt, f))
 
+    # 3.5) .sh / .py 必须带可执行位（2026-10-04 实测踩坑：release-note.sh 是 644，
+    #      CI 里 ./build/release-note.sh 直接 Permission denied（exit 126），
+    #      导致 SPK/FPK 已成功打出、却在生成 Release 文案时失败。
+    import subprocess as _sp
+    try:
+        _out = _sp.run(["git", "ls-files", "-s", "*.sh", "*.py"], cwd=ROOT,
+                       capture_output=True, text=True, timeout=30)
+        if _out.returncode == 0:
+            for _ln in _out.stdout.splitlines():
+                _mode, _path = _ln.split(None, 1)[0], _ln.split(None, 3)[-1]
+                if _path.startswith("tools/"):
+                    continue   # vendored 第三方（pnpm 发行包内的脚本），不要求可执行位
+                if _mode != "100755":
+                    v.append("%s 缺少可执行位（%s）—— CI 里以 ./ 调用会 Permission denied" % (_path, _mode))
+    except Exception:
+        pass
+
     # 4) scripts/ 下的 kebab-case
     sdir = os.path.join(ROOT, "scripts")
     for base, dirs, files in os.walk(sdir):
