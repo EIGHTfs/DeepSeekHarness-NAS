@@ -28,6 +28,13 @@
 #     · preinst/postinst/preuninst/postuninst/start/status（DSM 专有）与
 #       install_callback/service_*（fnOS 专有）—— 平台专有，保留各自实现。
 #     · scripts/migrate-session.sh、fix-login-shell.sh、fetch-release-mt.sh 的领域逻辑。
+#     · **打包器里嵌入目标运行时的 rm -rf 也不要收口**（2026-10-04 新增，甄别启发式的假阴性）：
+#       例 build/SPK/build-spk.sh 的 preuninst/postuninst 段（与 synouser --del 同段）——
+#       它**未用 \${} 转义**（值在构建期烘焙），但命令是在**目标机卸载时执行**，目标机上
+#       没有 scripts/lib/common.sh → 换成 safe_rm_rf 会直接坏包。判据：看**变量是否被
+#       烘焙**（未转义）+ 是否伴随 synouser/userdel/TRIM_*/PKG_VAR 等运行时语义。
+#       已实测安全并收口的只有构建期临时目录类（build-common.sh 5 处、fetch-*、diff-report）。
+#
 #   → 因此 scripts/check-common-functions.sh（第 7 步守卫）必须**先剔除 heredoc 生成区段**
 #     再做"唯一性"判定，否则会误伤上述代码。
 #
