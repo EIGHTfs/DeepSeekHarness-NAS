@@ -67,11 +67,37 @@ pkill -f "target/bin/node.*$PKG" 2>/dev/null
 sleep 2
 
 echo "-- 2. 删除目录 --"
+
+# ── 挂载点保护（2026-10-03 事故硬保护）────────────────────────────────
+#   rm -rf 会**递归进入目标目录下的挂载点并删光其中内容**：本机上
+#   @appdata/<PKG>/<版本>/工作区 就是用户工作区的 NFS 挂载点，曾被整体删掉（源端不可恢复）。
+#   除 --one-file-system 外，这里再做显式检测：待删目录之下若有挂载点 → **跳过该目录**
+#   （不失败、不删除），只删确认无挂载的目录。
+_has_mount_under() {
+  local d="$1" m
+  [ -e "$d" ] || return 1
+  if command -v findmnt >/dev/null 2>&1; then
+    m="$(findmnt -R -n -o TARGET 2>/dev/null | awk -v p="$d" 'index($0,p)==1 && $0!=p' | head -1)"
+  else
+    m="$(mount 2>/dev/null | awk '{print $3}' | awk -v p="$d" 'index($0,p)==1 && $0!=p' | head -1)"
+  fi
+  [ -n "$m" ] && { echo "  [跳过] $d 之下存在挂载点: $m（防误删挂载内容）"; return 0; }
+  return 1
+}
+
+_safe_rm_rf() {
+  local d
+  for d in "$@"; do
+    [ -e "$d" ] || continue
+    _has_mount_under "$d" && continue
+    rm -rf --one-file-system "$d"
+  done
+}
 rm -rf --one-file-system "/var/packages/$PKG" "/usr/syno/etc/packages/$PKG"
 for v in /volume1 /volume2 /volume3 /volume4; do
-  rm -rf --one-file-system "$v/@appstore/$PKG" "$v/@appconf/$PKG" "$v/@appdata/$PKG" \
-         "$v/@apphome/$PKG" "$v/@apptemp/$PKG" "$v/@appshare/$PKG" \
-         "$v/@eaDir/$PKG" "$v/$PKG"
+  _safe_rm_rf "$v/@appstore/$PKG" "$v/@appconf/$PKG" "$v/@appdata/$PKG" \
+              "$v/@apphome/$PKG" "$v/@apptemp/$PKG" "$v/@appshare/$PKG" \
+              "$v/@eaDir/$PKG" "$v/$PKG"
 done
 rm -rf --one-file-system "/usr/syno/synoman/webman/3rdparty/$PKG"
 
