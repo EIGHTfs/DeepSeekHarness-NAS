@@ -35,14 +35,10 @@ class WsClient:
         self.sock = None
 
     # ---------- 握手 ----------
-    def connect(self):
-        u = urlparse(self.url)
+    def _open_socket(self, u):
+        """按 scheme 建 TCP（wss 再套 TLS）。insecure=True 时跳过证书校验。"""
         host = u.hostname
         port = u.port or (443 if u.scheme == "wss" else 80)
-        path = u.path or "/"
-        if u.query:
-            path += "?" + u.query
-
         raw = socket.create_connection((host, port), timeout=self.timeout)
         if u.scheme == "wss":
             ctx = ssl.create_default_context()
@@ -50,9 +46,10 @@ class WsClient:
                 ctx.check_hostname = False
                 ctx.verify_mode = ssl.CERT_NONE
             raw = ctx.wrap_socket(raw, server_hostname=host)
-        self.sock = raw
+        return raw
 
-        key = base64.b64encode(os.urandom(16)).decode()
+    def _build_handshake_request(self, host, port, path, key):
+        """构造 WebSocket 握手请求（RFC 6455 §4.1）。纯字符串拼接，便于单测。"""
         lines = [
             f"GET {path} HTTP/1.1",
             f"Host: {host}:{port}",
@@ -63,10 +60,13 @@ class WsClient:
         ]
         if self.cookie:
             lines.append(f"Cookie: {self.cookie}")
-        req = "\r\n".join(lines) + "\r\n\r\n"
-        self.sock.sendall(req.encode())
+        return "\r\n".join(lines) + "\r\n\r\n"
 
-        # 读响应头
+    def _read_handshake_response(self):
+        """读到响应头结束，返回 (头部文本, 头部之后的剩余字节)。
+
+        剩余字节必须留好：它可能已包含第一帧数据，丢掉会丢消息。
+        """
         buf = b""
         while b"\r\n\r\n" not in buf:
             chunk = self.sock.recv(4096)
@@ -74,12 +74,11 @@ class WsClient:
                 raise RuntimeError("WebSocket 握手时连接被关闭")
             buf += chunk
         head, _, rest = buf.partition(b"\r\n\r\n")
-        text = head.decode("latin1")
-        status_line = text.split("\r\n")[0]
-        if "101" not in status_line:
-            raise RuntimeError(f"WebSocket 握手失败: {status_line}\n{text[:400]}")
+        return head.decode("latin1"), rest
 
-        # 校验 accept
+    @staticmethod
+    def _verify_accept(text, key):
+        """校验 Sec-WebSocket-Accept = base64(sha1(key + GUID))。缺失则跳过（与历史行为一致）。"""
         accept = None
         for line in text.split("\r\n")[1:]:
             if line.lower().startswith("sec-websocket-accept:"):
@@ -87,6 +86,25 @@ class WsClient:
         expected = base64.b64encode(hashlib.sha1((key + GUID).encode()).digest()).decode()
         if accept and accept != expected:
             raise RuntimeError("WebSocket accept 校验失败")
+
+    def connect(self):
+        u = urlparse(self.url)
+        host = u.hostname
+        port = u.port or (443 if u.scheme == "wss" else 80)
+        path = u.path or "/"
+        if u.query:
+            path += "?" + u.query
+
+        self.sock = self._open_socket(u)
+
+        key = base64.b64encode(os.urandom(16)).decode()
+        self.sock.sendall(self._build_handshake_request(host, port, path, key).encode())
+
+        text, rest = self._read_handshake_response()
+        status_line = text.split("\r\n")[0]
+        if "101" not in status_line:
+            raise RuntimeError(f"WebSocket 握手失败: {status_line}\n{text[:400]}")
+        self._verify_accept(text, key)
 
         self._buf = rest
         return True
