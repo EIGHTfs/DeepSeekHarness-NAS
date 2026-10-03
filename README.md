@@ -82,6 +82,14 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | `scripts/migrate-session/` | `migrate-session.sh` 的实现模块（ESM）：`cli.mjs` 命令行入口，`index.mjs` 工具编排，`lib/{zstd,layout,import,inspect,target}.js` 分别负责 zstd 多帧读写、`sessions/` 布局校验、会话投放、日志探查与目标 home 探测；`cordis.patch.yml` 为 DSH 插件 bundle 声明 | 由 `migrate-session.sh` 自动调用，无独立入口 |
 | `scripts/migrate-session/lib/follow.py` | **触发迁移**：`session/follow` 是流式 Remote 方法，必须走 WebSocket（HTTP 调会报 `stream Remote methods must be opened through the stream carrier`）。脚本先用启动日志里的 token 换 cookie，再带进 `ws://127.0.0.1:<port>/api/remote.mux` 握手；实测 HTTP 的 `session/page` 冷读**不触发**迁移，只有 follow 一走 `session.lock` 与 `session.v3.jsonl.zstd` 才落盘 | `python3 follow.py <会话id\|all> <DSH_HOME> [--port 30801] [--wait 90]` |
 | `scripts/migrate-session/lib/wsclient.py` | `follow.py` 的最小 WebSocket 客户端（纯标准库）：握手、掩码帧发送、帧接收（含分片与 ping/pong）。目标机（群晖）无 `ws` / `websockets` 库，故手写 | 由 `follow.py` 导入，无独立入口 |
+| `build/build-lib.sh` | **打包公共函数库**（SPK/FPK 共用）：`gen_start_sh()` 等构建级函数收口；库头写明「哪些能共用、哪些是生成给安装包的独立脚本不能 source」 | 由 `build-spk.sh` / `build-fpk.sh` source |
+| `build/prune_common.py` | **裁剪公共模块**：`pkg_name()` / `pkg_deps()` / `index_pnpm()` / `expand_closure()`——按 pnpm 软链递归算运行时依赖闭包，供 `prune-target.sh` 各模式复用 | `PRUNE_COMMON_DIR` 指向其目录后 `from prune_common import ...` |
+| `build/fix-runtime-deps.sh` | **运行时依赖补齐（打包期）**：探测内置插件入口 import，抓 `Cannot find package 'x'` 并从构建源补齐闭包 | `fix-runtime-deps.sh <TARGET> <BUILD_SRC> <NODE> [--max-rounds N]` |
+| `scripts/learn-prune-whitelist.sh` | **白名单自动学习**：把「构建期真正 import 到、但不在白名单」的包学进 `_autoLearned`（不覆盖 `extra` 手工项） | 无参数；结果写入 `build/build-prune-whitelist.json` |
+| `scripts/fix-pnpm-store.sh` | **pnpm storeDir 记录修复**：把 `.modules.yaml` 记录的 store 写进同级 `pnpm-workspace.yaml`（pnpm 11 不读 `.npmrc` 的 store-dir），无需重装 | 目标树路径（默认当前实例） |
+| `scripts/fetch-official-docs.py` | 抓官方文档快照到本地（离线查阅/比对用） | `python3 scripts/fetch-official-docs.py` |
+| `scripts/fix-dsh-bundle-patch-insert.py` | 修复官方 bundle 的 patch 声明插入问题（升级后内置插件加载异常时用） | `python3 scripts/fix-dsh-bundle-patch-insert.py <目标树>` |
+| `scripts/check-readme-coverage.py` | **README 覆盖度守卫**：代码里的开关名/脚本名必须在 README 出现，否则退出码 1（CI 拦截「机制只活在注释里」） | `--list` 只列不失败 |
 
 ### 手工构建示例（开发调试用）
 
@@ -155,6 +163,43 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 > **白名单自动生成（2026-09-13）**：`build/gen-prune-whitelist.sh` 从 npm 链路 `package-lock.json` 的 packages 键解析包名全集（实测磁盘实际包 522 个全部落在锁文件 582 条引用内，0 误删）→ 写入白名单 `lockfileDeps` 字段（排除平台变体/claude/codex 后 489 个）；与 `extra` + `workspaceRuntimeDeps`（动态收集 target/packages 的 dependencies）取并集，黑名单候选命中即保护。裁剪逻辑独立为 `build/prune-target.sh`，可单独对已有 target 重跑（白名单更新后免重编译）。
 >
 > **官方依赖表（裁剪依据，来源 dsh 官方 requirements）**：
+
+<a id="prune-whitelist"></a>
+### 裁剪白名单：三层来源 + 自动学习
+
+裁剪（`build/prune-target.sh`）是**纯白名单**语义：不在白名单里的 `.pnpm` 目录一律删除。
+白名单由**三层**合成，任一层漏掉都会表现为"包明明装了却找不到"：
+
+| 层 | 来源 | 谁维护 |
+|---|---|---|
+| `lockfileDeps` | `build/gen-prune-whitelist.sh` 从 npm 链路 `package-lock.json` 的 packages 键解析包名全集 | 脚本自动生成 |
+| `workspaceRuntimeDeps` | 动态扫描 `target/packages/**/package.json` 的 `dependencies`（运行时必需） | 打包期自动收集 |
+| `extra` + `_autoLearned` | 手工补充的强制保留项；`_autoLearned` 由 `scripts/learn-prune-whitelist.sh` **自动学习** | 手工 + 自动学习 |
+
+**自动学习（`scripts/learn-prune-whitelist.sh`）**：把「构建期真正 import 到、但不在白名单」的包
+学进 `_autoLearned`，且**不覆盖** `extra` 里的人工项（`gen-prune-whitelist.sh` 只动 `lockfileDeps`）。
+学习面的边界：当前主要覆盖根 `devDependencies` 与构建必需工具；**workspace 各包的构建期依赖
+（如 `vite`、`@types/semver`）仍需纳入学习面**，否则本地全量类型检查会缺包。
+
+**相关开关**（外部可见，务必按需设置）：
+
+| 开关 | 默认 | 语义 |
+|---|---|---|
+| `PRUNE_BEFORE_INSTALL` | `1` | install **前**剥离非白名单 devDeps（省 install 峰值磁盘）；本地构建物模式会跳过 |
+| `PRUNE_BEFORE_BUILD` | `1` | install 后、build **前**裁 `.pnpm`（省 build 内存/磁盘）。置 `0` 关闭 |
+| `BUILD_STAGE` | `all` | `install` / `build` / `prune` / `all`：分阶段跑（`build` 阶段复用已装好的构建副本，跳过复制） |
+| `SKIP_BUILD` | `1` | 复用已有完整 target；`0` 强制全量重建 |
+| `NPM_MODE` | `0` | FPK 走 npm 链路（`build-fpk.sh --npm`）时置 1；影响产物命名后缀 `-npm` |
+| `PRUNE_COMMON_DIR` | 脚本同级 | `prune_common.py` 所在目录（供内联 python 导入） |
+| `DRY_RUN` | `0` | 预演：只打印计划不执行（多数脚本支持 `--dry-run` 或该环境变量） |
+
+**失败症状对照**（先查白名单，再怀疑"没装"）：
+
+| 症状 | 真因 | 处置 |
+|---|---|---|
+| `error TS2307: Cannot find module 'x'` / `TS7016: Could not find a declaration file` | **白名单缺构建期依赖**：`.pnpm` 实体还在，被删的是顶层解析入口 | 把包学进白名单（`learn-prune-whitelist.sh` / `extra`）；**不要**用 `PRUNE_BEFORE_BUILD=0` 长期绕过 |
+| `sh: pnpm: not found` | pnpm 垫片/PATH 问题（垫片在 `tools/pnpm/bin/pnpm`） | 检查垫片是否存在且 `PATH` 前置了 `PNPM_BIN_DIR` |
+| `Cannot find package 'x' imported from …`（运行时，非构建期） | 随包发布时漏带运行时依赖 | 打包期用 `build/fix-runtime-deps.sh`；实机兜底用 `start.sh fix-deps` |
 
 | 依赖类别 | 具体项 | 是否必需 |
 |---|---|---|
