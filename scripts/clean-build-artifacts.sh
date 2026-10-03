@@ -21,6 +21,11 @@
 #     回收站时可用 --force 直接 rm -rf（用户已确认）。
 #   - 一律先 --dry-run 预览，确认无误再真删。
 #
+
+# ── 公共函数库（唯一实现：safe_rm_rf 强制 --one-file-system + 挂载点检测）──
+_DSH_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/lib/common.sh"
+[ -f "$_DSH_LIB" ] && . "$_DSH_LIB"
+
 set -euo pipefail
 # shellcheck disable=SC2155
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,7 +55,7 @@ done
 _RM() {
   # 安全删除：移入同级 .trash（可恢复）；--force 时直接 rm -rf（已在回收站的垃圾/磁盘告急）
   if [ "$FORCE" = "1" ]; then
-    if [ "$DRY_RUN" = "1" ]; then echo "${PRE}rm -rf $1"; else rm -rf "$1"; echo "已 rm -rf: $1"; fi
+    if [ "$DRY_RUN" = "1" ]; then echo "${PRE}rm -rf $1"; else safe_rm_rf "$1" && echo "已安全删除: $1" || echo "已跳过(含挂载点): $1"; fi
   else
     local trash stamp t
     trash="$(dirname "$1")/.trash"
@@ -92,7 +97,7 @@ if [ "$DO_CACHES" = "1" ]; then
   echo "◆ 清理缓存:"
   for c in "$BUILD_DIR/../assets/pnpm-store" "$BUILD_DIR/../assets/tmp-home"; do
     if [ -e "$c" ]; then
-      [ "$DRY_RUN" = "1" ] && echo "${PRE}rm -rf $c" || { rm -rf "$c"; echo "已清理缓存: $c"; }
+      [ "$DRY_RUN" = "1" ] && echo "${PRE}rm -rf $c" || { safe_rm_rf "$c" && echo "已清理缓存: $c"; }
     fi
   done
 fi
