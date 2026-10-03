@@ -283,7 +283,20 @@ if [ "$CMD" = "check" ]; then
 fi
 
 # ── install 流程 ──
-[ -f "$SPK" ] || { echo "✗ spk 不存在: $SPK"; exit 1; }
+# 解析 SPK 路径（2026-10-03 实测修复）：调用方可能只传**文件名**（web API 就是
+#   {"cmd":"install","spk":"xxx.spk"}），而 $WS 是**本脚本所在目录**（web-install/），
+#   于是 [ -f "$SPK" ] 只在 cwd 里找 → 明明已 promote 到 release/ 仍报「spk 不存在」。
+#   这里按候选目录解析：cwd → web-install/ → release/ → 上级 release/ → build/staging/。
+_resolve_spk() {
+  local s="$1" c
+  [ -f "$s" ] && { printf '%s' "$s"; return; }
+  for c in "$WS/$s" "$WS/release/$s" "$WS/../release/$s" "$WS/../build/staging/$s"; do
+    [ -f "$c" ] && { printf '%s' "$c"; return; }
+  done
+  printf '%s' "$s"
+}
+SPK="$(_resolve_spk "$SPK")"
+[ -f "$SPK" ] || { echo "✗ spk 不存在: $SPK（已试 cwd、web-install/、release/、../release/、../build/staging/）"; exit 1; }
 echo "▶ 包:   $SPK ($(du -h "$SPK" | cut -f1))"
 
 # 0) 远端临时目录：必须是真实卷（DSM 的 /tmp 是 1.5G tmpfs，装大包会撑爆）
