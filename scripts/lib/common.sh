@@ -79,16 +79,19 @@ section() { echo; echo "═══ $* ═══"; }
 #        （2026-10-03 事故）；--one-file-system 只能防跨设备删除，故再加显式检测。
 #-------------------------------------------------------------------------------
 has_mount_under() {
-  local dir="$1" m
+  local dir="$1" _dev m _rest
   [ -e "$dir" ] || return 1
   dir="$(readlink -f "$dir" 2>/dev/null || echo "$dir")"
-  while read -r m; do
+  # ⚠ 必须解析 /proc/mounts 的**第 2 字段**（挂载点）。2026-10-04 回归测试抓到的真 bug：
+  #   曾误用 awk 取第 5..NF 字段（那是 dump/pass 的 0 0）→ 检测恒为假 → 事故防线形同虚设
+  #   （当时 safe_rm_rf /proc 只是被内核挡住，并非被我们挡住）。挂载点内空格以 \040 转义。
+  # 语义：**dir 之下（含自身）是否存在挂载** —— 事故场景（@appdata/<PKG> 之下挂着工作区）正属此列。
+  while read -r _dev m _rest; do
+    m="${m//\\040/ }"
     case "$m" in
       "$dir"|"$dir"/*) return 0 ;;
     esac
-  done <<EOF
-$(awk '{ for (i=5;i<=NF;i++) printf "%s%s", $i, (i<NF?" ":"\n") }' /proc/mounts 2>/dev/null | sed 's/\\040/ /g')
-EOF
+  done < /proc/mounts
   return 1
 }
 
