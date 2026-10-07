@@ -1,0 +1,26 @@
+{
+  "_说明": "网页安装工具连接配置的【默认模板】—— 不含任何凭据，仅示意字段结构。用法：复制为 web-install/install-config.json 后填写。实际生效文件仍是 web-install/install-config.json（含明文密码，已被 .gitignore 忽略，绝不入库）。代码不读取本模板文件（按用户口径：只做目录与命名整理，不动代码）。",
+  "_字段": {
+    "host": "目标 NAS 地址（必填）",
+    "port": "SSH 端口（默认 22）",
+    "username": "登录账号（必填）",
+    "password": "登录密码（必填；明文，仅存本机）",
+    "system": "目标系统，由网页「探测系统」写入：dsm / fnos（可留空）",
+    "defaults": "端口覆盖·通用段（可选；空对象=回落 build-config.yaml 的权威值）",
+    "spk": "端口覆盖·群晖段（可选）。⚠ 此键必须是对象 {proxy_port,dsh_port,container_port}，不要写包路径字符串",
+    "fpk": "端口覆盖·飞牛段（可选）。⚠ 同上：必须是端口对象，不要写 .fpk 包路径字符串"
+  },
+  "_注意": [
+    "端口一律留空/空对象 → 由 build/build-config.yaml 提供权威值（README「端口不写死原则」）。",
+    "spk / fpk 两键已被「端口覆盖段」占用；把包路径写进这两个键会让读取方按对象解析而报错（install-remote-*.sh 里 sec.get(...)）。",
+    "真实配置含明文密码：只放本机，永远不要提交。"
+  ],
+  "host": "",
+  "port": 22,
+  "username": "",
+  "password": "",
+  "system": "",
+  "defaults": {},
+  "spk": {},
+  "fpk": {}
+}
