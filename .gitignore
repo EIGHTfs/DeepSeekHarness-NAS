@@ -24,6 +24,9 @@
 # ── 敏感/运行时文件（含密码/凭据，严禁入库） ──
 /web-install/install-config.json
 /web-install/install-tasks.jsonl
+# config/ 下只允许入库 *.default.json 模板；用户真实配置（含明文密码）一律忽略
+/config/install-config.json
+/config/install-tasks.jsonl
 /web-install/install-server.log
 /web-install/server-install.log
 /scripts/release-sync.log
