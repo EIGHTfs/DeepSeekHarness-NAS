@@ -1,5 +1,5 @@
 {
-  "_说明": "网页安装工具连接配置的【默认模板】—— 不含任何凭据，仅示意字段结构。用法：复制为 web-install/install-config.json 后填写。实际生效文件仍是 web-install/install-config.json（含明文密码，已被 .gitignore 忽略，绝不入库）。代码不读取本模板文件（按用户口径：只做目录与命名整理，不动代码）。",
+  "_说明": "网页安装工具连接配置的【默认模板】—— 不含任何凭据，仅示意字段结构。统一口径：config/ 只放可入库的模板，脚本实际读取的位置一律不变 —— 连接配置仍读 web-install/install-config.json（install-remote-spk.sh 的 $WS/install-config.json、install-server.py 的 CONFIG_FILE）。用法：复制本文件为 web-install/install-config.json 后填写；代码不读本模板。实际配置含明文密码，已被 .gitignore 忽略，绝不入库。",
   "_字段": {
     "host": "目标 NAS 地址（必填）",
     "port": "SSH 端口（默认 22）",

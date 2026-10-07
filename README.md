@@ -538,10 +538,12 @@ FPK：`pack-fpk.sh` 的「保留数据（推荐）」）。网页端此前**没�
 - 单一来源铁律：**必须与脚本同目录**（`web-install/`，install-remote-spk.sh 读 `$WS/install-config.json`），禁止网页把配置写到别的目录——否则脚本读不到。
 - 网页保存时密码留空 = 沿用已保存密码（回显占位「留空沿用」）。
 - `system` 字段由网页「探测系统」成功后写入（dsm/fnos），供远程脚本选分支。
-- **默认模板**：仓库在 `config/install-config.default.json` 放一份**无凭据模板**（只示意字段结构；
-  端口一律留空对象，故不违背「端口不写死原则」——权威值仍在 `build/build-config.yaml`）。
-  需要时复制为 `web-install/install-config.json` 使用。按当前口径**代码不读该模板**（本轮只做目录与
-  命名整理）；`config/install-config.json` 也已写进 `.gitignore`，防止真实配置误入库。
+- **统一口径（模板入库 / 实读位置不变）**：`config/` 目录**只放可入库的模板**（`*.default.json`，
+  绝不含凭据）；**脚本实际读取的位置一律不变** —— 连接配置仍读 `web-install/install-config.json`
+  （`install-remote-spk.sh` 的 `$WS/install-config.json`、`install-server.py` 的 `CONFIG_FILE`）。
+  模板**代码不读**，只作起步参考：需要时复制成实际配置文件即可。
+  `config/install-config.json` 亦已写进 `.gitignore`，防止真实配置误入库。
+- **模板里端口一律留空对象**：故不违背「端口不写死原则」——权威值仍在 `build/build-config.yaml`。
 - ⚠ **`spk` / `fpk` 是「端口覆盖段」的键名，不是包路径**：读取方按对象解析（`install-remote-*.sh`
   里 `sec.get('proxy_port')`），若写成字符串会直接报错。上面示例里 `"fpk": "/path/to/xxx.fpk"`
   那种写法**会踩这个坑** —— 包路径请勿放进这两个键（建议用 `spk_path` / `fpk_path` 之类未占用的键名）。
