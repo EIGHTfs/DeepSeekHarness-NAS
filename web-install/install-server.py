@@ -360,6 +360,57 @@ def _ensure_no_running_build():
     return ''
 
 
+# ── 网页「构建参数」面板：从 web-install/build-config.yaml 副本读默认值 ──────────
+BUILD_CONFIG_WEB = os.path.join(BASE_DIR, 'build-config.yaml')
+# 面板关心的字段（键名与 BUILD_PARAM_ALIASES 一致）
+BUILD_CONFIG_FIELDS = ('appname', 'brand_name', 'display_name', 'title', 'desc', 'desc_short',
+                       'maintainer', 'distributor', 'proxy_port', 'dsh_port', 'container_port')
+
+
+def read_build_config_web():
+    """读 web-install/build-config.yaml，按【三段】返回扁平键值（defaults / spk / fpk）。
+
+    ★ 这是**定向提取**，不是通用 YAML 解析器：DSM 与本机都【没有 PyYAML】（实测），
+      而本服务必须能在 DSM 上直接跑。故只认本项目该文件的结构：
+        顶层 `段名:`（行首无缩进） / 段内 `键: 值`（有缩进） / 支持 `#` 整行注释与行尾注释。
+      代价：含 `#` 的值会被截断（本项目 desc 等值不含 #，实测无影响）；若将来结构变复杂，
+      应改为引入 YAML 依赖或调用打包脚本同款解析，而不是继续加固这个提取器。
+
+    ★ 合并语义与打包脚本一致：**段逐键覆盖 defaults**（`{**defaults, **spk}` / `{**defaults, **fpk}`）。
+      本函数**原样返回三段**，由调用方按 step 选择段后合并 —— 避免在这里藏一份合并逻辑。
+      文件不存在 / 解析异常 → 返回 {}（调用方回落到空默认值，不阻断页面）。
+    """
+    out = {}
+    cur = None
+    try:
+        with open(BUILD_CONFIG_WEB, encoding='utf-8') as f:
+            for raw in f:
+                line = raw.rstrip('\n')
+                if not line.strip() or line.lstrip().startswith('#'):
+                    continue
+                if not line[0].isspace():
+                    # 顶层段名（`appname:` 这类带内联值的行不会被当作段）
+                    m = re.match(r'^([A-Za-z_][A-Za-z0-9_-]*):\s*(#.*)?$', line)
+                    cur = m.group(1) if m else None
+                    if cur:
+                        out.setdefault(cur, {})
+                    continue
+                if cur is None:
+                    continue
+                m = re.match(r'^\s+([A-Za-z_][A-Za-z0-9_-]*):\s*(.*)$', line)
+                if not m:
+                    continue
+                k, v = m.group(1), m.group(2)
+                v = re.sub(r'\s+#.*$', '', v).strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in '"\'':
+                    v = v[1:-1]
+                out[cur][k] = v
+    except Exception as e:
+        log('BUILD-CONFIG 读取失败: %s' % e)
+        return {}
+    return out
+
+
 # ── 构建参数（网页「构建参数」面板）→ 打包脚本环境变量 ────────────────────────
 # 三个构建步各认一套变量（2026-10-05 逐处核对，勿凭印象；FPKCFG_* / SPKCFG_* 里含 CFG_* 子串，
 # 用 grep 子串判断会误判成"两边通用"）：
@@ -810,6 +861,7 @@ class Handler(BaseHTTPRequestHandler):
             '/api/tasks': lambda: self._api_tasks(parsed.query),
             '/api/build-status': lambda: self._api_build_status(parsed.query),
             '/api/builds': lambda: self._api_builds(),
+            '/api/build-config': lambda: self._api_build_config(),
         }
         handler = routes.get(path)
         if handler is None:
@@ -877,6 +929,25 @@ class Handler(BaseHTTPRequestHandler):
             return 409, {'success': False, 'error': err}
         return 200, {'success': True, 'build_id': build_id, 'step': step,
                      'params': sorted(params.keys())}
+
+    def _api_build_config(self):
+        """GET：网页「构建参数」面板的默认值（来自 web-install/build-config.yaml 副本）。
+
+        只作预填参考；真正生效的是用户在面板里提交的 params（以 SPKCFG_*/FPKCFG_* 环境变量
+        下发给打包脚本）。副本不是权威（权威是 build/build-config.yaml），改副本不影响
+        直接跑打包脚本的结果。
+        """
+        secs = read_build_config_web()
+        if not secs:
+            return 404, {'success': False,
+                         'error': '读不到 web-install/build-config.yaml（文件缺失、为空或解析失败）'}
+        picked = {}
+        for name in ('defaults', 'spk', 'fpk'):
+            picked[name] = {k: v for k, v in (secs.get(name) or {}).items()
+                            if k in BUILD_CONFIG_FIELDS}
+        return 200, {'success': True, 'source': 'web-install/build-config.yaml',
+                     'sections': picked,
+                     'note': '版本号自动同步官方源码，不可自定义；端口留空 = 用打包脚本的默认值'}
 
     def _api_publish(self, body):
         package = str(body.get('package', '')).strip()

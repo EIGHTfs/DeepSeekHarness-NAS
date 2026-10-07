@@ -201,6 +201,26 @@
             <hr class="divider">
             <h3 style="font-size:16px;color:#333;margin-bottom:10px;">🛠 自动构建</h3>
             <p class="hint" style="margin-bottom:10px;">分步执行本地构建脚本（全量 install，不裁剪 devDeps，tsc 类型检查通过）。产物自动进入安装包列表。构建成功后可在安装历史中选择发布到 GitHub Release。</p>
+            <!-- 构建参数（可选）：留空 = 用 web-install/build-config.yaml 副本的值。
+                 只影响本次构建（以 SPKCFG_*/FPKCFG_* 环境变量下发），不改 build/build-config.yaml 权威配置。 -->
+            <details id="buildParamsBox" style="margin-bottom:12px;background:#f7f8ff;border:1px solid #e0e4f5;border-radius:8px;padding:8px 12px;">
+                <summary style="cursor:pointer;font-size:13px;color:#445;font-weight:bold;">🎛 构建参数（可选；留空则用 web-install/build-config.yaml 的值）</summary>
+                <p class="hint" style="margin:8px 0 6px;">自定义只影响【本次构建】。版本号自动同步官方源码，不可自定义。</p>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px;">
+                    <label style="font-size:12px;color:#555;">品牌名 brand_name<input type="text" id="bpBrand" style="width:100%;padding:4px;border:1px solid #ccd;border-radius:4px;"></label>
+                    <label style="font-size:12px;color:#555;">展示名 display_name<input type="text" id="bpDisplay" style="width:100%;padding:4px;border:1px solid #ccd;border-radius:4px;"></label>
+                    <label style="font-size:12px;color:#555;">标题 title<input type="text" id="bpTitle" style="width:100%;padding:4px;border:1px solid #ccd;border-radius:4px;"></label>
+                    <label style="font-size:12px;color:#555;">简介 desc<input type="text" id="bpDesc" style="width:100%;padding:4px;border:1px solid #ccd;border-radius:4px;"></label>
+                    <label style="font-size:12px;color:#555;">短简介 desc_short<input type="text" id="bpDescShort" style="width:100%;padding:4px;border:1px solid #ccd;border-radius:4px;"></label>
+                    <label style="font-size:12px;color:#555;">代理端口 proxy_port（SPK 30800 / FPK 3080）<input type="number" id="bpProxy" style="width:100%;padding:4px;border:1px solid #ccd;border-radius:4px;"></label>
+                    <label style="font-size:12px;color:#555;">DSH 端口 dsh_port<input type="number" id="bpDsh" style="width:100%;padding:4px;border:1px solid #ccd;border-radius:4px;"></label>
+                    <label style="font-size:12px;color:#555;">容器端口 container_port<input type="number" id="bpContainer" style="width:100%;padding:4px;border:1px solid #ccd;border-radius:4px;"></label>
+                </div>
+                <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                    <button type="button" class="btn btn-sm" id="bpLoadBtn" style="background:#78909c;">📥 载入副本默认值</button>
+                    <span id="bpSource" style="font-size:12px;color:#888;"></span>
+                </div>
+            </details>
             <div class="btn-group" style="margin-bottom:12px;">
                 <button type="button" class="btn btn-sm" id="buildCommonBtn" style="background:#667eea;">⚙️ build-common</button>
                 <button type="button" class="btn btn-sm" id="buildSpkBtn" style="background:#1976d2;">📦 build-spk</button>
@@ -552,6 +572,64 @@
             }
         }
 
+        // ── 构建参数面板（可选）──────────────────────────────────────────────
+        // 默认值来自 web-install/build-config.yaml 副本（后端 /api/build-config 定向提取），
+        // 合并语义与打包脚本一致：专属段逐键覆盖 defaults（spk 覆盖通用 / fpk 覆盖通用）。
+        // 只把"用户确实改过"的字段随本次构建下发，不改动 build/build-config.yaml 权威配置。
+        let bpSections = null;
+        async function bpLoadDefaults(force) {
+            if (bpSections && !force) return bpSections;
+            try {
+                const r = await fetch('/api/build-config');
+                const d = await r.json();
+                if (!d.success) { $('bpSource').textContent = '⚠ ' + (d.error || '副本不可用'); return null; }
+                bpSections = d.sections || null;
+                $('bpSource').textContent = '来源: ' + (d.source || '') + (d.note ? '（' + d.note + '）' : '');
+                return bpSections;
+            } catch (e) { $('bpSource').textContent = '⚠ 服务端不可用'; return null; }
+        }
+        function bpMerged(step) {
+            if (!bpSections) return {};
+            const sec = step === 'spk' ? bpSections.spk : (step === 'fpk' ? bpSections.fpk : {});
+            return Object.assign({}, bpSections.defaults || {}, sec || {});
+        }
+        // 收集"用户改过的"参数；折叠或留空 → 返回 {}（即完全按权威配置构建）
+        async function bpCollect(step) {
+            const box = $('buildParamsBox');
+            if (!box || !box.open) return {};
+            await bpLoadDefaults();
+            const m = bpMerged(step);
+            const pairs = [['brand_name', 'bpBrand'], ['display_name', 'bpDisplay'], ['title', 'bpTitle'],
+                           ['desc', 'bpDesc'], ['desc_short', 'bpDescShort'], ['proxy_port', 'bpProxy'],
+                           ['dsh_port', 'bpDsh'], ['container_port', 'bpContainer']];
+            const out = {};
+            for (const [key, id] of pairs) {
+                const el = $(id);
+                if (!el) continue;
+                const v = (el.value || '').trim();
+                if (!v) continue;                                        // 空 = 不覆盖
+                if (m[key] !== undefined && String(m[key]) === v) continue;  // 与副本相同 = 无需下发
+                out[key] = v;
+            }
+            return out;
+        }
+        async function bpFillFromCopy() {
+            const secs = await bpLoadDefaults(true);
+            if (!secs) { alert('❌ 读取 web-install/build-config.yaml 失败，请检查该文件是否存在'); return; }
+            const d = secs.defaults || {};
+            $('bpBrand').value = d.brand_name || '';
+            $('bpDisplay').value = d.display_name || '';
+            $('bpTitle').value = d.title || '';
+            $('bpDesc').value = d.desc || '';
+            $('bpDescShort').value = d.desc_short || '';
+            // 端口刻意不预填：SPK 与 FPK 的端口段不同，预填一侧会误导另一侧
+            $('bpProxy').value = ''; $('bpDsh').value = ''; $('bpContainer').value = '';
+        }
+
+        const bpLoadBtnEl = $('bpLoadBtn');
+        if (bpLoadBtnEl) bpLoadBtnEl.addEventListener('click', bpFillFromCopy);
+        bpLoadDefaults();   // 页面加载即探一次副本：成功则显示来源，失败在面板里提示（不打断页面）
+
         // ── 自动构建 ──
         const buildCommonBtn = $('buildCommonBtn'), buildSpkBtn = $('buildSpkBtn'), buildFpkBtn = $('buildFpkBtn');
         const buildStatus = $('buildStatus'), buildStage = $('buildStage'), buildPercent = $('buildPercent');
@@ -573,10 +651,11 @@
         }
         async function startBuild(step) {
             try {
+                const params = await bpCollect(step);   // 面板折叠/留空 → {}，即不传参数
                 const resp = await fetch('/api/build', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ step })
+                    body: JSON.stringify({ step, params })
                 });
                 const data = await resp.json();
                 if (!data.success) { alert('❌ ' + data.error); return; }
