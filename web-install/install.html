@@ -1,8 +1,9 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <!-- dsh-skip-sensitive: 本页 8 处 innerHTML 属已知待办（审计 blocker script-unsafe-inline），
-         改造需一并加 CSP 并外移内联脚本，且必须实机验证安装/卸载/构建全流程；
+    <!-- dsh-skip-sensitive: 本页 6 处 innerHTML（490/517/680/681/682/703）属已知待办
+         （审计 blocker script-unsafe-inline），改造需一并加 CSP 并外移内联脚本，
+         且必须实机验证安装/卸载/构建全流程；
          详见 README「🧭 已知待办」。此处用文件头精确豁免【仅安全敏感类】，
          其余规则（短变量名/按钮事件等）照常显示。 -->
     <meta charset="UTF-8">
@@ -165,6 +166,7 @@
         .table th { padding: var(--sp-2); text-align: left; border-bottom: 1px solid var(--bd-2); background: var(--bg-2); color: var(--fg-2); }
         .table td { padding: var(--sp-2); text-align: left; border-bottom: 1px solid var(--bd-2); color: var(--fg-2); }
         .table .center { text-align: center; }
+        .cell-note { max-width: 200px; word-break: break-all; }
         /* 自动构建进度 */
         .flex-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
         .progress-label { font-size: var(--fs-sm); color: var(--fg-2); }
@@ -197,12 +199,14 @@
         .text-danger { color: var(--c-danger); }
         .code-xs { font-size: 11px; }
 
-        /* ── 暗色（批次 3a：先只做"跟随系统"；手动切换按钮在 3b）─────────
+        /* ── 暗色（自动跟随系统；另可由顶栏"🌙/☀️"按钮手动切换，选择存 localStorage）──
            前提已在批次 2 完成：标记区行内样式已清零，否则行内样式会压过令牌，
            暗色下会出现白底浅字。所有配对对比度均已按 WCAG 验算：
            正文 14.64 ✓ / 副文字 6.86 ✓ / hint 4.71 ✓ / 四种语义条 6.86–8.48 ✓ / 终端块 12.26 ✓。 */
         @media (prefers-color-scheme: dark) {
-            :root {
+            /* :not([data-theme="light"]) 让"手动选浅色"能压过系统暗色；
+               选深色则由下面的 :root[data-theme="dark"] 负责（同一组值）。 */
+            :root:not([data-theme="light"]) {
                 color-scheme: dark;
                 /* 页面底改为深色紫调渐变：保品牌观感（底上只有卡片，不影响文字对比度） */
                 --page-bg: linear-gradient(135deg, #141a2e 0%, #241a33 100%);
@@ -219,7 +223,7 @@
                 --btn-warn-bg: linear-gradient(135deg, #d97706, #a35700);
             }
         }
-        /* 手动切换钩子（批次 3b 加上按钮后即生效；当前无副作用） */
+        /* 手动切换钩子（顶栏按钮写 documentElement.dataset.theme；light 能压过系统暗色） */
         :root[data-theme="dark"] {
             color-scheme: dark;
             --page-bg: linear-gradient(135deg, #141a2e 0%, #241a33 100%);
@@ -238,6 +242,7 @@
 <body>
     <div class="container">
         <h1>🚀 DSH 安装工具</h1>
+        <button type="button" class="btn btn-sm btn-inline" id="themeBtn">🌙 深色</button>
         <p class="subtitle">远程探测系统 → 自动判定 SPK/FPK → 网页直接执行安装/卸载/检查</p>
 
         <!-- ① 连接配置 -->
@@ -382,7 +387,7 @@
         </div>
     </div>
 
-    <script> <!-- dsh-skip-sensitive: 本页 8 处 innerHTML 属已知待办（见 README「已知待办」）；改造需加 CSP 并外移内联脚本、且须实机验证，故暂不重构。此行级标记只压本行安全敏感类，其余规则照常 -->
+    <script> <!-- dsh-skip-sensitive: 本页 6 处 innerHTML（490/517/680/681/682/703）属已知待办（见 README「已知待办」）；改造需加 CSP 并外移内联脚本、且须实机验证，故暂不重构。此行级标记只压本行安全敏感类，其余规则照常 -->
         const $ = id => document.getElementById(id);
         const host = $('host'), port = $('port'), username = $('username'), password = $('password');
         const saveBtn = $('saveBtn'), savedIndicator = $('savedIndicator');
@@ -395,13 +400,36 @@
         let currentRunId = '';
         let pollTimer = null;
 
+        // ── 主题切换（手动 dark/light；localStorage 键 dsh-theme）──
+        // 自包含：只读写 <html data-theme> 与 localStorage，不触碰其它逻辑。
+        const themeBtn = $('themeBtn');
+        const THEME_KEY = 'dsh-theme';
+        function isDarkTheme() {
+            const cur = document.documentElement.dataset.theme;
+            return cur ? cur === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+        }
+        function renderThemeBtn() { themeBtn.textContent = isDarkTheme() ? '☀️ 浅色' : '🌙 深色'; }
+        (function initTheme() {
+            try {
+                const saved = localStorage.getItem(THEME_KEY);
+                if (saved === 'dark' || saved === 'light') document.documentElement.dataset.theme = saved;
+            } catch (err) { /* localStorage 不可用（隐私模式/被禁）时按系统偏好走 */ }
+            renderThemeBtn();
+        })();
+        themeBtn.addEventListener('click', () => {
+            const next = isDarkTheme() ? 'light' : 'dark';
+            document.documentElement.dataset.theme = next;
+            try { localStorage.setItem(THEME_KEY, next); } catch (err) { /* 同上：仅本次会话生效 */ }
+            renderThemeBtn();
+        });
+
         function showStatus(msg, type) {
             status.textContent = msg;
             status.className = 'status show ' + type;
         }
         function hideStatus() { status.className = 'status'; status.textContent = ''; }
         function appendLog(msg) {
-            log.innerHTML += (new Date().toLocaleTimeString() + ' ' + msg + '\n');
+            log.textContent += (new Date().toLocaleTimeString() + ' ' + msg + '\n');
             log.scrollTop = log.scrollHeight;
         }
         function setButtons(enable) {
@@ -553,9 +581,11 @@
                     if (data.success) {
                         const out = data.output || '';
                         if (out) {
-                            log.innerHTML = '';
-                            const lines = out.split('\n');
-                            lines.forEach(l => appendLog(l));
+                            // 整体赋值一次（textContent 不解析 HTML、也不做 N 次重排；
+                            // .log 已有 white-space:pre-wrap，换行原样显示）
+                            log.textContent = out.split('\n')
+                                .map(l => new Date().toLocaleTimeString() + ' ' + l).join('\n');
+                            log.scrollTop = log.scrollHeight;
                         }
                         if (data.status === 'done') {
                             stopPolling();
@@ -638,8 +668,8 @@
         const tasksBtn = $('tasksBtn'), tasksPanel = $('tasksPanel'), tasksTable = $('tasksTable');
         const CMD_NAMES = { install: '📦 安装', repair: '🔧 修复(重装)', uninstall: '🗑 卸载', check: '🔎 检查' };
         const RESULT_BADGE = {
-            success: '<span style="color:#2e7d32;">✅ 成功</span>',
-            failed: '<span style="color:#c62828;">❌ 失败</span>'
+            success: '<span class="text-ok">✅ 成功</span>',
+            failed: '<span class="text-danger">❌ 失败</span>'
         };
         async function loadTasks(initialLoad) {
             if (!tasksPanel.classList.contains('show') || initialLoad) {
@@ -649,30 +679,30 @@
                 const resp = await fetch('/api/tasks?limit=100');
                 const data = await resp.json();
                 const tbody = tasksTable.querySelector('tbody');
-                if (!data.success) { tbody.innerHTML = '<tr><td colspan="7">读取失败: ' + data.error + '</td></tr>'; return; }
-                if (!data.tasks.length) { tbody.innerHTML = '<tr><td colspan="7">（暂无历史记录，执行过安装/卸载/检查后出现）</td></tr>'; return; }
+                if (!data.success) { tbody.innerHTML = '<tr><td colspan="8">读取失败: ' + data.error + '</td></tr>'; return; }
+                if (!data.tasks.length) { tbody.innerHTML = '<tr><td colspan="8">（暂无历史记录，执行过安装/卸载/检查后出现）</td></tr>'; return; }
                 tbody.innerHTML = data.tasks.map(t => {
-                    const md5 = t.md5 ? '<code style="font-size:11px;">' + t.md5 + '</code>' : '—';
+                    const md5 = t.md5 ? '<code class="code-xs">' + t.md5 + '</code>' : '—';
                     const note = t.note ? '<span title="' + t.note.replace(/"/g, '&quot;') + '">' + t.note + '</span>' : '—';
                     // 只有成功的 install/repair 记录且有包名时显示发布按钮
                     const canPublish = (t.cmd === 'install' || t.cmd === 'repair') && t.status === 'success' && t.package;
                     const pubBtn = canPublish
-                        ? '<button onclick="publishPackage(this,\'' + t.package.replace(/'/g, "\\'") + '\')" style="padding:4px 10px;font-size:11px;background:linear-gradient(135deg,#ff9800,#e65100);color:white;border:none;border-radius:4px;cursor:pointer;">🚀 发布</button>'
-                        : '<span style="color:#ccc;">—</span>';
-                    return '<tr style="border-bottom:1px solid #eee;">' +
-                        '<td style="padding:8px;">' + (t.ts || '—') + '</td>' +
-                        '<td style="padding:8px;">' + (CMD_NAMES[t.cmd] || t.cmd) + '</td>' +
-                        '<td style="padding:8px;">' + (t.version || '—') + '</td>' +
-                        '<td style="padding:8px;">' + md5 + '</td>' +
-                        '<td style="padding:8px;">' + (t.system || '—') + '</td>' +
-                        '<td style="padding:8px;">' + (RESULT_BADGE[t.status] || t.status) + '</td>' +
-                        '<td style="padding:8px;max-width:200px;word-break:break-all;">' + note + '</td>' +
-                        '<td style="padding:8px;text-align:center;">' + pubBtn + '</td>' +
+                        ? '<button class="btn btn-sm btn-warn btn-inline" onclick="publishPackage(this,\'' + t.package.replace(/'/g, "\\'") + '\')">🚀 发布</button>'
+                        : '<span class="text-muted">—</span>';
+                    return '<tr>' +
+                        '<td>' + (t.ts || '—') + '</td>' +
+                        '<td>' + (CMD_NAMES[t.cmd] || t.cmd) + '</td>' +
+                        '<td>' + (t.version || '—') + '</td>' +
+                        '<td>' + md5 + '</td>' +
+                        '<td>' + (t.system || '—') + '</td>' +
+                        '<td>' + (RESULT_BADGE[t.status] || t.status) + '</td>' +
+                        '<td class="cell-note">' + note + '</td>' +
+                        '<td class="center">' + pubBtn + '</td>' +
                         '</tr>';
                 }).join('');
             } catch (err) {
                 const tbody = tasksTable.querySelector('tbody');
-                tbody.innerHTML = '<tr><td colspan="7">加载失败: ' + err.message + '</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="8">加载失败: ' + err.message + '</td></tr>';
             } finally {
                 tasksBtn.textContent = '🕘 安装历史';
                 tasksPanel.classList.add('show');
@@ -776,6 +806,7 @@
         const buildProgressBar = $('buildProgressBar'), buildLog = $('buildLog'), buildElapsed = $('buildElapsed');
         let currentBuildId = '';
         let buildPollTimer = null;
+        let elapsedTimer = null;      // updateElapsed 的 interval（与 buildPollTimer 同生共死）
         let buildStartTime = 0;
         const BUILD_LABELS = { common: '⚙️ build-common（公共预编译）', spk: '📦 build-spk（打 SPK）', fpk: '📦 build-fpk（打 FPK）' };
 
@@ -811,7 +842,7 @@
                 setBuildButtons(false);
                 stopBuildPolling();
                 buildPollTimer = setInterval(pollBuild, 1500);
-                setInterval(updateElapsed, 1000);
+                elapsedTimer = setInterval(updateElapsed, 1000);
             } catch (err) { alert('❌ 服务端不可用: ' + err.message); }
         }
         async function pollBuild() {
@@ -844,7 +875,10 @@
                 }
             } catch (err) { /* 服务端瞬时不可用，下轮再试 */ }
         }
-        function stopBuildPolling() { if (buildPollTimer) { clearInterval(buildPollTimer); buildPollTimer = null; } }
+        function stopBuildPolling() {
+            if (buildPollTimer) { clearInterval(buildPollTimer); buildPollTimer = null; }
+            if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+        }
         buildCommonBtn.addEventListener('click', () => startBuild('common'));
         buildSpkBtn.addEventListener('click', () => startBuild('spk'));
         buildFpkBtn.addEventListener('click', () => startBuild('fpk'));
