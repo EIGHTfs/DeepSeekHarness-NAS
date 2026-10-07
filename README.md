@@ -341,13 +341,16 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 ```
 ⓪ 局域网硬闸  isLoopbackOrLan(req.socket.remoteAddress)
      不是 127/10/172.16-31/192.168/169.254/0.x/fe80:/fc::/fd:: 私有段 → 403 中文提示页
-① 已持 dsh-auth cookie → 透明放行（带过 token 即免密，直连也放行）
-② 门户打开（cross-site + 同主机 Referer / iframe / 无 Referer）→ 302 ?token= 自动认证 <!-- dsh-skip-sensitive: 描述门户免密的设计机制（302 自动带 token），非真实凭据 -->
-③ 地址栏直连（Sec-Fetch-Site: none / 异主机 Referer）→ 403「请从套件图标打开」
+① 已带 token= → 直接放行（**套件门户走的就是这条**：门户 url 自身已内嵌当次 token） <!-- dsh-skip-sensitive: 说明放行条件，token 为运行时生成，非硬编码凭据 -->
+② 已持 dsh-auth cookie → 透明放行（认证过即免密，直连也放行）
+③ 门户打开兜底（cross-site + 同主机 Referer / iframe / 无 Referer）→ 302 ?token= 自动认证 <!-- dsh-skip-sensitive: 描述门户免密机制，token 是运行时生成并经 302 传递，非硬编码凭据 -->
+④ 地址栏直连（Sec-Fetch-Site: none / 异主机 Referer）→ 403「请从套件图标打开」
 ```
 
-- **门户免密原理**：套件桌面图标打开（DSM https:5001 → http:30800 / fnOS 应用 iframe）请求特征 = `cross-site` + 同主机 Referer → 反代 302 无条件带 `?token=`；dsh 认证后 303 收敛干净 URL 并种 `dsh-auth` cookie；此后浏览器直连即免密 <!-- dsh-skip-sensitive: 说明免密原理，token 是运行时生成并经 302 传递，非硬编码凭据 -->
-- **直连 403**：地址栏直接访问（`Sec-Fetch-Site: none`）因为从未经过门户带 token、无访问凭证 → 403 提示「请从套件图标打开」，页面内 XHR/WS 一律放行（只对文档级导航设卡）
+- **门户免密原理（2026-10-05 修正为方案 A）**：套件入口 url **无条件携带当次 token** —— `start.sh` 启动成功后由 `sync_portal_token()` 把 token 写进门户 `ui/config` 的 `url` 字段（形如 `/?token=…`），DSM 点图标打开时 URL 本就带 token，反代走 ① 直接放行，dsh 认证后 303 收敛干净 URL 并种 `dsh-auth` cookie；此后浏览器直连即免密 <!-- dsh-skip-sensitive: 说明免密原理，token 运行时生成，非硬编码凭据 -->
+- **为什么改（旧实现的坑）**：旧实现靠 `Sec-Fetch-Site` 判断门户来源，但浏览器「新开标签页」（正是 DSM 门户的打开方式）与「地址栏手输」该头**同为 `none`**，判据无法区分 → 实测出现「从套件打开却被当成直连拦下（403 请从套件图标打开）」。现以 URL 内嵌 token 为准，不再依赖该请求头 <!-- dsh-skip-sensitive: 描述判据缺陷与修正，token 为运行时值 -->
+- **直连 403**：地址栏直接访问（无 token、无 cookie、`Sec-Fetch-Site: none`）→ 403 提示「请从套件图标打开」，页面内 XHR/WS 一律放行（只对文档级导航设卡）
+- **token 轮换**：token 每次 DSH 启动都会变，故 `sync_portal_token()` 在**每次启动成功后**重写 `ui/config`；安装期 `apply_wizard_ports()` 只用 `sed` 改 `port` 一行，不会冲掉运行期写入的 `url` 字段
 - **局域网限制（2026-09-13 新增）**：只放行私网 IP 段，公网/外网 IP 访问 → 403 中文提示页（`LAN_ONLY_PAGE`）——「只能局域网访问」的最终防线，先于一切认证逻辑
 - **SameSite=Strict → Lax 改写**：跨 scheme（DSM https→http）cookie 不被丢弃，防 ERR_TOO_MANY_REDIRECTS
 - **代理日志**：每次请求 REQ/RESP 记到 `$DSH_HOME_PARENT/dsh-proxy.log`（含 cookie 前缀，可确认 token 跳转链路）
