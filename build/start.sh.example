@@ -62,7 +62,11 @@ find_dsh_dir() {
 #   appname 取 __APP_NAME__ 占位符。**不依赖 DSH 实例**，故放在 detect_entry 之前。
 #   用法: ./start.sh gen-portal [--type url|iframe] [--key-prefix PREFIX] [--key-id NAME]
 #                               [--all-users true|false] [--with-url true|false]
-#                               [--proxy-port N]
+#                               [--proxy-port N] [--token TOKEN]
+#   --token TOKEN   把当次运行 token 写进门户 url（"/?token=…"）。用途：DSM 套件图标「打开」时
+#                   URL 本就带 token=，反代侧走「已带 token 放行」，**不依赖 Sec-Fetch-Site 判定**
+#                   （浏览器新开标签页与地址栏手输同为 none，无法区分，曾是「从套件打开却被拦」的根因）。
+#                   token 每次启动会变 → 该字段由运行期（服务起来后）重写，而非打包期固化。
 #   --key-id NAME   UI 键名主体（默认 __APP_ID__，去连字符；SPK 用默认即与 INFO dsmappname 一致，
 #                   FPK 需带连字符传 --key-id __APP_NAME__ 与 manifest desktop_applaunchname 对齐）
 if [ "${1:-}" = "gen-portal" ]; then
@@ -70,6 +74,7 @@ if [ "${1:-}" = "gen-portal" ]; then
   _gp_type="url"; _gp_prefix="SYNO.SDS."; _gp_all="false"; _gp_url="false"
   _gp_keyid="__APP_ID__"
   _gp_proxy="${DSH_PROXY_PORT:-__PROXY_PORT__}"
+  _gp_token=""                    # 非空则门户 url 写成 "/?token=…"（见上方用法说明）
   while [ $# -gt 0 ]; do
     case "$1" in
       --type=*)       _gp_type="${1#*=}" ; shift ;;
@@ -82,14 +87,22 @@ if [ "${1:-}" = "gen-portal" ]; then
       --all-users)    _gp_all="$2" ; shift 2 ;;
       --with-url=*)   _gp_url="${1#*=}" ; shift ;;
       --with-url)     _gp_url="$2" ; shift 2 ;;
+      --token=*)      _gp_token="${1#*=}" ; shift ;;
+      --token)        _gp_token="$2" ; shift 2 ;;
       --proxy-port=*) _gp_proxy="${1#*=}" ; shift ;;
       --proxy-port)   _gp_proxy="$2" ; shift 2 ;;
       *)              echo "[!] gen-portal 未知参数: $1" >&2 ; exit 1 ;;
     esac
   done
   _gp_url_line=""
-  [ "$_gp_url" = "true" ] && _gp_url_line='
+  if [ -n "${_gp_token:-}" ]; then
+    # 带 token：DSM 打开即携 token=，反代走「已带 token 放行」直达 DSH 认证，不依赖 Sec-Fetch-Site
+    _gp_url_line="
+            \"url\": \"/?token=${_gp_token}\","
+  elif [ "$_gp_url" = "true" ]; then
+    _gp_url_line='
             "url": "/",'
+  fi
   cat <<PORTAL_EOF
 {
     ".url": {
@@ -99,7 +112,7 @@ if [ "${1:-}" = "gen-portal" ]; then
             "title": "__PORTAL_TITLE__",
             "desc": "__PORTAL_DESC__",
             "protocol": "http",
-            "port": "${_gp_proxy}",
+            "port": "${_gp_proxy}",${_gp_url_line}
             "allUsers": ${_gp_all}
         }
     }
@@ -993,6 +1006,39 @@ get_token() {
   grep -o 'token=[A-Za-z0-9_-]*' "$LOG_FILE" 2>/dev/null | tail -1 | cut -d= -f2
 }
 
+# ---------- 门户 url 同步（2026-10-05 新增）----------
+# 把当次运行的 token 写进门户 ui/config 的 url 字段（"/?token=…"），使 DSM 套件图标「打开」时
+# URL 本就带 token=，反代走「已带 token 放行」直达 DSH 认证 —— 不再依赖 Sec-Fetch-Site 判定。
+#
+# 为什么需要：浏览器「新开标签页」（= DSM 门户打开的方式）与「地址栏手输」的
+# Sec-Fetch-Site 都是 none，旧判定无法区分 → 从套件打开却被当成直连拦下（403 请从套件图标打开）。
+#
+# 实现要点：
+#   · token 每次启动都会变 → 只能在运行期写，不能打包期固化（gen-portal --token 供手工/调试用）；
+#   · 用包内自带 node 改 JSON（比 sed 稳）；解析失败 / 无 .url 段 → 静默跳过，绝不影响启动；
+#   · 只改 url 字段，端口等其余字段一律保持原样（端口由安装期 apply_wizard_ports 负责）。
+sync_portal_token() {
+  local tok="${1:-}"
+  [ -n "$tok" ] || return 0
+  [ -x "$NODE_BIN" ] || return 0
+  local f
+  for f in "$SCRIPT_DIR/ui/config" "/var/packages/${APP_NAME}/ui/config"; do
+    [ -f "$f" ] || continue
+    "$NODE_BIN" -e '
+      const fs = require("fs");
+      const p = process.argv[1], tok = process.argv[2];
+      let d; try { d = JSON.parse(fs.readFileSync(p, "utf8")); } catch (e) { process.exit(0); }
+      const u = d && d[".url"]; if (!u || typeof u !== "object") process.exit(0);
+      let hit = false;
+      for (const k of Object.keys(u)) {
+        if (u[k] && typeof u[k] === "object") { u[k].url = "/?token=" + tok; hit = true; }
+      }
+      if (!hit) process.exit(0);
+      fs.writeFileSync(p, JSON.stringify(d, null, 4) + "\n");
+    ' "$f" "$tok" 2>/dev/null || true
+  done
+}
+
 # ---------- check（只读自检；2026-10-03 新增）----------
 # 一条命令给出「起不来」的根因：属主漂移 / 凭据权限 / ACL / 端口 / 运行时缺包。
 # 只读：不写文件、不改权限、不启动服务。退出码 0=无致命项，1=有致命项（⚠ 不计入）。
@@ -1271,6 +1317,8 @@ DSH_WRAPPER_EOF
         echo "  首次认证: http://${LAN_IP}:${PROXY_PORT}/?token=$TOKEN"
         echo "  认证后访问: http://${LAN_IP}:${PROXY_PORT}/"
         echo "  容器页面: http://${LAN_IP}:${CONTAINER_PORT}/"
+        # 把 token 同步进门户 ui/config，使 DSM 套件图标「打开」直接带 token（见 sync_portal_token）
+        sync_portal_token "$TOKEN"
       else
         tail -15 "$LOG_FILE" | grep -E "✅|认证|访问|容器|DSH" || true
       fi
