@@ -544,9 +544,15 @@ FPK：`pack-fpk.sh` 的「保留数据（推荐）」）。网页端此前**没�
   模板**代码不读**，只作起步参考：需要时复制成实际配置文件即可。
   `config/install-config.json` 亦已写进 `.gitignore`，防止真实配置误入库。
 - **模板里端口一律留空对象**：故不违背「端口不写死原则」——权威值仍在 `build/build-config.yaml`。
-- ⚠ **`spk` / `fpk` 是「端口覆盖段」的键名，不是包路径**：读取方按对象解析（`install-remote-*.sh`
-  里 `sec.get('proxy_port')`），若写成字符串会直接报错。上面示例里 `"fpk": "/path/to/xxx.fpk"`
-  那种写法**会踩这个坑** —— 包路径请勿放进这两个键（建议用 `spk_path` / `fpk_path` 之类未占用的键名）。
+- **本文件里哪些键真的被读**（2026-10-05 逐处核对，勿凭印象）：只有**顶层字符串键**
+  `host`（也兼容 `ip`）/ `username`（也兼容 `user` / `account`）/ `password` / `system` /
+  `appname`（spk 的 `DEFAULT_APP`、fpk 的 `APP_NAME`）/ `ssh_port`（fpk 侧，缺省 22）
+  —— 由 `install-remote-spk.sh` 的 `read_cfg`、`install-remote-fpk.sh` 的 `read_cfg`
+  与 `install-server.py` 读取。
+- **端口不在本文件里**：端口权威是 `build/build-config.yaml` 的 `defaults` / `spk` / `fpk` 三段
+  （**那里的段名必须是对象**，被 `sec.get('proxy_port')` 按对象取值）。本文件不参与端口决策。
+  上面示例里的 `"fpk": "/path/to/xxx.fpk"` 属**历史遗留**：`install-config.json` 的 `spk`/`fpk`
+  键**没有任何读取方**，写了无害也无用（别误以为它是端口段或包路径入口）。
 
 ### build-config.yaml（端口权威配置，禁止写死）
 

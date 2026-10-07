@@ -28,7 +28,12 @@ cp config/install-config.default.json web-install/install-config.json
 README 的「端口不写死原则」：端口权威在 `build/build-config.yaml`。模板留空（空对象）
 即表示「回落权威值」，避免两处各写一份而漂移。
 
-## 注意
+## 注意（2026-10-05 逐处核对，修正过一次误判）
 
-`spk` / `fpk` 两个键已被「端口覆盖段」占用（读取方按对象解析：`sec.get('proxy_port')`），
-**不要**把 `.spk`/`.fpk` 包路径写进这两个键，否则会报错；包路径请用未占用的键名（如 `spk_path`）。
+- **本目录的模板对应 `install-config.json`，它只被读【顶层字符串键】**：
+  `host`（兼容 `ip`）/ `username`（兼容 `user` / `account`）/ `password` / `system` /
+  `appname` / `ssh_port`。**端口不在这个文件里**。
+- **端口权威在 `build/build-config.yaml` 的 `defaults` / `spk` / `fpk` 三段**，那里的段名被
+  `sec.get('proxy_port')` **按对象**取值 —— 所以**那三个段名必须是对象**，写成字符串才会崩。
+- `install-config.json` 里的 `spk` / `fpk` 键**没有任何读取方**（全仓无消费者）：写了无害也无用，
+  别把它当成端口覆盖段或包路径入口（README 旧示例中的 `fpk` 包路径即属历史遗留）。
