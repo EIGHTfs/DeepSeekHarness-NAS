@@ -191,6 +191,48 @@
             .btn-group .btn { flex: 1 1 auto; min-width: 120px; }
             h1 { font-size: var(--fs-lg); }
         }
+
+        /* ── 语义文本类（供 JS 拼串使用；原为行内硬编码色）──────────────── */
+        .text-ok { color: var(--c-ok); }
+        .text-danger { color: var(--c-danger); }
+        .code-xs { font-size: 11px; }
+
+        /* ── 暗色（批次 3a：先只做"跟随系统"；手动切换按钮在 3b）─────────
+           前提已在批次 2 完成：标记区行内样式已清零，否则行内样式会压过令牌，
+           暗色下会出现白底浅字。所有配对对比度均已按 WCAG 验算：
+           正文 14.64 ✓ / 副文字 6.86 ✓ / hint 4.71 ✓ / 四种语义条 6.86–8.48 ✓ / 终端块 12.26 ✓。 */
+        @media (prefers-color-scheme: dark) {
+            :root {
+                color-scheme: dark;
+                /* 页面底改为深色紫调渐变：保品牌观感（底上只有卡片，不影响文字对比度） */
+                --page-bg: linear-gradient(135deg, #141a2e 0%, #241a33 100%);
+                --fg-1: #e6edf3; --fg-2: #c9d1d9; --fg-3: #9aa4b2; --fg-4: #7d8695;
+                --bd-1: #30363d; --bd-2: #262c34;
+                --bg-1: #161b22; --bg-2: #1c2128; --bg-3: #22272e;
+                --c-info: #79b8ff;   --c-info-bg: #0d1c2e;   --c-info-bd: #1f4b7a;
+                --c-ok: #56d364;     --c-ok-bg: #0f2417;     --c-ok-bd: #1f6f36;
+                --c-warn: #e3b341;   --c-warn-bg: #2a2110;   --c-warn-bd: #7a5c14;
+                --c-danger: #ff7b72; --c-danger-bg: #2b1416; --c-danger-bd: #8b2c2c;
+                --term-bg: #0d1117; --term-fg: #c9d1d9;
+                --sh-card: 0 20px 60px rgba(0,0,0,.55);
+                --btn-ok-bg: linear-gradient(135deg, #2ea043, #1f7a33);
+                --btn-warn-bg: linear-gradient(135deg, #d97706, #a35700);
+            }
+        }
+        /* 手动切换钩子（批次 3b 加上按钮后即生效；当前无副作用） */
+        :root[data-theme="dark"] {
+            color-scheme: dark;
+            --page-bg: linear-gradient(135deg, #141a2e 0%, #241a33 100%);
+            --fg-1: #e6edf3; --fg-2: #c9d1d9; --fg-3: #9aa4b2; --fg-4: #7d8695;
+            --bd-1: #30363d; --bd-2: #262c34;
+            --bg-1: #161b22; --bg-2: #1c2128; --bg-3: #22272e;
+            --c-info: #79b8ff;   --c-info-bg: #0d1c2e;   --c-info-bd: #1f4b7a;
+            --c-ok: #56d364;     --c-ok-bg: #0f2417;     --c-ok-bd: #1f6f36;
+            --c-warn: #e3b341;   --c-warn-bg: #2a2110;   --c-warn-bd: #7a5c14;
+            --c-danger: #ff7b72; --c-danger-bg: #2b1416; --c-danger-bd: #8b2c2c;
+            --term-bg: #0d1117; --term-fg: #c9d1d9;
+            --sh-card: 0 20px 60px rgba(0,0,0,.55);
+        }
     </style>
 </head>
 <body>
