@@ -151,7 +151,7 @@
             <button type="button" class="btn btn-sm" id="repairBtn" disabled style="background:linear-gradient(135deg,#ff9800,#e65100);">🔧 修复</button>
             <button type="button" class="btn btn-secondary btn-sm" id="checkBtn" disabled>🔎 检查</button>
             <button type="button" class="btn btn-red btn-sm" id="uninstallBtn" disabled>🗑 卸载</button>
-            <label style="margin-left:10px;font-size:13px;color:#cfd8e3;user-select:none;">
+            <label style="margin-left:10px;font-size:13px;color:#3d444d;user-select:none;">
               <input type="checkbox" id="keepData" checked style="vertical-align:-1px;">
               卸载/修复时<b>保留数据</b>（推荐；取消勾选才会连数据一起删）
             </label>
@@ -442,9 +442,7 @@
         checkBtn.addEventListener('click', () => runCmd('check'));
         uninstallBtn.addEventListener('click', () => {
             const _keep = (($('keepData')||{}).checked !== false);
-            const _msg = '确定要远程卸载 ' + host.value.trim() + ' 上的套件吗？
-
-' +
+            const _msg = '确定要远程卸载 ' + host.value.trim() + ' 上的套件吗？\n\n' +
                 (_keep ? '【保留数据】只删程序（@appstore/@appconf/@apptemp/@eaDir），'
                        + '@appdata/@apphome/@appshare 里的数据会保留。'
                        : '【删除数据】除程序外，@appdata/@apphome/@appshare 中的数据也会被删除，且不可恢复！');
