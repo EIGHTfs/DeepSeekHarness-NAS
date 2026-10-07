@@ -46,7 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 守卫套件（README 覆盖度 / 公共函数唯一性 / 破坏性操作 / 命名 / 构建配置 / 事故回归）
+      - name: 守卫套件（README 覆盖度 / 公共函数唯一性 / 破坏性操作 / 命名 / 构建配置 / 内联 JS / 事故回归）
         run: |
           set -e
           python3 scripts/check-workflow-yaml.py
@@ -55,6 +55,7 @@ jobs:
           python3 scripts/check-destructive-ops.py
           python3 scripts/check-build-naming.py
           python3 scripts/check-build-config.py
+          python3 scripts/check-html-inline-js.py
           bash test/safe-rm-rf.test.sh
 
       # 唯一构建：install + build + 裁剪一次做完，target 作为 artifact 传给各打包 job
