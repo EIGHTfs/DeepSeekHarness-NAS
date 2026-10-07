@@ -51,9 +51,13 @@ D_SCRIPTS="${D_SCRIPTS:-$WS/scripts}"
 # ----------------------------------------------------------------------------
 # build-config.yaml 解析（SPK 段覆盖 defaults：端口 + appname + 品牌元数据）
 #   全部字段一律来自配置，脚本内不写死任何可变值（no-hardcode-config）
+#   ★ 入参命名空间 = SPKCFG_*（2026-10-05 与 FPK 侧的 FPKCFG_* 统一，两平台命令形态一致）：
+#     YAML 的值先注入到 SPKCFG_*，再由下面几行落到脚本内部使用的 SPK_*/CFG_*。
+#     → 外部（网页「构建参数」面板 / 命令行）预先给同名 SPKCFG_* 环境变量即可覆盖，
+#       优先级 = 环境变量 > YAML section > YAML defaults（与本文件头部声明一致）。
 # ----------------------------------------------------------------------------
 eval "$(python3 -c "
-import yaml, sys
+import yaml, sys, os
 with open('$CONFIG_FILE') as f:
     cfg = yaml.safe_load(f) or {}
 defaults = cfg.get('defaults') or {}
@@ -61,25 +65,30 @@ spk = cfg.get('spk') or {}
 for k, v in {**defaults, **spk}.items():
     if v is None:
         continue
-    print(f'CFG_{k.upper()}=\"{v}\"')
+    name = 'SPKCFG_' + k.upper()
+    # 环境里已显式指定 → 尊重外部值，不用 YAML 覆盖。
+    # （否则网页/命令行的自定义会被静默冲掉：曾如此，属真实隐患）
+    if name in os.environ:
+        continue
+    print(f'{name}=\"{v}\"')
 " 2>/dev/null || true)"
-SPK_PROXY_PORT="${CFG_PROXY_PORT:-30800}"
-SPK_DSH_PORT="${CFG_DSH_PORT:-30801}"
-SPK_CONTAINER_PORT="${CFG_CONTAINER_PORT:-30802}"
+SPK_PROXY_PORT="${SPKCFG_PROXY_PORT:-30800}"
+SPK_DSH_PORT="${SPKCFG_DSH_PORT:-30801}"
+SPK_CONTAINER_PORT="${SPKCFG_CONTAINER_PORT:-30802}"
 
 # ── 品牌 / 元数据（配置驱动；缺省值仅作最后兜底，正常一律命中配置） ──
-CFG_APPNAME="${CFG_APPNAME:-DeepSeekHarness-NAS}"
-CFG_BRAND_NAME="${CFG_BRAND_NAME:-$CFG_APPNAME}"
-CFG_DISPLAY_NAME="${CFG_DISPLAY_NAME:-DeepSeek Harness}"
-CFG_TITLE="${CFG_TITLE:-$CFG_DISPLAY_NAME}"
-CFG_DESC="${CFG_DESC:-}"
-CFG_DESC_SHORT="${CFG_DESC_SHORT:-$CFG_DISPLAY_NAME Web UI}"
-CFG_MAINTAINER="${CFG_MAINTAINER:-DeepSeek AI}"
-CFG_MAINTAINER_URL="${CFG_MAINTAINER_URL:-}"
-CFG_DISTRIBUTOR="${CFG_DISTRIBUTOR:-}"
-CFG_DISTRIBUTOR_URL="${CFG_DISTRIBUTOR_URL:-}"
-CFG_OS_MIN_VER="${CFG_OS_MIN_VER:-7.0-40851}"
-CFG_BRAND_VERSION_ORDER="${CFG_BRAND_VERSION_ORDER:-dsh,npm}"
+CFG_APPNAME="${SPKCFG_APPNAME:-DeepSeekHarness-NAS}"
+CFG_BRAND_NAME="${SPKCFG_BRAND_NAME:-$CFG_APPNAME}"
+CFG_DISPLAY_NAME="${SPKCFG_DISPLAY_NAME:-DeepSeek Harness}"
+CFG_TITLE="${SPKCFG_TITLE:-$CFG_DISPLAY_NAME}"
+CFG_DESC="${SPKCFG_DESC:-}"
+CFG_DESC_SHORT="${SPKCFG_DESC_SHORT:-$CFG_DISPLAY_NAME Web UI}"
+CFG_MAINTAINER="${SPKCFG_MAINTAINER:-DeepSeek AI}"
+CFG_MAINTAINER_URL="${SPKCFG_MAINTAINER_URL:-}"
+CFG_DISTRIBUTOR="${SPKCFG_DISTRIBUTOR:-}"
+CFG_DISTRIBUTOR_URL="${SPKCFG_DISTRIBUTOR_URL:-}"
+CFG_OS_MIN_VER="${SPKCFG_OS_MIN_VER:-7.0-40851}"
+CFG_BRAND_VERSION_ORDER="${SPKCFG_BRAND_VERSION_ORDER:-dsh,npm}"
 
 # ----------------------------------------------------------------------------
 # target 与元数据（build-common.sh 产物）

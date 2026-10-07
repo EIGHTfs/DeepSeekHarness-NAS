@@ -360,12 +360,64 @@ def _ensure_no_running_build():
     return ''
 
 
-def _stream_build(build_id, cmd, step):
-    """执行构建、边跑边刷新输出与阶段进度，结束（或异常）后落最终状态。"""
+# ── 构建参数（网页「构建参数」面板）→ 打包脚本环境变量 ────────────────────────
+# 三个构建步各认一套变量（2026-10-05 逐处核对，勿凭印象；FPKCFG_* / SPKCFG_* 里含 CFG_* 子串，
+# 用 grep 子串判断会误判成"两边通用"）：
+#   common（build-common.sh）→ APP_NAME
+#   spk   （pack-spk.sh）    → SPKCFG_*   （2026-10-05 起与 FPK 统一命名）
+#   fpk   （pack-fpk.sh）    → FPKCFG_*
+# 故同一个网页字段同时注入多套别名：每步各取所需，不必按步分支（更稳，且三步混跑也一致）。
+# 两个打包脚本都已加"环境里已指定则不覆盖"保护，故这里的值不会被 YAML 静默冲掉。
+# ⚠ 只列【确实被脚本读取】的变量：例如"版本号"目前没有覆盖点（PKG_VER 取自源码
+#   package.json，build-common.sh:278），故这里**不**发明 CFG_BRAND_VERSION 之类无人读的变量。
+BUILD_PARAM_ALIASES = {
+    'appname':        ('APP_NAME', 'SPKCFG_APPNAME', 'FPKCFG_APPNAME'),
+    'brand_name':     ('SPKCFG_BRAND_NAME', 'FPKCFG_BRAND_NAME'),
+    'display_name':   ('SPKCFG_DISPLAY_NAME', 'FPKCFG_DISPLAY_NAME'),
+    'title':          ('SPKCFG_TITLE', 'FPKCFG_TITLE'),
+    'desc':           ('SPKCFG_DESC', 'FPKCFG_DESC'),
+    'desc_short':     ('SPKCFG_DESC_SHORT', 'FPKCFG_DESC_SHORT'),
+    'maintainer':     ('SPKCFG_MAINTAINER', 'FPKCFG_MAINTAINER'),
+    'distributor':    ('SPKCFG_DISTRIBUTOR', 'FPKCFG_DISTRIBUTOR'),
+    'proxy_port':     ('SPKCFG_PROXY_PORT', 'FPKCFG_PROXY_PORT'),
+    'dsh_port':       ('SPKCFG_DSH_PORT', 'FPKCFG_DSH_PORT'),
+    'container_port': ('SPKCFG_CONTAINER_PORT', 'FPKCFG_CONTAINER_PORT'),
+}
+
+
+def _build_param_env(params):
+    """把网页填的自定义参数转成子进程环境变量（只影响这一次构建）。
+
+    空值忽略（空 = 不覆盖，回落 build-config.yaml 的权威值）；未知键忽略。
+    """
+    env = {}
+    for k, v in (params or {}).items():
+        aliases = BUILD_PARAM_ALIASES.get(k)
+        if not aliases:
+            continue
+        s = str(v).strip()
+        if not s:
+            continue
+        for alias in aliases:
+            env[alias] = s
+    return env
+
+
+def _stream_build(build_id, cmd, step, env_extra=None):
+    """执行构建、边跑边刷新输出与阶段进度，结束（或异常）后落最终状态。
+
+    env_extra：本次构建的自定义参数（网页「构建参数」面板填的品牌 / 简介 / 端口等）。
+    以 CFG_* / FPKCFG_* / APP_NAME 形式注入**子进程环境** —— 打包脚本本就支持这类覆盖
+    （build-config.yaml 头部即写明「优先级：命令行参数 > YAML section > YAML defaults」），
+    因此自定义**只影响这一次构建**，不修改权威文件 build/build-config.yaml。
+    """
     try:
+        _env = os.environ.copy()
+        if env_extra:
+            _env.update(env_extra)
         p = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, errors='replace', cwd=WS_ROOT, env=os.environ.copy())
+            text=True, errors='replace', cwd=WS_ROOT, env=_env)
         out_lines = []
         for line in p.stdout:
             out_lines.append(line.rstrip('\n'))
@@ -398,8 +450,12 @@ def _stream_build(build_id, cmd, step):
         log('BUILD error build_id=%s: %s' % (build_id, e))
 
 
-def start_build(step='common'):
-    """后台执行构建脚本。返回 (build_id, error_msg)。"""
+def start_build(step='common', params=None):
+    """后台执行构建脚本。返回 (build_id, error_msg)。
+
+    params：可选的本次构建自定义参数（品牌 / 简介 / 端口等），经 _build_param_env()
+    变成子进程环境变量交给打包脚本；不传则完全按权威配置构建。
+    """
     script_rel, script_abs, err = _validate_build_step(step)
     if err:
         return None, err
@@ -407,19 +463,23 @@ def start_build(step='common'):
     if err:
         return None, err
 
+    # 自定义参数 → 环境变量（空值/未知键自动忽略，回落权威配置）
+    params_env = _build_param_env(params or {})
+
     build_id = 'build-%d' % int(time.time())
     with BUILDS_LOCK:
         BUILDS[build_id] = {
             'build_id': build_id, 'status': 'running', 'step': step,
             'script': script_rel, 'stage': '准备中', 'progress': 0,
             'output': '', 'exit_code': None,
+            'params': sorted((params or {}).keys()),
             'started': time.strftime('%Y-%m-%d %H:%M:%S'), 'finished': '',
         }
 
     def _work():
         # 不覆盖 PRUNE_BEFORE_INSTALL：build-common.sh 默认走 1（白名单已补全类型检查包，
         # install 前裁剪保留它们，tsc 能过；同时 target 更小，SPK < 600MB）。
-        _stream_build(build_id, ['bash', script_abs], step)
+        _stream_build(build_id, ['bash', script_abs], step, env_extra=params_env)
 
     threading.Thread(target=_work, daemon=True).start()
     log('BUILD start build_id=%s step=%s' % (build_id, step))
@@ -808,10 +868,15 @@ class Handler(BaseHTTPRequestHandler):
         step = str(body.get('step', '')).strip()
         if step not in ('common', 'spk', 'fpk'):
             return 400, {'success': False, 'error': 'step 必须是 common|spk|fpk'}
-        build_id, err = start_build(step)
+        # 网页「构建参数」面板的自定义项（可选）：品牌 / 简介 / 端口等
+        params = body.get('params') or {}
+        if not isinstance(params, dict):
+            return 400, {'success': False, 'error': 'params 必须是对象'}
+        build_id, err = start_build(step, params)
         if err:
             return 409, {'success': False, 'error': err}
-        return 200, {'success': True, 'build_id': build_id, 'step': step}
+        return 200, {'success': True, 'build_id': build_id, 'step': step,
+                     'params': sorted(params.keys())}
 
     def _api_publish(self, body):
         package = str(body.get('package', '')).strip()

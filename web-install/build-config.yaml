@@ -1,0 +1,94 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚠ 本文件是【web-install 侧的一份副本】，用途与权威关系（2026-10-05 定，勿混淆）：
+#   · **权威仍是 build/build-config.yaml** —— 打包脚本（build-common.sh / pack-spk.sh /
+#     pack-fpk.sh）读的是它；README「build-config.yaml（端口权威配置）」指的也是它。
+#     本文件不是权威：改它【不会】影响直接跑打包脚本的结果。
+#   · 本副本供【网页安装工具】读取：给网页的「构建参数」面板提供默认值（品牌 / 简介 / 端口等），
+#     并把用户在网页上填的自定义值通过 **SPKCFG_* / FPKCFG_* 环境变量** 传给构建
+#     （2026-10-05 两平台命名统一：SPK 认 SPKCFG_*、FPK 认 FPKCFG_*；脚本已加
+#      "环境已指定则不覆盖"保护，所以自定义不会被 YAML 值静默冲掉）。
+#     → 自定义只影响【这一次网页发起的构建】，不修改权威文件、也不改变端口权威。
+#   · 两文件内容若不一致：**以 build/build-config.yaml 为准**；本副本只影响网页表单预填。
+#   · 同步方式（改了权威后同步给网页）：
+#         cp build/build-config.yaml web-install/build-config.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+# DeepSeek Harness NAS — 打包配置文件
+# 优先级：命令行参数 > YAML section > YAML defaults
+
+# ============================================================================
+# 第一大类：全局默认配置（SPK 与 FPK 共用）
+# ============================================================================
+defaults:
+  # 应用名（用于 INFO package / manifest appname / applaunchname / config/resource 等）
+  appname: DeepSeekHarness-NAS
+
+  # ── 品牌与元数据（打包清单 / 门户 / 名牌统一取值，禁止在各脚本内写死） ──
+  #   名牌（网页左上角）：brand_name + 版本号；brand_name 留空 = 用 appname
+  brand_name: DeepSeekHarness-NAS
+  display_name: DeepSeek Harness          # 门户与清单展示名
+  title: DeepSeek Harness                 # 门户 title / 页面标题
+  #   描述统一取官方表述（README.zh.md 首段），平台专属补充放各平台段覆盖
+  #   （spk: / fpk: 下的 desc），避免平台文案串到共用段
+  desc: DeepSeek Harness（dsh）是由 DeepSeek AI 开发的开源 agent harness（智能体框架）。门户打开自动携带 token 免密登录。
+  desc_short: DeepSeek Harness Web UI
+  maintainer: DeepSeek AI
+  maintainer_url: https://github.com/deepseek-ai/deepseek-harness
+  distributor: EIGHTfs
+  distributor_url: https://github.com/EIGHTfs/DeepSeekHarness-NAS
+  source: thirdparty
+  # 平台最低版本（各平台段可覆盖；SPK 用 os_min_ver 格式，FPK 用 os_min_version）
+  os_min_version: 1.1.0
+  os_min_ver: 7.0-40851
+  # 名牌版本号优先级链：dsh 包（@deepseek-ai/dsh/package.json version）→ npm 包（客户端编译产物 localBuildVersion 串）
+  brand_version_order: dsh,npm
+  # 打包体积门禁（MB；0 = 不检查）。任务① 验收口径 fpk≈100MiB，留余量设 200
+  size_limit_mb: 200
+
+  # ── 共享区（@appshare）目录名（fpk/spk 共用；禁止在脚本里写死路径） ──
+  #   共享区根路径由平台注入的变量自动推导（fpk: TRIM_PKGVAR 的 @appdata → @appshare；
+  #   spk: SYNOPKG_PKGVAR 所在的 @appstore 卷），不写卷号、不写应用名。
+  #   ⚠ 两个字段默认都留空 = 不创建任何共享目录（零副作用）。
+  #     需要时填目录名即可，例如：
+  #       share_workspace_dir: 工作区   → <共享区>/工作区（777，用户可见，放项目文件）
+  #       share_data_dir: data          → <共享区>/data（TRIM_PKGVAR/data 软链到此）
+  share_workspace_dir: ""
+  share_data_dir: ""
+
+  # ── 工作区分类目录（相对脚本所在目录；亦可环境变量覆盖，优先级更高） ──
+  #   优先级：命令行参数 > 环境变量(D_SRC=...) > config 此处 > 默认<工作区>/<名>
+  src_dir:     ./src        # 源码（deepseek-ai 官方快照）
+  assets_dir:  ./build      # 复用打包素材（图标 / 模板 / 权限，存 build/ 以便入库跟踪）
+  build_dir:   ./build      # 构建中间产物与缓存
+  release_dir: ./release    # 发布产物目录（只放【实测通过】的 .spk / .fpk）
+  staging_dir: ./build/staging  # 打包输出暂存区（build.sh 产物落这里，验证后 promote-release.sh 提升）
+  tools_dir:   ./tools      # 构建工具（pnpm / fnpack / 桥接脚本）
+  scripts_dir: ./scripts    # 运行/安装脚本（start.sh.spk / dsh / installer）
+
+  # 端口分配（通用默认 = 3080 段；spk 专属段在下方 spk: 覆盖成 30800）
+  proxy_port: 3080
+  dsh_port: 3081
+  container_port: 3082
+
+# ============================================================================
+# 第二大类：SPK 专属配置（只覆盖端口，其余复用 defaults 通用值）
+# ============================================================================
+spk:
+  # 覆盖 defaults 中的配置（留空则沿用通用默认）
+  # appname: DeepSeekHarness-NAS
+  # ↓ SPK 端口段：仅这里覆盖成 30800 段，其他配置全部复用 defaults 通用值
+  proxy_port: 30800      # SPK 反代端口（覆盖通用 3080）
+  dsh_port: 30801        # SPK DSH 端口（覆盖通用 3081）
+  container_port: 30802  # SPK 容器页端口（覆盖通用 3082）
+
+# ============================================================================
+# 第三大类：FPK 专属配置（不填 = 完全沿用 defaults 通用默认，即 3080 段）
+# ============================================================================
+fpk:
+  # 覆盖 defaults 中的配置（留空则沿用通用默认）
+  # appname: DeepSeekHarness-NAS
+  # ↓ 描述：官方表述 + 本平台补充（飞牛专属表述只放这里，不进 defaults）
+  desc: DeepSeek Harness（dsh）是由 DeepSeek AI 开发的开源 agent harness（智能体框架），飞牛 fnOS 原生应用。门户打开自动携带 token 免密登录。
+  # ↓ FPK 端口段：不填即用通用 3080 段（与 spk 的 30800 段隔离）
+  # proxy_port: 3080
+  # dsh_port: 3081
+  # container_port: 3082
