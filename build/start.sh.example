@@ -1278,6 +1278,9 @@ DSH_WRAPPER_EOF
     if [ -n "$TOKEN" ]; then
       echo "  Token: $TOKEN"
       echo "  局域网访问: http://${LAN_IP}:${PROXY_PORT}/?token=$TOKEN"
+      # 已在运行时也同步一次门户 token：这样「不重启服务」也能把门户 url 刷成当前 token
+      # （幂等、只改 url 字段；token 轮换后若门户仍指旧值，用 start.sh start 即可刷新）
+      sync_portal_token "$TOKEN"
     fi
     return 0
   fi
