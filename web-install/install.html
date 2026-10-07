@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <!-- dsh-skip-sensitive: 本页 6 处 innerHTML（490/517/680/681/682/703）属已知待办
-         （审计 blocker script-unsafe-inline），改造需一并加 CSP 并外移内联脚本，
-         且必须实机验证安装/卸载/构建全流程；
-         详见 README「🧭 已知待办」。此处用文件头精确豁免【仅安全敏感类】，
-         其余规则（短变量名/按钮事件等）照常显示。 -->
+    <!-- dsh-skip-sensitive: 本页【内联脚本 + 未启用 CSP】属已知待办（审计 blocker script-unsafe-inline）。
+         innerHTML 已全部改为 DOM API 构造（0 处：远端 SSH 输出与任务字段一律 textContent 插入，
+         发布按钮由行内 onclick 改为 addEventListener）。剩余改造需外移内联脚本并加 CSP，
+         且必须实机验证安装/卸载/构建全流程；详见 README「🧭 已知待办」。
+         此处用文件头精确豁免【仅安全敏感类】，其余规则（短变量名/按钮事件等）照常显示。 -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DSH 安装工具 - DeepSeekHarness-NAS</title>
@@ -167,6 +167,8 @@
         .table td { padding: var(--sp-2); text-align: left; border-bottom: 1px solid var(--bd-2); color: var(--fg-2); }
         .table .center { text-align: center; }
         .cell-note { max-width: 200px; word-break: break-all; }
+        /* 居中单元格里的行内按钮取消 .btn-inline 自带左边距，避免视觉左偏 */
+        .table .center .btn-inline { margin-left: 0; }
         /* 自动构建进度 */
         .flex-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
         .progress-label { font-size: var(--fs-sm); color: var(--fg-2); }
@@ -238,6 +240,17 @@
             --sh-card: 0 20px 60px rgba(0,0,0,.55);
         }
     </style>
+    <!-- 主题的"首帧前"初始化：必须在第一帧渲染前决定明暗，否则会先闪一下系统主题（FOUC）。
+         这里只读 localStorage 并写 <html data-theme>，**不引用任何 DOM 元素**（按钮在 body 里）；
+         完整逻辑（按钮文案 / 点击切换）在内联主脚本中。 -->
+    <script>
+        (function () {
+            try {
+                var t = localStorage.getItem('dsh-theme');
+                if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+            } catch (e) { /* localStorage 不可用（隐私模式/被禁）：按系统偏好走 */ }
+        })();
+    </script>
 </head>
 <body>
     <div class="container">
@@ -387,7 +400,7 @@
         </div>
     </div>
 
-    <script> <!-- dsh-skip-sensitive: 本页 6 处 innerHTML（490/517/680/681/682/703）属已知待办（见 README「已知待办」）；改造需加 CSP 并外移内联脚本、且须实机验证，故暂不重构。此行级标记只压本行安全敏感类，其余规则照常 -->
+    <script> <!-- dsh-skip-sensitive: 内联脚本 + 未启用 CSP 属已知待办（innerHTML 已归零，见 README「已知待办」）；改造需外移内联脚本并加 CSP、且须实机验证，故暂不重构。此行级标记只压本行安全敏感类，其余规则照常 -->
         const $ = id => document.getElementById(id);
         const host = $('host'), port = $('port'), username = $('username'), password = $('password');
         const saveBtn = $('saveBtn'), savedIndicator = $('savedIndicator');
@@ -410,10 +423,7 @@
         }
         function renderThemeBtn() { themeBtn.textContent = isDarkTheme() ? '☀️ 浅色' : '🌙 深色'; }
         (function initTheme() {
-            try {
-                const saved = localStorage.getItem(THEME_KEY);
-                if (saved === 'dark' || saved === 'light') document.documentElement.dataset.theme = saved;
-            } catch (err) { /* localStorage 不可用（隐私模式/被禁）时按系统偏好走 */ }
+            // data-theme 的"首帧前"设置已由 <head> 里的小脚本完成（消除 FOUC），这里只刷新按钮文案
             renderThemeBtn();
         })();
         themeBtn.addEventListener('click', () => {
@@ -489,10 +499,21 @@
                 if (data.success) {
                     currentSystem = data.system;
                     detectResult.className = 'detect-result show ' + data.system;
-                    detectResult.innerHTML = '<b>' + data.hint + '</b><br>' +
-                        '命中特征: ' + (data.features && data.features.length
-                            ? data.features.map(f => '<code>' + f + '</code>').join(' ')
-                            : '（无）');
+                    detectResult.replaceChildren();
+                    const hintEl = document.createElement('b');
+                    hintEl.textContent = data.hint || '';
+                    detectResult.appendChild(hintEl);
+                    detectResult.appendChild(document.createElement('br'));
+                    const feats = data.features || [];
+                    detectResult.appendChild(document.createTextNode('命中特征: '));
+                    if (feats.length) {
+                        feats.forEach((f, i) => {
+                            if (i) detectResult.appendChild(document.createTextNode(' '));
+                            detectResult.appendChild(el('code', '', f));
+                        });
+                    } else {
+                        detectResult.appendChild(document.createTextNode('（无）'));
+                    }
                     await loadPackages();           // 探测后自动刷新包列表
                     setButtons(true);
                 } else {
@@ -516,7 +537,7 @@
                 const data = await resp.json();
                 if (!data.success) { pkgHint.textContent = '⚠️ 无法获取包列表'; return; }
                 const kind = currentSystem === 'dsm' ? 'spk' : (currentSystem === 'fnos' ? 'fpk' : null);
-                pkg.innerHTML = '';
+                pkg.replaceChildren();
                 if (!kind) {
                     const opt = document.createElement('option');
                     opt.value = ''; opt.textContent = '— 先探测系统 —';
@@ -668,9 +689,58 @@
         const tasksBtn = $('tasksBtn'), tasksPanel = $('tasksPanel'), tasksTable = $('tasksTable');
         const CMD_NAMES = { install: '📦 安装', repair: '🔧 修复(重装)', uninstall: '🗑 卸载', check: '🔎 检查' };
         const RESULT_BADGE = {
-            success: '<span class="text-ok">✅ 成功</span>',
-            failed: '<span class="text-danger">❌ 失败</span>'
+            success: { cls: 'text-ok', text: '✅ 成功' },
+            failed: { cls: 'text-danger', text: '❌ 失败' }
         };
+        // ── DOM 构造小工具（取代 innerHTML 拼串）────────────────────────────
+        // 为什么：服务端 /api/run-status 的输出、以及 install-tasks.jsonl 里的字段，
+        // 最终来源是【远端主机的 SSH 输出】—— 拼进 innerHTML 就是把远端内容当 HTML 解析执行。
+        // 改为一律用 textContent 插入，注入面归零（这 6 处是审计 blocker 的登记待办）。
+        function el(tag, cls, text) {
+            const n = document.createElement(tag);
+            if (cls) n.className = cls;
+            if (text !== undefined && text !== null) n.textContent = text;
+            return n;
+        }
+        // 整行提示（colspan 与 <thead> 的 8 列一致，避免提示文字错位）
+        function tableMessageRow(text) {
+            const tr = document.createElement('tr');
+            const td = document.createElement('td');
+            td.colSpan = 8;
+            td.textContent = text;
+            tr.appendChild(td);
+            return tr;
+        }
+        // 一条任务记录 → <tr>；发布按钮用 addEventListener，不再用行内 onclick（CSP 也会拦那种写法）
+        function taskRow(t) {
+            const tr = document.createElement('tr');
+            tr.appendChild(el('td', '', t.ts || '—'));
+            tr.appendChild(el('td', '', CMD_NAMES[t.cmd] || t.cmd));
+            tr.appendChild(el('td', '', t.version || '—'));
+            const tdMd5 = document.createElement('td');
+            if (t.md5) { tdMd5.appendChild(el('code', 'code-xs', t.md5)); } else { tdMd5.textContent = '—'; }
+            tr.appendChild(tdMd5);
+            tr.appendChild(el('td', '', t.system || '—'));
+            const badge = RESULT_BADGE[t.status], tdRes = document.createElement('td');
+            if (badge) { tdRes.appendChild(el('span', badge.cls, badge.text)); } else { tdRes.textContent = t.status || '—'; }
+            tr.appendChild(tdRes);
+            const tdNote = el('td', 'cell-note');
+            if (t.note) { const s = el('span', '', t.note); s.title = t.note; tdNote.appendChild(s); }
+            else { tdNote.textContent = '—'; }
+            tr.appendChild(tdNote);
+            const tdPub = el('td', 'center');
+            const canPublish = (t.cmd === 'install' || t.cmd === 'repair') && t.status === 'success' && t.package;
+            if (canPublish) {
+                const btn = el('button', 'btn btn-sm btn-warn btn-inline', '🚀 发布');
+                btn.type = 'button';
+                btn.addEventListener('click', () => publishPackage(btn, t.package));
+                tdPub.appendChild(btn);
+            } else {
+                tdPub.appendChild(el('span', 'text-muted', '—'));
+            }
+            tr.appendChild(tdPub);
+            return tr;
+        }
         async function loadTasks(initialLoad) {
             if (!tasksPanel.classList.contains('show') || initialLoad) {
                 if (!initialLoad) tasksBtn.textContent = '🕘 安装历史…';
@@ -679,30 +749,12 @@
                 const resp = await fetch('/api/tasks?limit=100');
                 const data = await resp.json();
                 const tbody = tasksTable.querySelector('tbody');
-                if (!data.success) { tbody.innerHTML = '<tr><td colspan="8">读取失败: ' + data.error + '</td></tr>'; return; }
-                if (!data.tasks.length) { tbody.innerHTML = '<tr><td colspan="8">（暂无历史记录，执行过安装/卸载/检查后出现）</td></tr>'; return; }
-                tbody.innerHTML = data.tasks.map(t => {
-                    const md5 = t.md5 ? '<code class="code-xs">' + t.md5 + '</code>' : '—';
-                    const note = t.note ? '<span title="' + t.note.replace(/"/g, '&quot;') + '">' + t.note + '</span>' : '—';
-                    // 只有成功的 install/repair 记录且有包名时显示发布按钮
-                    const canPublish = (t.cmd === 'install' || t.cmd === 'repair') && t.status === 'success' && t.package;
-                    const pubBtn = canPublish
-                        ? '<button class="btn btn-sm btn-warn btn-inline" onclick="publishPackage(this,\'' + t.package.replace(/'/g, "\\'") + '\')">🚀 发布</button>'
-                        : '<span class="text-muted">—</span>';
-                    return '<tr>' +
-                        '<td>' + (t.ts || '—') + '</td>' +
-                        '<td>' + (CMD_NAMES[t.cmd] || t.cmd) + '</td>' +
-                        '<td>' + (t.version || '—') + '</td>' +
-                        '<td>' + md5 + '</td>' +
-                        '<td>' + (t.system || '—') + '</td>' +
-                        '<td>' + (RESULT_BADGE[t.status] || t.status) + '</td>' +
-                        '<td class="cell-note">' + note + '</td>' +
-                        '<td class="center">' + pubBtn + '</td>' +
-                        '</tr>';
-                }).join('');
+                if (!data.success) { tbody.replaceChildren(tableMessageRow('读取失败: ' + (data.error || ''))); return; }
+                if (!data.tasks.length) { tbody.replaceChildren(tableMessageRow('（暂无历史记录，执行过安装/卸载/检查后出现）')); return; }
+                tbody.replaceChildren(...data.tasks.map(taskRow));
             } catch (err) {
                 const tbody = tasksTable.querySelector('tbody');
-                tbody.innerHTML = '<tr><td colspan="8">加载失败: ' + err.message + '</td></tr>';
+                tbody.replaceChildren(tableMessageRow('加载失败: ' + (err.message || '')));
             } finally {
                 tasksBtn.textContent = '🕘 安装历史';
                 tasksPanel.classList.add('show');
