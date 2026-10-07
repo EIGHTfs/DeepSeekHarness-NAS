@@ -580,6 +580,23 @@ fpk:
 - **端口不写死原则**：脚本/网页代码中禁止出现 `30800`/`3080` 等端口字面量；需要端口时调 `read_ports <system>`（install-remote-spk.sh 内嵌，PyYAML 解析 build-config.yaml）按分支读取。
 - **端口段隔离**：spk 用 30800 段、fpk 用 3080 段，两者互不冲突，可同时运行（双实例共存）。
 
+### 网页侧副本与「构建参数」面板（2026-10-05）
+
+- **副本定位**：`web-install/build-config.yaml` 是**副本**，只给网页「构建参数」面板提供**默认值**；
+  **权威仍是 `build/build-config.yaml`** —— 改副本不影响直接跑打包脚本的结果。
+  `/api/build-config` 读取它。本机与 DSM **都没有 PyYAML**，故采用**定向提取**（只认顶层
+  `defaults:` / `spk:` / `fpk:` 段与段内 `键: 值`，支持 `#` 注释）；结构若变复杂应改为引入依赖，
+  而不是继续加固提取器。
+- **可覆盖字段**：`brand_name` / `display_name` / `title` / `desc` / `desc_short` /
+  `proxy_port` / `dsh_port` / `container_port`。
+  **版本号不做自定义**：永远同步官方源码（`PKG_VER` 直接取自源码 `package.json`，build-common.sh:278）。
+- **下发方式**：只随**本次构建**注入子进程环境变量 —— **spk 步认 `SPKCFG_*`、fpk 步认 `FPKCFG_*`**、
+  common 步认 `APP_NAME`（三套别名同时注入，各步各取所需；SPK 侧 2026-10-05 由 `CFG_*` 统一为 `SPKCFG_*`）。
+  面板折叠或字段留空 = 不传参数 = 完全按权威配置构建。
+- **优先级**：环境变量 > YAML section > YAML defaults。两个打包脚本均已加"环境里已指定则 YAML 不覆盖"
+  保护（此前是无条件覆盖 ✗，会让网页 / 命令行的自定义**静默失效**）。
+- **三段合并语义不变**：`{**defaults, **spk}` / `{**defaults, **fpk}` —— **spk / fpk 各自逐键覆盖 defaults**。
+
 ### system 推断链（install-remote-spk.sh）
 
 ```
