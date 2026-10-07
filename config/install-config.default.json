@@ -1,18 +1,18 @@
 {
-  "_说明": "网页安装工具连接配置的【默认模板】—— 不含任何凭据，仅示意字段结构。统一口径：config/ 只放可入库的模板，脚本实际读取的位置一律不变 —— 连接配置仍读 web-install/install-config.json（install-remote-spk.sh 的 $WS/install-config.json、install-server.py 的 CONFIG_FILE）。用法：复制本文件为 web-install/install-config.json 后填写；代码不读本模板。实际配置含明文密码，已被 .gitignore 忽略，绝不入库。",
+  "_说明": "网页安装工具连接配置的【默认模板】—— 不含任何凭据，仅示意字段结构。统一口径：config/ 只放可入库的模板，脚本实际读取的位置一律不变 —— 连接配置仍读 web-install/install-config.json（install-remote-spk.sh 的 $WS/install-config.json、install-server.py 的 CONFIG_FILE）。用法：复制本文件为 web-install/install-config.json 后填写；模板代码不读。实际配置含明文密码，已被 .gitignore 忽略，绝不入库。",
   "_字段": {
-    "host": "目标 NAS 地址（必填）",
-    "port": "SSH 端口（默认 22）",
-    "username": "登录账号（必填）",
+    "host": "目标 NAS 地址（必填；install-server.py 也兼容 ip 键）",
+    "port": "SSH 端口：网页表单字段（默认 22）",
+    "username": "登录账号（必填；install-server.py 也兼容 user / account 键）",
     "password": "登录密码（必填；明文，仅存本机）",
-    "system": "目标系统，由网页「探测系统」写入：dsm / fnos（可留空）",
-    "defaults": "端口覆盖·通用段（可选；空对象=回落 build-config.yaml 的权威值）",
-    "spk": "端口覆盖·群晖段（可选）。⚠ 此键必须是对象 {proxy_port,dsh_port,container_port}，不要写包路径字符串",
-    "fpk": "端口覆盖·飞牛段（可选）。⚠ 同上：必须是端口对象，不要写 .fpk 包路径字符串"
+    "system": "目标系统，由网页「探测系统」写入：dsm / fnos（install-remote-spk.sh 读它选分支）",
+    "appname": "可选：覆盖默认包名（spk 侧 DEFAULT_APP / fpk 侧 APP_NAME）",
+    "ssh_port": "可选：install-remote-fpk.sh 读取的 SSH 端口键（缺省 22）",
+    "saved_at": "网页保存时写入的时间戳（仅记录，代码不读）"
   },
   "_注意": [
-    "端口一律留空/空对象 → 由 build/build-config.yaml 提供权威值（README「端口不写死原则」）。",
-    "spk / fpk 两键已被「端口覆盖段」占用；把包路径写进这两个键会让读取方按对象解析而报错（install-remote-*.sh 里 sec.get(...)）。",
+    "端口权威在 build/build-config.yaml 的 defaults / spk / fpk 三段（那里的段名必须保持【对象】，被 sec.get('proxy_port') 按对象读取）。本文件不参与任何端口决策，也没有端口覆盖段。",
+    "本文件里写 spk / fpk 键不会被任何代码读取（全仓无消费者）—— 写了无害，但也无用；README 旧示例中的 fpk 包路径字段即属此类历史遗留。",
     "真实配置含明文密码：只放本机，永远不要提交。"
   ],
   "host": "",
@@ -20,7 +20,7 @@
   "username": "",
   "password": "",
   "system": "",
-  "defaults": {},
-  "spk": {},
-  "fpk": {}
+  "appname": "",
+  "ssh_port": "",
+  "saved_at": ""
 }
