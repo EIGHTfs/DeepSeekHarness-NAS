@@ -1,11 +1,7 @@
 {
   "_comment": "SPK/FPK 打包 tar 排除规则（--exclude 模式，仅用于 tar 打包阶段）。实际裁剪（rm -rf .pnpm 非白名单 / devDeps / 源码目录）由 build-prune-whitelist.json 纯白名单驱动（prune-target.sh），见 build.sh。",
   "_note": "NAS 目标 = linux-x64-glibc。native/ 不在排除列表：node-addon-system-linux-x64 软链真身，必须保留（2026-09-12 实装定案）。",
-
-  "slim": {
-    "description": "已废弃：唯一模式 = dist（预构建产物包）。保留此段仅为旧配置兼容，build.sh 不再读取。",
-    "excludes": []
-  },
+  "_mode": "唯一模式 = dist（预构建产物包）。原 slim 段已于 2026-10-05 删除：它早已废弃（excludes 为空、build.sh 从不读取），留着只会让人误以为存在两种打包模式。若将来真要新增模式，必须同步改三处读取点：build/SPK/pack-spk.sh、build/FPK/pack-fpk.sh、build/build-common.sh（它们目前都硬编码只取 dist 段）。",
 
   "dist": {
     "description": "预构建产物包：本地构建产物 + 运行时 node_modules（删 devDeps/源码），装完即用，无首启构建",
