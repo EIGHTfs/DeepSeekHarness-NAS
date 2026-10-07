@@ -899,27 +899,28 @@ sudo synopkg stop deepseek-harness-nas
 > 这些是代码审计（git-sluice）逐条判定后**有意不做**的项：改动会触及运行时行为，或缺少验证条件。
 > 记录在此以便接手，**不是遗漏**。
 
-### 1. 网页安装页的 8 处 `innerHTML`（审计 blocker：`security/script-unsafe-inline`）
+### 1. 网页安装页：内联脚本未外移、未加 CSP（审计 blocker：`security/script-unsafe-inline`）
 
-`web-install/install.html` 有 8 处把服务端返回的数据拼进 `innerHTML`，例如：
+**2026-10-08 更新：原先登记的"8 处 `innerHTML`"已全部改为 DOM API 构造 —— 现在 0 处。**
 
-```js
-log.innerHTML += (new Date().toLocaleTimeString() + ' ' + msg + '\n');   // 追加执行日志
-detectResult.innerHTML = '<b>' + data.hint + '</b><br>' + …;             // 显示探测结果
-tbody.innerHTML = '<tr>…' + data.error + …;                              // 列表与错误提示
-```
+- 远端 SSH 输出与 `install-tasks.jsonl` 字段一律用 `textContent` 插入；
+  发布按钮由行内 `onclick` 改为 `addEventListener`；表格整行提示用 `colSpan` 而非拼串。
+- 本机用桩 `document` 真跑了 11 项断言（`node` 执行）：8 个单元格、`.code-xs` / `.text-ok` /
+  `.cell-note` / `btn-warn` 类、`colspan=8`、按钮的 click 绑定，以及关键一条 ——
+  注入串 `'<img src=x onerror=alert(1)>'` 仍按**纯文本**保留、**未被解析成元素**。
+- 顺带修掉：日志渲染由"每轮 `innerHTML=''` 再逐行 `+=`"改为整体 `textContent` 一次赋值
+  （原实现 1.5 秒一次全量重排 + N 次 HTML 解析）；`style="…"` 行内样式 72 处 → **0 处**。
 
-**为什么没改**：
+**仍未做的是配套的 CSP**，原因是它会连带两处改动、超出"单文件、不改服务端"的既有约束：
 
-- 改成 `textContent` + 转义会**改变渲染结果**（现有实现支持 `<b>`/`<br>` 这类简单标签），属**行为变更**；
-- 配套应当加 **CSP**，但页面目前依赖**内联 `<script>`**，需要一并重构；
-- **本机没有可用的目标机**（.193 已关机），**无法实机验证**安装页 —— 属"改了但验不了"，按项目口径只记录不动。
+- 页面依赖**内联 `<script>`**；要下 `script-src` 就得外移成独立文件，或由服务端注入 `nonce`/`hash`；
+- 而 `install-server.py` **没有静态资源路由**（`do_GET` 只认 3 个页面路径 + 8 个 `/api/*`），
+  外移脚本必然要同时加一条静态路由 + MIME 处理 —— 属**服务端改动**；
+- 另：`style="…"` 已清零，将来若要加 `style-src`，前提已具备。
 
-**建议的改法**（等有人能实机验证时再做）：
-
-1. 所有插值统一走一个 `esc()` 转义函数，或改用 `textContent` + 显式 DOM 构建；
-2. 给页面加 `Content-Security-Policy`，并把内联脚本外移成独立文件；
-3. 在真实 NAS 上跑一遍**安装 / 卸载 / 构建**全流程回归，确认界面无回退。
+**建议的改法**（等决定"允许改服务端"时一并做）：给 `do_GET` 加 `/static/` 白名单路由（扩展名白名单 +
+路径穿越校验），把内联脚本外移为 `app.js`，再由服务端下发 `Content-Security-Policy`；
+最后在真实 NAS 上回归安装 / 卸载 / 构建全流程。
 
 ---
 
