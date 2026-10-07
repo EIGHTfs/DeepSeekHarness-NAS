@@ -68,7 +68,7 @@ D_SCRIPTS="${D_SCRIPTS:-$WS/scripts}"
 #   全部字段一律来自配置，脚本内不写死任何可变值（no-hardcode-config）
 # ----------------------------------------------------------------------------
 eval "$(python3 -c "
-import yaml, sys
+import yaml, sys, os
 with open('$CONFIG_FILE') as f:
     cfg = yaml.safe_load(f) or {}
 defaults = cfg.get('defaults') or {}
@@ -76,7 +76,12 @@ fpk = cfg.get('fpk') or {}
 for k, v in {**defaults, **fpk}.items():
     if v is None:
         continue
-    print(f'FPKCFG_{k.upper()}=\"{v}\"')
+    name = 'FPKCFG_' + k.upper()
+    # 环境里已显式指定 → 尊重外部值，不用 YAML 覆盖。
+    # （与 SPK 侧同一规则；否则网页「构建参数」/命令行的自定义会被静默冲掉）
+    if name in os.environ:
+        continue
+    print(f'{name}=\"{v}\"')
 " 2>/dev/null || true)"
 FPK_PROXY_PORT="${FPKCFG_PROXY_PORT:-3080}"
 FPK_DSH_PORT="${FPKCFG_DSH_PORT:-3081}"
