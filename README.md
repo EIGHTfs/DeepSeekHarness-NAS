@@ -65,6 +65,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | `scripts/fetch-dsh-latest.sh` | 一键拉取 **DSH 官方最新版源码**到 `src/deepseek-ai/<tag>`（自动识别 tag）；**token 显式传参**（脚本不自找凭据文件）：`--token <ghp>` 或环境变量 `DS_FETCH_TOKEN`，不传则匿名（限流 60 次/h） | `./scripts/fetch-dsh-latest.sh [--token <ghp>]` |
 | `scripts/fetch-release-mt.sh` | **多线程下载本仓 Release 资产**（spk/fpk）：走 api.github.com Git Data API 通道（不依赖 github.com 直连），aria2c 分段并发，失败回退 curl 单流；大小校验 + 已存在跳过；凭据取插件托管的 githubToken（不落命令行、不打印） | `[--tag <tag>] [--only spk\|fpk] [--threads N]`；`./scripts/fetch-release-mt.sh --only spk` → `release/<tag>/` |
 | `scripts/promote-release.sh` | **发布提升**：验证通过的 `build/staging/` 产物 → `release/` | `D_REL=<dir>` 覆盖输出目录 |
+| `scripts/prune-release-assets.py` | **清理 Release 旧名资产**：删掉「改名后残留」的旧产物（同类别内只保留本次产物）。安全规则：只处理本包前缀、只清理本次产出过的类别，未产出类别绝不触碰；支持 `--dry-run` | `--tag <tag> --keep-from <产物目录> [--dry-run]`（CI 由 `vars.PRUNE_OLD_ASSETS` 控制，缺省启用） |
 | `web-install/install-remote-spk.sh` | **远程安装工具（群晖 DSM 专用）**：网页/SSH 远端装 spk（install/uninstall/check 三合一，root 补建软链） | 读 `install-config.json`（host/user/password/spk 路径） |
 | `web-install/install-remote-fpk.sh` | **远程安装工具（飞牛 fnOS 专用）**：独立副本只做 fpk——install/uninstall/check + 安装后 root 补建 dsh/pnpm 软链（fnOS 生命周期钩子以应用用户执行，写不了系统 PATH，实测 uid=964） | 读 `install-config.json`（host/user/password/fpk 路径） |
 | `web-install/install-server.py` | **网页安装服务端**：配置保存 + 系统探测 + 远程执行 + **安装历史**（版本+MD5+时间+结果+备注） | 端口 8765，配 `install.html` 前端；历史落盘 `install-tasks.jsonl`（gitignore 不入库） |
@@ -181,6 +182,12 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
   - ⚠ 缓存 tar **必须包含 `.build-done`**：`build-common.sh` 的复用判据是 `[ -f "$WORK/.build-done" ] && [ -d "$TARGET" ] && [ -f "$TARGET/package.json" ]`，漏了它解包后判据不成立，会**静默完整重编**
 - **为何用 tar 单文件**：`upload-artifact@v4` 逐文件处理，745M+ 海量文件会爆 4GB 堆（实测 `FATAL ERROR: Ineffective mark-compacts near heap limit`）；先 `tar -czf` 再上传单文件即根治（`compression-level: 0`，因为已是 `.tar.gz`）
 - **产物开关**：仓库变量 `vars.BUILD_SPK` / `vars.BUILD_FPK`（`'false'` 跳过对应产物；缺省都构建）
+- **旧名资产清理**：仓库变量 `vars.PRUNE_OLD_ASSETS`（**缺省启用**；设 `'false'` 关闭）。发布后由
+  `scripts/prune-release-assets.py` 清理 Release 里**改名后残留**的旧产物 —— 因为
+  `action-gh-release` 只替换**同名**资产，产物一旦改名（实测：SPK 从 `…_x86_64-0.2.1.spk` 改成
+  `…_x86_64-0.2.1-alpha.1.spk`），旧名字会一直挂在 Release 里让下载者选错。安全规则见脚本注释：
+  只清理「本次确实产出过的类别」（架构+后缀+链路），未产出的类别一律不动
+  （故 `BUILD_FPK=false` 时**不会**误删上一轮留下的 FPK）
 - **npm 链路自 2026-10-04 起留档、CI 不执行**：`build/build-npm-app.sh` 头部写明本地手动命令（`./build/build-npm-app.sh && ./build/FPK/pack-fpk.sh --npm`）与恢复自动执行的方法
 - **自动发布（与官方同 tag）**：tag 取官方最新 dsh tag（`scripts/fetch-dsh-latest.sh --print-tag`，形如 `dsh-v<版本>`）；同名 Release 已存在则**覆盖资产与正文**（滚动刷新）；统一发正式 Release，不标 prerelease
 - **不再"部分失败容忍"**（2026-10-04 用户口径）：构建失败即**不打包、不发布**（此前 `release` job 的 `if: always()` 已移除）——避免发出缺项 Release；Release 正文的状态徽标由「检查产物」步骤给出（源码链路两个产物在本 job 依赖成功时即 `success`）

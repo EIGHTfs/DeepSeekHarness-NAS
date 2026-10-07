@@ -25,6 +25,11 @@ concurrency:
 # ── 构建开关（仓库变量 vars.* 控制；未设置均默认构建）───────────────────────
 #   BUILD_SPK = 'false'   关闭 SPK 构建（不设置或 'true' = 构建）
 #   BUILD_FPK = 'false'   关闭 FPK 构建
+#   PRUNE_OLD_ASSETS = 'false'  关闭「清理 Release 里改名后残留的旧产物资产」
+#       （不设置或 'true' = 清理，即**默认启用**，用户口径 2026-10-05）。
+#       背景：action-gh-release 只替换同名资产，产物改名后旧名字会残留（实测同一 Release
+#       挂过新旧两个 SPK）。清理规则见 scripts/prune-release-assets.py 头部注释：
+#       只清理「本次确实产出过的类别」，未产出的类别一律不动（BUILD_FPK=false 时不会误删 FPK）。
 #   FPK 链路：**源码构建 + npm 链路一律都构建**（2026-10-03 起）
 #       原先由 vars.FPK_MODE（both/source/npm）选择，现取消该参数：
 #       两条链路产物用途不同（源码版验证完整链路；npm 版体积小、装得快），
@@ -158,3 +163,19 @@ jobs:
           files: dist-main/*
           prerelease: false
           fail_on_unmatched_files: false
+
+      - name: 清理旧名资产（改名后残留；vars.PRUNE_OLD_ASSETS=false 可关闭）
+        # 为什么需要：发布用的 action-gh-release 只**替换同名资产**，一旦产物改名
+        # （如本次 SPK 从 <ver>.spk 改成 <ver>-alpha.1.spk），旧名字的资产会一直留在 Release 里，
+        # 让下载者选错包（实测遇到同一 Release 挂新旧两个 SPK）。
+        # 安全规则见脚本注释：只清理「本次确实产出过的类别」（架构+后缀+链路），
+        # 未产出的类别一律不动 —— 例如 BUILD_FPK=false 时绝不删上一轮留下的 FPK。
+        if: steps.check.outputs.HAS_FILES == 'yes' && vars.PRUNE_OLD_ASSETS != 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -e
+          python3 scripts/prune-release-assets.py \
+            --tag "${{ steps.reltag.outputs.TAG }}" \
+            --keep-from dist-main
