@@ -96,6 +96,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | `scripts/check-destructive-ops.py` | **破坏性操作守卫**：敏感路径（`@app*`/`/volume*`）的 `rm -rf` 必须带 `--one-file-system`；`web-install/` 不得自定义清理/挂载检测实现（分叉指纹）；`web-install/` 不得有未跟踪文件 | `python3 scripts/check-destructive-ops.py` |
 | `scripts/check-workflow-yaml.py` | **YAML 结构守卫**：拦 `.github/**` 里会导致 action 加载失败的写法（未加引号的值含 `: `、缩进用 Tab、action 必需键缺失），并断言 `needs`/`needs.X.result` 引用的 job **必须存在**（实测：job 重构后引用悬空 → 状态误判 fail → Release 正文被写成"❌ 缺失"） | `python3 scripts/check-workflow-yaml.py` |
 | `scripts/check-build-naming.py` | **命名与语法守卫**：job/action/脚本命名规范；**全部 `.sh` 跑 `bash -n`、全部 `.py` 跑 `ast.parse`**；`.sh/.py` 必须带可执行位（实测：`release-note.sh` 是 644 → CI 里 `./` 调用 exit 126）；排除 vendored `tools/` | `python3 scripts/check-build-naming.py` |
+| `scripts/check-build-config.py` | **构建配置守卫**：断言 `build/build-config.yaml` 的 `defaults`/`spk`/`fpk` 三段是**映射** —— 读取方按 `sec.get('proxy_port')` 取值，段名若写成标量（如 `spk: "30800"`）会抛 AttributeError，而 `read_ports()` 那处是"解析失败就不输出"的设计 → 只会表现为**静默读不到端口段**（极难定位）。**不依赖 PyYAML**（CI 与本机都没装）：无 PyYAML 走结构化检查（段名不得带内联值 + 段后首个有效行必须缩进），有则追加 `isinstance(dict)` 精确断言 | `python3 scripts/check-build-config.py [--file <path>] [--list]` |
 | `scripts/clean-dsm-residue.sh` | **清理唯一实现**（web 端与套件端共用；内含挂载点硬保护，绝不跨挂载点删） | `scripts/clean-dsm-residue.sh <套件名> [主机] [SSH用户]` |
 | `scripts/gh-commit.py` | **备用提交通道**（GitHub Git Data API：blobs→tree→commit→更新 ref；原子多文件；author 固定 `EIGHTfs`；快进失败自动重取 HEAD 重试）。**不需要工作区写权限、不需要 git 二进制**，但**常规提交请优先用 git**（更快、有钩子与 diff 视图）——本机 `/bin/git` 已可用，故其定位是"git 不可用/无写权限时的备用通道"。token 取用顺序：`GH_TOKEN`/`GITHUB_TOKEN` → 候选 `config.json`（工作区 `config.json` 优先，可用 `DSH_GIT_PUSH_CONFIG` 指定其他路径）→ 全部失败则打印已尝试路径并以退出码 2 结束 | `python3 scripts/gh-commit.py <仓库根> "<提交信息>" <文件...>` |
 | `test/safe-rm-rf.test.sh` | **事故回归测试**：断言含挂载点的目录绝不被删（用 `/proc` 验证检出能力，无需 root） | `bash test/safe-rm-rf.test.sh` |
@@ -193,7 +194,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 - **不再"部分失败容忍"**（2026-10-04 用户口径）：构建失败即**不打包、不发布**（此前 `release` job 的 `if: always()` 已移除）——避免发出缺项 Release；Release 正文的状态徽标由「检查产物」步骤给出（源码链路两个产物在本 job 依赖成功时即 `success`）
 - **artifact**：`build-target`（**tar 单文件**，供 pack 复用）+ `build-target-debug-log` / `pack-and-release-debug-log`（完整 `pnpm-build.log`，因 GitHub 偶尔不归档该 job 日志）
 - **Release 自带 SHA256**：正文含每个产物的 `sha256sum`，下载后 `sha256sum <文件>` 对照
-- **守卫套件（构建前先跑，任一失败即红）**：`scripts/check-workflow-yaml.py`（YAML 结构 + `needs` 悬空引用）、`check-readme-coverage.py`、`check-common-functions.py`、`check-destructive-ops.py`、`check-build-naming.py`（含 `.sh/.py` 可执行位）、`test/safe-rm-rf.test.sh`（事故回归）
+- **守卫套件（构建前先跑，任一失败即红）**：`scripts/check-workflow-yaml.py`（YAML 结构 + `needs` 悬空引用）、`check-readme-coverage.py`、`check-common-functions.py`、`check-destructive-ops.py`、`check-build-naming.py`（含 `.sh/.py` 可执行位）、`check-build-config.py`（build-config 端口段必须是映射，防"写成标量→静默读不到端口"）、`test/safe-rm-rf.test.sh`（事故回归）
 - **install 前白名单裁剪**（2026-09-14，SPK CI 磁盘爆盘修复）：官方 monorepo 依赖树约 1.78 万包，install 阶段会拉满 runner 磁盘；`prune-target.sh --before-install` 在 `pnpm install` **前**用纯白名单剥离根 `package.json` 中**非白名单 devDependencies**
   - ⚠ 2026-10-04 教训：被剥掉的**根 devDep** 若正是某个构建期解析入口的**唯一来源**，其传递依赖会随之不再安装 → 构建期 `TS2307`（实测 `vitest` 被剥 → 传递依赖 `vite` 缺失 → `vite.ts(5,55): Cannot find module 'vite'`）。故白名单必须完整：学习器已支持解析 **pnpm 安装摘要**（`+ <包> <版本>`）自动补齐这类根 devDep
 - **本地等效**：按「本地构建」段落逐脚本跑（同一套 fetch → build → 打包 流程）
@@ -530,10 +531,16 @@ FPK：`pack-fpk.sh` 的「保留数据（推荐）」）。网页端此前**没�
   "username": "admin",
   "password": "***",
   "system": "dsm",
-  "fpk": "/path/to/xxx.fpk",
-  "saved_at": "2026-09-10T00:52:05.537Z"
+  "saved_at": "2026-09-10T00:52:05.537Z",
+  "appname": "DeepSeekHarness-NAS",
+  "ssh_port": "22"
 }
 ```
+
+> 字段归属（2026-10-05 逐处核对）：`host`/`port`/`username`/`password`/`saved_at` 由**网页保存**写入；
+> `system` 由网页「探测系统」写入；`appname`（spk 的 `DEFAULT_APP`、fpk 的 `APP_NAME`）与
+> `ssh_port`（fpk 侧，缺省 22）是**远程脚本读取**的可选覆盖项。
+> 这里**没有** `spk` / `fpk` —— 那两个键在本文件中**没有任何读取方**（历史示例里的 `fpk` 包路径属遗留字段）。
 
 - 单一来源铁律：**必须与脚本同目录**（`web-install/`，install-remote-spk.sh 读 `$WS/install-config.json`），禁止网页把配置写到别的目录——否则脚本读不到。
 - 网页保存时密码留空 = 沿用已保存密码（回显占位「留空沿用」）。
@@ -551,8 +558,9 @@ FPK：`pack-fpk.sh` 的「保留数据（推荐）」）。网页端此前**没�
   与 `install-server.py` 读取。
 - **端口不在本文件里**：端口权威是 `build/build-config.yaml` 的 `defaults` / `spk` / `fpk` 三段
   （**那里的段名必须是对象**，被 `sec.get('proxy_port')` 按对象取值）。本文件不参与端口决策。
-  上面示例里的 `"fpk": "/path/to/xxx.fpk"` 属**历史遗留**：`install-config.json` 的 `spk`/`fpk`
-  键**没有任何读取方**，写了无害也无用（别误以为它是端口段或包路径入口）。
+  历史版本的示例里曾出现 `"fpk": "/path/to/xxx.fpk"` 这样的包路径字段 —— 那是**遗留写法**：
+  `install-config.json` 的 `spk`/`fpk` 键**没有任何读取方**，写了无害也无用
+  （别误以为它是端口段或包路径入口）；该字段已从上面的示例中移除。
 
 ### build-config.yaml（端口权威配置，禁止写死）
 
