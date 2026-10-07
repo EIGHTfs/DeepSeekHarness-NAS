@@ -153,6 +153,34 @@
         .mt-2 { margin-top: var(--sp-2); } .mt-3 { margin-top: var(--sp-3); } .mt-4 { margin-top: var(--sp-4); }
         .mb-2 { margin-bottom: var(--sp-2); } .mb-3 { margin-bottom: var(--sp-3); } .mb-4 { margin-bottom: var(--sp-4); }
 
+        /* ── 组件类（把标记里的行内 style 收编到这里）───────────────────── */
+        .hidden { display: none; }
+        .text-muted { color: var(--fg-4); }
+        .input-narrow { max-width: 110px; }
+        .keep-data-label { margin-left: 10px; font-size: var(--fs-sm); color: var(--fg-2); user-select: none; vertical-align: -1px; }
+        /* 行内小按钮：覆盖 .btn 的 width:100% */
+        .btn-inline { width: auto; padding: var(--sp-1) var(--sp-3); margin-left: var(--sp-2); display: inline; font-size: var(--fs-xs); }
+        /* 安装历史表格 */
+        .table { width: 100%; border-collapse: collapse; font-size: var(--fs-xs); }
+        .table th { padding: var(--sp-2); text-align: left; border-bottom: 1px solid var(--bd-2); background: var(--bg-2); color: var(--fg-2); }
+        .table td { padding: var(--sp-2); text-align: left; border-bottom: 1px solid var(--bd-2); color: var(--fg-2); }
+        .table .center { text-align: center; }
+        /* 自动构建进度 */
+        .flex-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+        .progress-label { font-size: var(--fs-sm); color: var(--fg-2); }
+        .progress-pct { font-size: var(--fs-sm); font-weight: bold; color: var(--brand-1); }
+        .progress-elapsed { font-size: var(--fs-xs); color: var(--fg-4); margin-left: auto; }
+        .progress { background: var(--bd-1); border-radius: var(--r-1); height: 8px; overflow: hidden; }
+        .progress > i, .progress-fill { display: block; height: 100%; width: 0%; background: var(--brand-grad-bar); transition: width .5s ease; }
+        .btn-info { background: var(--c-info); }   /* SPK 构建按钮：原行内 #1976d2（白字对比不足） */
+        .log-box { margin-top: var(--sp-2); max-height: 240px; }
+        .log-tall { display: none; max-height: 400px; font-size: 11px; }
+        /* 构建参数面板（details） */
+        .params-box { margin-bottom: var(--sp-3); background: var(--bg-3); border: 1px solid var(--bd-1); border-radius: var(--r-2); padding: var(--sp-2) var(--sp-3); }
+        .params-summary { cursor: pointer; font-size: var(--fs-sm); color: var(--fg-2); font-weight: bold; }
+        .params-box .hint { margin: var(--sp-2) 0 6px; }
+        .pb-source { font-size: var(--fs-xs); color: var(--fg-4); }
+
         /* ── 响应式（原文 0 个 @media：360px 手机上 4 个按钮会挤成一团 ✗）────── */
         @media (max-width: 640px) {
             body { padding: var(--sp-3); }
@@ -176,7 +204,7 @@
                 <label for="host">设备 IP 地址</label>
                 <input type="text" id="host" placeholder="例如：192.168.1.100" required>
             </div>
-            <div class="form-group" style="max-width:110px;">
+            <div class="form-group input-narrow">
                 <label for="port">SSH 端口</label>
                 <input type="number" id="port" value="22" placeholder="22">
             </div>
@@ -220,11 +248,11 @@
         </div>
         <div class="btn-group">
             <button type="button" class="btn btn-green btn-sm" id="installBtn" disabled>📦 安装</button>
-            <button type="button" class="btn btn-sm" id="repairBtn" disabled style="background:linear-gradient(135deg,#ff9800,#e65100);">🔧 修复</button>
+            <button type="button" class="btn btn-sm btn-warn" id="repairBtn" disabled>🔧 修复</button>
             <button type="button" class="btn btn-secondary btn-sm" id="checkBtn" disabled>🔎 检查</button>
             <button type="button" class="btn btn-red btn-sm" id="uninstallBtn" disabled>🗑 卸载</button>
-            <label style="margin-left:10px;font-size:13px;color:#3d444d;user-select:none;">
-              <input type="checkbox" id="keepData" checked style="vertical-align:-1px;">
+            <label class="keep-data-label">
+              <input type="checkbox" id="keepData" checked>
               卸载/修复时<b>保留数据</b>（推荐；取消勾选才会连数据一起删）
             </label>
         </div>
@@ -237,29 +265,29 @@
             配置文件：<code>install-config.json</code>（工作区根，网页保存 = 脚本读取，同一份）<br>
             脚本调用：<code>web-install/install-remote-spk.sh</code>（install / uninstall / check / repair）<br>
             日志文件：<code>install-server.log</code>
-            <button type="button" class="btn btn-sm" id="logBtn" style="width:auto;padding:4px 12px;margin-left:8px;display:inline;font-size:12px;background:#667eea;">📜 查看日志</button>
-            <button type="button" class="btn btn-sm" id="tasksBtn" style="width:auto;padding:4px 12px;margin-left:8px;display:inline;font-size:12px;background:#43a047;">🕘 安装历史</button>
+            <button type="button" class="btn btn-sm btn-inline" id="logBtn">📜 查看日志</button>
+            <button type="button" class="btn btn-sm btn-inline btn-green" id="tasksBtn">🕘 安装历史</button>
             <br>
             <span id="serverFlag">检测服务端…</span>
         </div>
-        <div id="serverLog" class="log" style="margin-top:8px;max-height:240px;"></div>
+        <div id="serverLog" class="log log-box"></div>
 
         <!-- ⑤ 安装历史（版本 + MD5 + 时间 + 结果 + 备注；不含任何账号设备信息） -->
-        <div id="tasksPanel" style="display:none;margin-top:16px;">
+        <div id="tasksPanel" class="hidden mt-4">
             <hr class="divider">
-            <h3 style="font-size:16px;color:#333;margin-bottom:10px;">🕘 安装历史</h3>
-            <div style="overflow-x:auto;">
-                <table style="width:100%;border-collapse:collapse;font-size:12px;" id="tasksTable">
+            <h3 class="section-title">🕘 安装历史</h3>
+            <div class="table-wrap">
+                <table class="table" id="tasksTable">
                     <thead>
-                        <tr style="background:#f5f5f5;color:#555;">
-                            <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">时间</th>
-                            <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">操作</th>
-                            <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">版本</th>
-                            <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">MD5</th>
-                            <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">系统</th>
-                            <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">结果</th>
-                            <th style="padding:8px;text-align:left;border-bottom:1px solid #ddd;">备注</th>
-                            <th style="padding:8px;text-align:center;border-bottom:1px solid #ddd;">发布</th>
+                        <tr>
+                            <th>时间</th>
+                            <th>操作</th>
+                            <th>版本</th>
+                            <th>MD5</th>
+                            <th>系统</th>
+                            <th>结果</th>
+                            <th>备注</th>
+                            <th class="center">发布</th>
                         </tr>
                     </thead>
                     <tbody></tbody>
@@ -269,46 +297,46 @@
         </div>
 
         <!-- ⑥ 自动构建（本地构建物） -->
-        <div id="buildPanel" style="margin-top:16px;">
+        <div id="buildPanel" class="mt-4">
             <hr class="divider">
-            <h3 style="font-size:16px;color:#333;margin-bottom:10px;">🛠 自动构建</h3>
-            <p class="hint" style="margin-bottom:10px;">分步执行本地构建脚本（全量 install，不裁剪 devDeps，tsc 类型检查通过）。产物自动进入安装包列表。构建成功后可在安装历史中选择发布到 GitHub Release。</p>
+            <h3 class="section-title">🛠 自动构建</h3>
+            <p class="hint mb-3">分步执行本地构建脚本（全量 install，不裁剪 devDeps，tsc 类型检查通过）。产物自动进入安装包列表。构建成功后可在安装历史中选择发布到 GitHub Release。</p>
             <!-- 构建参数（可选）：留空 = 用 web-install/build-config.yaml 副本的值。
                  只影响本次构建（以 SPKCFG_*/FPKCFG_* 环境变量下发），不改 build/build-config.yaml 权威配置。 -->
-            <details id="buildParamsBox" style="margin-bottom:12px;background:#f7f8ff;border:1px solid #e0e4f5;border-radius:8px;padding:8px 12px;">
-                <summary style="cursor:pointer;font-size:13px;color:#445;font-weight:bold;">🎛 构建参数（可选；留空则用 web-install/build-config.yaml 的值）</summary>
-                <p class="hint" style="margin:8px 0 6px;">自定义只影响【本次构建】。版本号自动同步官方源码，不可自定义。</p>
-                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px;">
-                    <label style="font-size:12px;color:#555;">品牌名 brand_name<input type="text" id="bpBrand" style="width:100%;padding:4px;border:1px solid #ccd;border-radius:4px;"></label>
-                    <label style="font-size:12px;color:#555;">展示名 display_name<input type="text" id="bpDisplay" style="width:100%;padding:4px;border:1px solid #ccd;border-radius:4px;"></label>
-                    <label style="font-size:12px;color:#555;">标题 title<input type="text" id="bpTitle" style="width:100%;padding:4px;border:1px solid #ccd;border-radius:4px;"></label>
-                    <label style="font-size:12px;color:#555;">简介 desc<input type="text" id="bpDesc" style="width:100%;padding:4px;border:1px solid #ccd;border-radius:4px;"></label>
-                    <label style="font-size:12px;color:#555;">短简介 desc_short<input type="text" id="bpDescShort" style="width:100%;padding:4px;border:1px solid #ccd;border-radius:4px;"></label>
-                    <label style="font-size:12px;color:#555;">代理端口 proxy_port（SPK 30800 / FPK 3080）<input type="number" id="bpProxy" style="width:100%;padding:4px;border:1px solid #ccd;border-radius:4px;"></label>
-                    <label style="font-size:12px;color:#555;">DSH 端口 dsh_port<input type="number" id="bpDsh" style="width:100%;padding:4px;border:1px solid #ccd;border-radius:4px;"></label>
-                    <label style="font-size:12px;color:#555;">容器端口 container_port<input type="number" id="bpContainer" style="width:100%;padding:4px;border:1px solid #ccd;border-radius:4px;"></label>
+            <details id="buildParamsBox" class="params-box">
+                <summary class="params-summary">🎛 构建参数（可选；留空则用 web-install/build-config.yaml 的值）</summary>
+                <p class="hint">自定义只影响【本次构建】。版本号自动同步官方源码，不可自定义。</p>
+                <div class="grid-auto">
+                    <label class="field-label">品牌名 brand_name<input type="text" id="bpBrand" class="field-input"></label>
+                    <label class="field-label">展示名 display_name<input type="text" id="bpDisplay" class="field-input"></label>
+                    <label class="field-label">标题 title<input type="text" id="bpTitle" class="field-input"></label>
+                    <label class="field-label">简介 desc<input type="text" id="bpDesc" class="field-input"></label>
+                    <label class="field-label">短简介 desc_short<input type="text" id="bpDescShort" class="field-input"></label>
+                    <label class="field-label">代理端口 proxy_port（SPK 30800 / FPK 3080）<input type="number" id="bpProxy" class="field-input"></label>
+                    <label class="field-label">DSH 端口 dsh_port<input type="number" id="bpDsh" class="field-input"></label>
+                    <label class="field-label">容器端口 container_port<input type="number" id="bpContainer" class="field-input"></label>
                 </div>
-                <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                    <button type="button" class="btn btn-sm" id="bpLoadBtn" style="background:#78909c;">📥 载入副本默认值</button>
-                    <span id="bpSource" style="font-size:12px;color:#888;"></span>
+                <div class="inline-actions">
+                    <button type="button" class="btn btn-sm btn-secondary" id="bpLoadBtn">📥 载入副本默认值</button>
+                    <span id="bpSource" class="pb-source"></span>
                 </div>
             </details>
-            <div class="btn-group" style="margin-bottom:12px;">
-                <button type="button" class="btn btn-sm" id="buildCommonBtn" style="background:#667eea;">⚙️ build-common</button>
-                <button type="button" class="btn btn-sm" id="buildSpkBtn" style="background:#1976d2;">📦 build-spk</button>
-                <button type="button" class="btn btn-sm" id="buildFpkBtn" style="background:#43a047;">📦 build-fpk</button>
+            <div class="btn-group mb-3">
+                <button type="button" class="btn btn-sm" id="buildCommonBtn">⚙️ build-common</button>
+                <button type="button" class="btn btn-sm btn-info" id="buildSpkBtn">📦 build-spk</button>
+                <button type="button" class="btn btn-sm btn-green" id="buildFpkBtn">📦 build-fpk</button>
             </div>
-            <div id="buildStatus" style="display:none;margin-bottom:10px;">
-                <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
-                    <span id="buildStage" style="font-size:13px;color:#555;">准备中</span>
-                    <span id="buildPercent" style="font-size:13px;font-weight:bold;color:#667eea;">0%</span>
-                    <span id="buildElapsed" style="font-size:12px;color:#999;margin-left:auto;">00:00</span>
+            <div id="buildStatus" class="hidden mb-3">
+                <div class="flex-row">
+                    <span id="buildStage" class="progress-label">准备中</span>
+                    <span id="buildPercent" class="progress-pct">0%</span>
+                    <span id="buildElapsed" class="progress-elapsed">00:00</span>
                 </div>
-                <div style="background:#e0e0e0;border-radius:4px;height:8px;overflow:hidden;">
-                    <div id="buildProgressBar" style="height:100%;width:0%;background:linear-gradient(90deg,#667eea,#764ba2);transition:width 0.5s ease;"></div>
+                <div class="progress">
+                    <div id="buildProgressBar" class="progress-fill"></div>
                 </div>
             </div>
-            <div id="buildLog" class="log" style="display:none;max-height:400px;font-size:11px;"></div>
+            <div id="buildLog" class="log log-tall"></div>
         </div>
     </div>
 
