@@ -590,7 +590,10 @@ find "$ASSEMBLE" -type f -exec chmod 644 {} + 2>/dev/null
 chmod 755 "$ASSEMBLE/scripts/"* 2>/dev/null || true
 chmod 755 "$ASSEMBLE/scripts/start-stop-status" "$ASSEMBLE/scripts/installer" 2>/dev/null || true
 
-OUT_SPK="$D_STAGING/${APP_NAME}_x86_64-${SPK_VERSION}.spk"
+# 文件名用【完整版本】FPK_VERSION，与 FPK 产物同格式（DeepSeekHarness-NAS_x86-<完整版本>.fpk）；
+# 而 INFO 里的内部 version（见上文 version= 那行）仍用 SPK_VERSION（前三段）——
+# 群晖套件版本号不接受 -alpha.1 这类后缀，但**文件名不受此限**，故两者刻意不同，勿统一。
+OUT_SPK="$D_STAGING/${APP_NAME}_x86_64-${FPK_VERSION}.spk"
 # ⚠ staging 是 gitignore 的产物目录，CI 全新 checkout 不存在 → tar 因写不进去失败
 #   （exit code 2）。本地长期有该目录，掩盖了此问题。
 mkdir -p "$D_STAGING"
