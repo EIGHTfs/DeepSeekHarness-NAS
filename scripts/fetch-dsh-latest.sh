@@ -75,6 +75,26 @@ if [[ -z "$GIT_BIN" ]]; then
 fi
 [[ -n "$GIT_BIN" ]] || echo "… 本机未找到 git，跳过增量通道（可装 git 或设 DSH_GIT_BIN）…" >&2
 
+# ---------- 快通道（可选）：与 dsh-git-push 插件【同一口径】 ----------
+# 口径出处：插件 lib/git/endpoints.js（全项目唯一出处）。此处只做等价注入，不另立规则：
+#   · **默认关**：不设 DSH_GIT_MIRROR_PREFIX 就完全直连（CI 跑在 GitHub runner 上无需镜像）。
+#   · 显式开启后，仅把 git 协议里的 https://github.com/ 改写到镜像前缀
+#     —— 第三方镜像会看到流量，必须由使用者显式打开。
+#   · **api.github.com 不走镜像**：API 是逐 blob、为断点续传设计的，改基址会破坏可续性。
+#   · 注入方式与插件一致（GIT_CONFIG_* 环境变量），故下方所有 git 调用无需逐处修改。
+#   · 实测（本机，2026-10-09）：codeload 直连 21KB/s ✗ vs gh-proxy 9.3MB/s ✓（约 440 倍）；
+#     首次建镜像 + 出快照全程 2 分 26 秒（直连预估 2.5 小时）。
+#     用法：DSH_GIT_MIRROR_PREFIX=https://gh-proxy.com/ ./fetch-dsh-latest.sh
+#   · 注意：下方"兜底 API zipball"通道**未接镜像**（改走镜像需同时改解压方式，zip/tar 分叉，
+#     不半接）。主路径（本地镜像增量 → git clone）已接，实测走的正是主路径。
+if [[ -n "${DSH_GIT_MIRROR_PREFIX:-}" ]]; then
+  _MIRROR="${DSH_GIT_MIRROR_PREFIX%/}/"
+  export GIT_CONFIG_COUNT=1
+  export GIT_CONFIG_KEY_0="url.${_MIRROR}https://github.com/.insteadOf"
+  export GIT_CONFIG_VALUE_0="https://github.com/"
+  echo "… 快通道已启用：git 的 https://github.com/ 走 ${_MIRROR}（api.github.com 仍直连）…" >&2
+fi
+
 # ---------- 利用 python3 做严格 semver 比较并选出最高 tag（含 pre-release） ----------
 pick_latest_tag() {
   # tags 判定：token 只来自显式传参（--token 或环境变量 DS_FETCH_TOKEN，见参数解析），
@@ -222,6 +242,8 @@ if [[ -n "$GIT_BIN" ]] && [[ "$GH_CODE" != "000" ]]; then
 fi
 
 # ---------- 方法B: API zipball 下载解压（回退，本机 github 443 不通走这里） ----------
+# ⚠ 本回退通道【未接快通道镜像】（见上方说明：改走镜像要同时改解压方式，zip/tar 分叉）。
+#   若你所在网络 github.com 不通但镜像可用：正常路径会经镜像走 git，一般到不了这里。
 CHOSEN="API zipball"
 echo "… 通过 api.github.com 下载 zipball（$REPO@$SAFE_TAG）…"
 ZIP="$WORK/head.zip"

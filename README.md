@@ -246,6 +246,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | `DSH_GIT_BIN` | 自探测 | git 可执行文件路径覆盖（群晖 git 在 `/var/packages/git/target/bin`，PATH 里常没有） |
 | `DSH_NODE_DIST` | 自探测 | node 发行版目录覆盖（`resolve_node()` 按 `/usr/bin/node` → `$DSH_NODE_DIST/node-v*/bin/node` → 随包 `tools/node-dist/` 顺序解析；公共库 `scripts/lib/common.sh` 提供） |
 | `DS_FETCH_GIT_URL` | 官方仓库 | `fetch-dsh-latest.sh` 的 git 远端覆盖（走镜像/内网时用） |
+| `DSH_GIT_MIRROR_PREFIX` | 关闭（空） | **快通道前缀**：置为镜像前缀（如 `https://gh-proxy.com/`）后，`fetch-dsh-latest.sh` 把 git 协议里的 `https://github.com/` 改写走镜像 —— 与 dsh-git-push 插件 `lib/git/endpoints.js` **同一口径**（默认关、`api.github.com` 不走镜像、仅 web/raw/codeload 类走镜像）；实测本机 codeload 直连 21KB/s → 镜像 **9.3MB/s**（约 440 倍），首次建镜像+出快照 2 分 26 秒 |
 | `DSH_PROXY_PORT` | `30800` | 反代端口覆盖（等价 `--proxy-port`） |
 | `DSH_SLIM_SKIP_NATIVE` | `0` | 置 1 跳过 native 构建（`first-build-logic.sh` 留档脚本用） |
 | `DSH_TOKEN_FILE` | 自动探测 | GitHub token 文件路径覆盖（`fetch-release-mt.sh` 下载本仓 Release 资产时用） |
