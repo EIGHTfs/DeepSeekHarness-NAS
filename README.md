@@ -10,6 +10,30 @@
 [![DSM](https://img.shields.io/badge/DSM-7.2+-blue)](https://www.synology.com)
 [![fnOS](https://img.shields.io/badge/fnOS-1.x+-green)](https://www.flywrc.com)
 
+## 🆕 最新更新（2026-10-10）
+
+> 逐条变更见 [`docs/CHANGELOG.md`](docs/CHANGELOG.md) ·
+> FPK 排障经验见 [`docs/skills/飞牛FPK打包与排障.md`](docs/skills/飞牛FPK打包与排障.md) ·
+> 开发与编辑规范见 [`docs/skills/通用开发规范.md`](docs/skills/通用开发规范.md)（**改代码前必读**）。
+
+**本轮彻底解决了「套件『打开』按钮反复消失」这个复现十余次的老问题**（真因不在文件，而在
+fnOS 应用中心对**启动结果**的判定），并顺带修掉启动慢、插件加载失败、裁剪白名单失效等 9 类缺陷。
+
+| # | 现象 | 真因 | 已固化为 |
+|---|---|---|---|
+| 1 | **「打开」按钮不出现**（应用其实在跑） | 生成的 `cmd/main` 里 `running_dsh` **只调用未定义** + 端口变量用了打包期变量 → fnOS 记 `start app error 10330` | 不变量 **[20][21]** |
+| 2 | `plugin-manager` failed to import | **提升链指向旧版本**（`get-stream@5.2.0`，消费者要 `^9.0.1`）；修复脚本**只补缺、不纠正错链** | 不变量 **[18]** |
+| 3 | `otel` failed to import | 出货裁剪（模式 B）**不读 `_autoLearned`** → 学习成果全落空，包被删 | 不变量 **[19]** |
+| 4 | 装完 `commander`/`js-yaml`/`cordis` 全缺 | 三层链接里**顶层那层从未补过**（Node 往上找命中的正是它） | 不变量 [13] |
+| 5 | 构建单步空转 **14 分 45 秒** | `glob('**')` **跟随软链** → 遍历组合爆炸（已降至 0 秒） | 不变量 [16] |
+| 6 | 构建连续 3 次 **0 秒失败** | `action.yml` 步骤缩进 6 vs 4 空格 → GitHub 拒绝加载整个 action | `check_step_indent` |
+| 7 | 校验工具误报（**官方基准包**被判 5638 条"悬空"） | 工具两处路径归一化 bug（结尾斜杠 / `./` 前缀） | 对照物必须 0 告警 |
+| 8 | 历史版本被**野生调度器**偷偷重建 | 后台派发脚本未登记、且用 `pgrep` 校验不到 | 派发前查零调度器 |
+| 9 | 同一版本**覆盖安装不拷新文件** | fnOS 保留旧应用目录（`check` 仍显示 Installed） | 必须 Web UI 卸载后重装 |
+
+> 📌 **完整实测证据**（真机命令与输出、`error 10330` 日志原文、逐条反证过程）与**提交清单**已归档到
+> → [`docs/skills/飞牛FPK打包与排障.md`](docs/skills/飞牛FPK打包与排障.md) 的
+> **第十节「2026-10-10 修复实证记录」**。README 只保留上面的结论表，不重复细节。
 ## 📦 简介
 
 DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web UI 管理界面，支持多模型配置、自定义 OpenAI 兼容端点。本仓库提供群晖 DSM (.spk) 与飞牛 fnOS (.fpk) 两个 NAS 平台的适配版本，品牌为 **DeepSeekHarness-NAS**（侧栏 + 浏览器标题）。
@@ -503,6 +527,10 @@ start.sh 已自动处理，**无需手工设置**：
 > 打包要点：`app.tgz` 生成后做**后处理** —— 删掉全部 npm/pnpm 软链、所有条目 uid/gid 归 root、目录 755 / 文件 644；软链清单随包携带，安装期由 `cmd/install_callback` 原样还原（软链是 fnOS 解压设 ACL 失败的直接原因）。fpk 应用体与 spk 同源（官方 dsh 版本），门户打开自动带 token，机制与 spk 相同。
 >
 > 📖 飞牛 FPK 的完整打包与排障经验（安装「设置目录权限失败」、装完插件 failed to import / 新建会话失败、套件图标打不开、数据目录多出 `tmp/`、appcenter 日志位置等）见 [`docs/skills/飞牛FPK打包与排障.md`](docs/skills/飞牛FPK打包与排障.md)。
+
+> 📖 **通用开发与编辑规范（从真实事故提炼，改代码前必读）**：
+> [`docs/skills/通用开发规范.md`](docs/skills/通用开发规范.md) —— 提交门禁、编辑安全、
+> 守卫反向验证、诊断的权威来源优先级、后台派发脚本管理、固化协议，附事故速查表与自查清单。
 
 ---
 

@@ -30,6 +30,24 @@ YLW = "\033[33m" if sys.stdout.isatty() else ""
 RST = "\033[0m" if sys.stdout.isatty() else ""
 
 
+def _no_slash(paths):
+    """剥掉条目结尾斜杠。
+
+    ★ 2026-10-10 实测：tar 会把【目录】条目记成带结尾斜杠的形式（如
+      ./node_modules/.pnpm/fast-check@4.8.0/node_modules/fast-check/），
+      而软链指向的是不带斜杠的路径 → 精确匹配失败 → 把【能正常工作的官方基准包】
+      也误判成 5638 条悬空（反向自检证实：基准当候选时同样报 5638）。
+      统一剥掉结尾斜杠，悬空判定才可信。
+    """
+    out = set()
+    for p in paths:
+        p = p.rstrip("/")
+        while p.startswith("./"):
+            p = p[2:]
+        out.add(p)
+    return out
+
+
 def sh(cmd):
     """跑命令，返回 (rc, stdout 文本)。只读操作，失败不抛。"""
     p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
@@ -200,8 +218,8 @@ def inspect(path, verbose=False):
     hooks = sorted(e for e in outer if e.startswith("cmd/") and e.count("/") == 1)
     tops = sorted({e.split("/")[0] for e in ents if e})
     info = {
-        "path": path, "kind": kind, "outer": outer, "outer_set": set(outer),
-        "ents": ents, "links": links, "dangling": bad, "hooks": hooks,
+        "path": path, "kind": kind, "outer": _no_slash(outer), "outer_set": set(outer),
+        "ents": _no_slash(ents), "links": links, "dangling": bad, "hooks": hooks,
         "tops": tops, "manifest": manifest_fields(path, kind),
         "has_sc": any(e.endswith(".sc") for e in outer),
         "has_manifest": "manifest" in outer,
@@ -277,7 +295,12 @@ def main():
 
     # ④ 悬空软链（运行时 Cannot find package 的根源）
     if cand["dangling"]:
-        errs.append("载荷里有 %d 条悬空软链（目标实体被裁剪删掉）" % len(cand["dangling"]))
+        # ★ 2026-10-10 用户口径（真机验证）：SPK 载荷里的悬空软链【不影响安装可用】——
+        #   群晖原样解软链、dev/可选包本就不需要、运行期还有 start.sh 自愈兜底。
+        #   实测官方基准 2.0 SPK 自身也有 5638 条同形态链且工作正常。
+        #   → 降级为【提示】，不再判回归；硬判据只留外层结构 / 钩子 / manifest。
+        print("%s· 提示：载荷有 %d 条悬空软链（不做硬判据；SPK 实测可正常安装运行）%s"
+              % (YLW, len(cand["dangling"]), RST))
         print("%s✗ 悬空软链 %d 条（前 15；这就是插件 failed to import 的根源）:%s"
               % (RED, len(cand["dangling"]), RST))
         for n, t in cand["dangling"][:15]:

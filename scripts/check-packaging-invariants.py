@@ -191,10 +191,10 @@ def main():
         "fix-node-links.py 用 os.scandir 手工遍历（无 ** 递归 glob）",
         "用 ** glob 会跟随 .pnpm 软链爆炸（#98 实测空转 14m45s）；发现 %s" % (_bad or '无'))
 
-    # 17. install_callback 必须把 ui/ 复制到 /var/apps/<app>/ui（2026-10-10 真机两次对照）
-    #     有这份 → 套件「打开」按钮可用；删掉 → 按钮消失（当时服务端一切正常：
-    #     running、三端口、套件模拟 200）。此前据"1Panel 那儿没有 ui/"推断不需要而删掉，
-    #     被真机推翻 —— 这条守卫专防再次被"凭推断"删掉。
+    # 17. install_callback 保留 /var/apps/<app>/ui 的尽力而为复制（2026-10-10 复核更正）
+    #     【旧结论已推翻】全机 5 个应用（含 1Panel）该路径下都没有 ui/ 而入口正常，
+    #     fnOS 读的是应用目录里的 ui/config。"按钮消失"的真因是应用中心判启动失败 10330
+    #     （缺 running_dsh 定义 / 端口变量用错，已修）。本条只防误删该段代码。
     try:
         _fpk = open(os.path.join(ROOT, 'build', 'FPK', 'pack-fpk.sh'), encoding='utf-8').read()
     except Exception:
@@ -204,9 +204,63 @@ def main():
     _fpk_code = '\n'.join(l for l in _fpk.split('\n') if not l.lstrip().startswith('#'))
     chk(17, ('mkdir -p "/var/apps/${APPNAME}/ui"' in _fpk_code)
            and ('cp -a "$APP_DIR/ui/." "/var/apps/${APPNAME}/ui/"' in _fpk_code),
-        "install_callback 复制 ui 到 /var/apps/<app>/ui（套件「打开」按钮依赖）",
-        "缺则飞牛应用中心「打开」按钮消失（两次实测对照：有=可用/删=消失）")
+        "install_callback 保留 ui 到 /var/apps/<app>/ui 的尽力而为复制（非必需项）",
+        "按钮真因是应用中心判启动失败 10330（见 pack-fpk.sh 生成物注释）；本条只防误删该段")
 
+
+    # 18. 修复脚本必须【纠正已存在的错链】，不能只补缺（2026-10-10 真机实测）
+    #     实例：execa@10.0.1 声明 get-stream ^9.0.1，但 .pnpm/node_modules/get-stream
+    #     指向 5.2.0（CJS）→ "Named export 'getStreamAsArray' not found"，
+    #     plugin-manager 起不来。只补缺的实现在此场景【永远修不好】。
+    #     剥注释后检查，防"注释里有就算过"的假绿（chk17 踩过这个坑）。
+    def _code_only(t):
+        return '\n'.join(x for x in t.split('\n')
+                         if not x.lstrip().startswith('#') and not x.lstrip().startswith('//'))
+    try:
+        _ss2 = _code_only(open(os.path.join(ROOT, 'build', 'start.sh.example'), encoding='utf-8').read())
+    except Exception:
+        _ss2 = ''
+    chk(18, ('def relink(' in _code_only(_fnl)) and ('const fixLink = ' in _ss2),
+        "修复脚本会【纠正错链】（python relink + JS fixLink），不只补缺",
+        "只补缺时 pnpm 把提升/顶层链指向旧版本就永远修不好（实测 get-stream 5.2.0 vs ^9.0.1）")
+
+    # 19. 出货裁剪（模式 B）必须并入 _autoLearned（2026-10-10 真机实测）
+    #     实证：otel 报 Cannot find module '@szmarczak/http-timer'；该包已在
+    #     extra 与 _autoLearned，却不在 lockfileDeps，而模式 B 只读 lockfileDeps +
+    #     workspaceRuntimeDeps → 出货被删。全仓库无一处读 _autoLearned（学习成果落空），
+    #     而 README 把它写成"强制保留项"。此守卫确保代码与文档一致、学习不白学。
+    try:
+        _pt = _code_only(open(os.path.join(ROOT, 'build', 'prune-target.sh'), encoding='utf-8').read())
+    except Exception:
+        _pt = ''
+    chk(19, "_autoLearned" in _pt,
+        "出货裁剪（模式 B）并入 _autoLearned（否则学习成果落空）",
+        "缺则学到的运行时依赖在出货时被删（实测 @szmarczak/http-timer → otel 挂）")
+
+    # 20. 两个打包脚本生成的 cmd/main 必须【自带 running_dsh 定义】（2026-10-10 真机实测）
+    #     病根：生成物调用 running_dsh 却没定义（它只在 scripts/lib/common.sh 里）→
+    #     飞牛真机实测 cmd/main status 报 "running_dsh: 未找到命令" rc=3 →
+    #     fnOS 应用中心把启动判为失败（error log: start app error 10330）→
+    #     「打开」按钮不出现。这个现象反复复现了十几次。
+    def _defs(pat):
+        t = _code_only(open(os.path.join(ROOT, pat), encoding='utf-8').read())
+        return ('running_dsh() {' in t) and (t.count('running_dsh ') >= 1)
+    chk(20, _defs('build/FPK/pack-fpk.sh') and _defs('build/SPK/pack-spk.sh'),
+        "FPK/SPK 生成的 cmd/main 自带 running_dsh 定义（否则应用中心判启动失败、无打开按钮）",
+        "只调用不定义 → 真机 rc=3 + fnOS error 10330 → 打开按钮消失（实测复现十余次）")
+
+    # 21. FPK 生成的 cmd/main 必须用【运行时端口变量】（2026-10-10 真机实测第二处 bug）
+    #     生成物是 <<'EOF' 引号 heredoc，里面的 $FPK_DSH_PORT 是【打包脚本的变量】，
+    #     运行时为空 → running_dsh 拿到空端口 → status 恒失败 → fnOS 记启动失败(10330)。
+    #     真机实测：修成 ${DSH_PORT:-$FPK_DSH_PORT} 后 10330 不再新增、status rc=0。
+    try:
+        _fpkgen = _code_only(open(os.path.join(ROOT, 'build', 'FPK', 'pack-fpk.sh'), encoding='utf-8').read())
+    except Exception:
+        _fpkgen = ''
+    chk(21, 'running_dsh "${DSH_PORT:-$FPK_DSH_PORT}"' in _fpkgen
+           and 'running_dsh "$FPK_DSH_PORT"' not in _fpkgen,
+        "FPK 生成物用运行时端口变量（$DSH_PORT 优先），不用打包期变量",
+        "打包期变量在生成物里为空 → running_dsh 恒失败 → fnOS 记启动失败 10330（实测）")
     # 输出
     for no, ok, msg, hint in checks:
         if ok:

@@ -694,6 +694,24 @@ function selfHealWorkspaceLinks(root) {
   //   （实测：补 661 条顶层链后应用立刻 running、套件打开 200）。
   for (const name of Object.keys(ent)) { const _t = pickEnt(name); if (_t && mk(path.join(nm, name), _t)) nTop++; }
   for (const name of Object.keys(ws)) if (mk(path.join(nm, name), ws[name])) nTop++;
+  // ★ 纠正已存在的错链（2026-10-10 真机实测）：pnpm 可能把提升/顶层链指向【旧版本】实体，
+  //   实例：execa@10.0.1 声明 get-stream ^9.0.1，而 .pnpm/node_modules/get-stream 指向
+  //   5.2.0（CJS）→ "Named export 'getStreamAsArray' not found"；mk() 只补缺、从不纠正
+  //   → 错链永远错。这两层一律纠正为最高版本（与 python 侧 relink 同规则）。
+  let nFix = 0;
+  const fixLink = (lp, tgt) => {
+    if (!tgt) return;
+    let cur = null;
+    try { cur = fs.realpathSync(lp); } catch (e) { return; }
+    const wantT = path.resolve(tgt);
+    if (cur === wantT) return;
+    try { fs.unlinkSync(lp); fs.symlinkSync(path.relative(path.dirname(lp), wantT), lp); nFix++; } catch (e) {}
+  };
+  for (const name of Object.keys(ent)) {
+    const _t = pickEnt(name);
+    fixLink(path.join(pnpm, 'node_modules', name), _t);
+    fixLink(path.join(nm, name), _t);
+  }
   // ① 顶层 + ③ 包内：按各 package.json 的依赖建链
   const fixDeps = (dir, depth) => {
     if (depth > 4) return;
@@ -719,7 +737,7 @@ function selfHealWorkspaceLinks(root) {
     try { st = fs.statSync(path.join(root, top)); } catch (e) { continue; }
     if (st.isDirectory()) fixDeps(path.join(root, top), 0);
   }
-  if (nTop || nDep) console.log(`[√] 链接自愈兜底: 提升目录 ${nTop} 条 + 包内依赖 ${nDep} 条`);
+  if (nTop || nDep || nFix) console.log(`[√] 链接自愈兜底: 提升目录 ${nTop} 条 + 包内依赖 ${nDep} 条 + 错链纠正 ${nFix} 条`);
 }
 
 // 软链清单兜底：外层 links.tar（只含软链条目）解回应用体，幂等；安装期没解回时这里补
