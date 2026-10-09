@@ -545,24 +545,75 @@ if _STAGE_OK install && [ ! -d "$BUILD_SRC/node_modules" ]; then
       PATH="$PNPM_BIN_DIR:$PATH" HOME="$_HOME_DIR" PNPM_STORE_DIR="$PNPM_STORE" \
       npm_config_cache="$NPM_CACHE" \
       npm_config_fetch_timeout=600000 npm_config_fetch_retries=5 npm_config_network_concurrency=8 \
-      "$_PNPM_SHIM" install --store-dir="$PNPM_STORE" --force --no-frozen-lockfile "${1:-}" \
+      "$_PNPM_SHIM" install --store-dir="$PNPM_STORE" --force --no-frozen-lockfile ${1:+$1} \
       > "${_PNPM_LOG}.${_tag}" 2>&1 )
     local _rc=$?
     cp -f "${_PNPM_LOG}.${_tag}" "$_PNPM_LOG" 2>/dev/null || true   # 保持旧路径仍指向最近一次
     return $_rc
   }
+  # ── npm 源选择（2026-10-09 用户建议 + 本机实测修正）────────────────────────────
+  #   原实现：默认源硬试 3 次（每次失败 sleep 30s）→ 才切 npmmirror 兜底一次。
+  #   两个毛病：① 白等最多 90 秒；② 失败原因若非网络（如 pnpm 参数错）照样重试 3 次，纯浪费。
+  #   现改为：并发探测候选源（每个一次请求、超时 4s），取【HTTP 2xx/3xx 且耗时最短】者。
+  #   ★ 规则是"最快者胜"而不是"先回者胜"：本机实测 registry.npmjs.org 200 但耗时 5.99s
+  #     （"假可用"，几乎等于超时），registry.npmmirror.com 仅 0.63s —— 按列表顺序选会选错。
+  #   全不可达则回落默认源（让 pnpm 自己报网络错，便于定位）。
+  #   以后加镜像：只往下面数组加一行即可。
+  NPM_REGISTRY_CANDIDATES=(
+    "https://registry.npmjs.org"
+    "https://registry.npmmirror.com"
+  )
+  _npm_pick_registry() {
+    local _d _i=0 _u
+    _d="$(mktemp -d 2>/dev/null)" || _d="/tmp/npmreg.$$"
+    mkdir -p "$_d" 2>/dev/null || true
+    for _u in "${NPM_REGISTRY_CANDIDATES[@]}"; do
+      _i=$((_i + 1))
+      ( _c="$(curl -sS -o /dev/null -m 4 -w '%{http_code} %{time_total}' "$_u/pnpm" 2>/dev/null || echo '000 99')"
+        printf '%s|%s\n' "$_u" "$_c" > "$_d/$_i" ) &
+    done
+    wait
+    local _best="" _bestt="99" _f _line _url _code _t
+    for _f in "$_d"/*; do
+      [ -f "$_f" ] || continue
+      _line="$(cat "$_f" 2>/dev/null || echo '')"
+      _url="${_line%%|*}"
+      _code="$(printf '%s' "${_line#*|}" | awk '{print $1}')"
+      _t="$(printf '%s' "${_line#*|}" | awk '{print $2}')"
+      case "$_code" in 200|301|302) ;; *) continue ;; esac
+      if awk -v a="$_t" -v b="$_bestt" 'BEGIN{exit !(a<b)}'; then _best="$_url"; _bestt="$_t"; fi
+    done
+    rm -rf "$_d" 2>/dev/null || true
+    [ -n "$_best" ] && printf '%s' "$_best"
+    return 0
+  }
+  _PICKED_REG="$(_npm_pick_registry)"
+  if [ -n "$_PICKED_REG" ]; then
+    echo "  → npm 源探测：选用 $_PICKED_REG（候选 ${#NPM_REGISTRY_CANDIDATES[@]} 个，取最快）"
+    _REG_ARG="--registry=$_PICKED_REG"
+  else
+    echo "  → npm 源探测：候选源均不可达 → 回落默认源（由 pnpm 自行报错）"
+    _REG_ARG=""
+  fi
   _inst_ok=1
   for _attempt in 1 2 3; do
-    echo "  → pnpm install 尝试 $_attempt/3（fetch-timeout=600s, retries=5）"
-    if _pnpm_install "" "attempt-$_attempt"; then _inst_ok=0; break; fi
+    echo "  → pnpm install 尝试 $_attempt/3（源=${_PICKED_REG:-默认}，fetch-timeout=600s, retries=5）"
+    if _pnpm_install "$_REG_ARG" "attempt-$_attempt"; then _inst_ok=0; break; fi
     echo "  ── 第 $_attempt 次失败输出（完整日志: ${_PNPM_LOG}.attempt-$_attempt）──" >&2
     tail -15 "${_PNPM_LOG}.attempt-$_attempt" 2>/dev/null || true
     grep -m3 -iE "unknown option|ERR_PNPM|error" "${_PNPM_LOG}.attempt-$_attempt" 2>/dev/null | sed 's/^/     /' >&2 || true
+    # ★ 参数类错误重试无意义（2026-10-09 实测：Unknown option: 'frozen-lockfile' 连报 3 次，
+    #   每次还白等 30 秒 = 90 秒纯浪费）→ 立即中止，交给下方汇总输出定位。
+    if grep -qiE "unknown option|ERR_PNPM_BAD_OPTION|ERR_PNPM_INVALID" "${_PNPM_LOG}.attempt-$_attempt" 2>/dev/null; then
+      echo "  ✗ 参数类错误（重试无意义）→ 立即中止 install 重试" >&2
+      break
+    fi
     echo "  ⚠ pnpm install 第 $_attempt 次失败，30s 后重试" >&2
     [ "$_attempt" -lt 3 ] && sleep 30
   done
-  if [ "$_inst_ok" = "1" ]; then
-    echo "  ⚠ 默认源 3 次失败，切 npmmirror 镜像最后尝试" >&2
+  # 兜底：所选源不是 npmmirror 且最终仍失败 → 再用 npmmirror 试一次（保留原有兜底能力）
+  if [ "$_inst_ok" = "1" ] && [ "$_PICKED_REG" != "https://registry.npmmirror.com" ]; then
+    echo "  ⚠ 已选源仍失败，切 npmmirror 镜像最后尝试" >&2
     _pnpm_install "--registry=https://registry.npmmirror.com" "attempt-mirror" && _inst_ok=0 || true
   fi
   if [ "$_inst_ok" = "1" ]; then
