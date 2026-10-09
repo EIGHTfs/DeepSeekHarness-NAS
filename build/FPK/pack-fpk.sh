@@ -199,6 +199,35 @@ echo "  ✓ fpk var/ports 已按 FPK 端口段重写"
 mkdir -p "$FPK_SRC/ui/images" "$FPK_APP/ui/images"
 cp "$D_ASSETS/ui/images/"*.png "$FPK_SRC/ui/images/" 2>/dev/null || true
 cp "$D_ASSETS/ui/images/"*.png "$FPK_APP/ui/images/" 2>/dev/null || true
+
+# ── 门户图标命名归一化（2026-10-10 实测必需）──────────────────────────────────
+#   fnOS/群晖的门户条目用 "icon": "images/icon-{0}.png" 模板（【短横线】），
+#   而仓库里的图标资产是 icon_256.png / 64.png 这种命名 → 模板指空 → 桌面入口
+#   的图标取不到，应用中心「打开」按钮点不开（对照能正常打开的 1Panel：
+#   它的 ui/images 里就是 icon-32/64/128/256.png + icon.png）。
+#   这里统一补齐短横线命名（幂等；源取现有任一图标）。
+_normalize_portal_icons() {
+  local dir="$1"
+  [ -d "$dir" ] || return 0
+  local src=""
+  for c in "$dir/icon-256.png" "$dir/icon_256.png" "$dir/256.png" "$dir/icon.png"; do
+    [ -f "$c" ] && { src="$c"; break; }
+  done
+  [ -n "$src" ] || return 0
+  local src64=""
+  for c in "$dir/icon-64.png" "$dir/icon_64.png" "$dir/64.png" "$src"; do
+    [ -f "$c" ] && { src64="$c"; break; }
+  done
+  local n=0
+  for pair in "icon-256.png:$src" "icon-128.png:$src" "icon-64.png:$src64" "icon-32.png:$src64" "icon.png:$src"; do
+    local dst="${pair%%:*}" from="${pair#*:}"
+    [ -f "$dir/$dst" ] || { cp -f "$from" "$dir/$dst" 2>/dev/null && n=$((n+1)); }
+  done
+  [ "$n" -gt 0 ] && echo "  ✓ 门户图标归一化: 补 $n 个（icon-{N}.png）"
+  return 0
+}
+_normalize_portal_icons "$FPK_SRC/ui/images"
+_normalize_portal_icons "$FPK_APP/ui/images"
 "$FPK_APP/bin/start.sh" gen-portal --type url --key-prefix "" --all-users true --with-url true --key-id "$APP_NAME" \
   > "$FPK_SRC/ui/config"
 cp "$FPK_SRC/ui/config" "$FPK_APP/ui/config"

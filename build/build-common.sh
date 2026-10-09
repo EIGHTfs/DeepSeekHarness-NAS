@@ -781,6 +781,34 @@ mkdir -p "$TARGET/var/logs" "$TARGET/var/data" "$TARGET/.dsh-home/.dsh"
 mkdir -p "$TARGET/ui/images"
 cp "$D_ASSETS/ui/images/"*.png "$TARGET/ui/images/" 2>/dev/null || true
 
+# ── 门户图标命名归一化（2026-10-10 实测必需）──────────────────────────────────
+#   fnOS/群晖的门户条目用 "icon": "images/icon-{0}.png" 模板（【短横线】），
+#   而仓库里的图标资产是 icon_256.png / 64.png 这种命名 → 模板指空 → 桌面入口
+#   的图标取不到，应用中心「打开」按钮点不开（对照能正常打开的 1Panel：
+#   它的 ui/images 里就是 icon-32/64/128/256.png + icon.png）。
+#   这里统一补齐短横线命名（幂等；源取现有任一图标）。
+_normalize_portal_icons() {
+  local dir="$1"
+  [ -d "$dir" ] || return 0
+  local src=""
+  for c in "$dir/icon-256.png" "$dir/icon_256.png" "$dir/256.png" "$dir/icon.png"; do
+    [ -f "$c" ] && { src="$c"; break; }
+  done
+  [ -n "$src" ] || return 0
+  local src64=""
+  for c in "$dir/icon-64.png" "$dir/icon_64.png" "$dir/64.png" "$src"; do
+    [ -f "$c" ] && { src64="$c"; break; }
+  done
+  local n=0
+  for pair in "icon-256.png:$src" "icon-128.png:$src" "icon-64.png:$src64" "icon-32.png:$src64" "icon.png:$src"; do
+    local dst="${pair%%:*}" from="${pair#*:}"
+    [ -f "$dir/$dst" ] || { cp -f "$from" "$dir/$dst" 2>/dev/null && n=$((n+1)); }
+  done
+  [ "$n" -gt 0 ] && echo "  ✓ 门户图标归一化: 补 $n 个（icon-{N}.png）"
+  return 0
+}
+_normalize_portal_icons "$TARGET/ui/images"
+
 echo "▶ target 待裁剪: $TARGET ($(du -sh "$TARGET" 2>/dev/null | cut -f1))"
 _ANN "stage=$BUILD_STAGE build 结束 (target=$(du -sh "$TARGET" 2>/dev/null | cut -f1))"
 fi   # 结束 build 门控（stage=install/prune 时跳过 build+组装）
@@ -797,48 +825,14 @@ _ANN "stage=$BUILD_STAGE prune 开始"
 _ANN "stage=$BUILD_STAGE prune 结束"
 fi
 
-# ── 顶层链接补全（2026-10-09 实测必需，勿删）──────────────────────────────────
-#   病根：DSH 运行时按 node_modules/<包名> 解析依赖，而这些【顶层链接】在
-#   裁剪 / 组装 / 安装任一环节可能整批缺失。实测 apps/cli 声明的 85 个依赖缺 8 个：
-#     commander / js-yaml / node-addon-require-builtin /
-#     @deepseek-ai/cordis{,-plugin-include,-plugin-loader,-plugin-timer} / @deepseek-ai/schemastery
-#   （.pnpm 实体都在，只是顶层这层链接没进包）→ 启动即 Cannot find package 'X'
-#   → DSH 退出 code=1 → 守护反复重试 → 用户观感"启动卡很久"。
-#   这些链接可**确定性重建**：工作区包 → 指向 packages/** 源码目录；
-#   第三方 → 从 .pnpm/<名字转义>@*/node_modules/<包名> 实体回链。
-#   ⚠ 必须放在裁剪之后、写 meta 之前，且作用在 target 上（打包器直接消费 target）。
-if [ -d "$TARGET/node_modules" ]; then
-  _wl_out="$(python3 - "$TARGET" <<'PYEOF'
-import json, os, sys, glob
-ad = sys.argv[1]; nm = os.path.join(ad, 'node_modules'); pnpm = os.path.join(nm, '.pnpm')
-names, ws = set(), {}
-for pat in ('packages', 'apps'):
-    for pj in glob.glob(os.path.join(ad, pat, '**', 'package.json'), recursive=True):
-        if '/node_modules/' in pj: continue
-        try: d = json.load(open(pj, encoding='utf-8'))
-        except Exception: continue
-        for sec in ('dependencies', 'optionalDependencies', 'peerDependencies'):
-            names.update((d.get(sec) or {}).keys())
-        if pat == 'packages' and d.get('name'): ws[d['name']] = os.path.dirname(pj)
-made, miss = 0, []
-for n in sorted(names):
-    link = os.path.join(nm, n)
-    if os.path.exists(link): continue
-    os.makedirs(os.path.dirname(link), exist_ok=True)
-    tgt = None
-    if n in ws:
-        tgt = os.path.relpath(ws[n], os.path.dirname(link))
-    else:
-        c = sorted(glob.glob(os.path.join(pnpm, n.replace('/', '+') + '@*', 'node_modules', n)))
-        if c: tgt = os.path.relpath(c[0], os.path.dirname(link))
-    if tgt:
-        try: os.symlink(tgt, link); made += 1
-        except Exception: miss.append(n)
-    else: miss.append(n)
-print('新建 %d 条；无实体 %d 个%s' % (made, len(miss), ('（' + ', '.join(miss[:8]) + '）') if miss else ''))
-PYEOF
-)"
-  echo "  ✓ 顶层链接补全: ${_wl_out}"
+# ── 顶层/提升/包内链接补全（2026-10-09 实测必需，勿删）────────────────────────
+#   见 build/fix-node-links.py 的文件头：pnpm 的链接分三层（顶层 / .pnpm/node_modules 提升 /
+#   .pnpm/<包>@<版本>/node_modules 包内），任一层缺失都会在启动时报
+#   Cannot find module / Cannot find package → DSH 退出 code=1 → 守护反复重试
+#   → 用户观感"启动卡很久"。该脚本确定性、幂等、只增不删、纯本地。
+#   ⚠ 必须放在裁剪之后、写 meta 之前，作用在 target 上（打包器直接消费 target）。
+if [ -d "$TARGET/node_modules" ] && [ -f "$SCRIPT_DIR/fix-node-links.py" ]; then
+  python3 "$SCRIPT_DIR/fix-node-links.py" "$TARGET" || echo "  ⚠ 链接补全返回非零，继续（不阻断构建）"
 fi
 #   模式 B 是纯白名单裁剪（不做依赖闭包，否则 target 撑到 5.3G），会删掉运行时传递依赖：
 #     实测 execa → is-plain-obj、@js-temporal/polyfill → jsbi
