@@ -797,6 +797,24 @@ _ANN "stage=$BUILD_STAGE prune 开始"
 _ANN "stage=$BUILD_STAGE prune 结束"
 fi
 
+# ── 运行时精准补包（2026-10-09 移到这里；这是 CI 缺包的最终根因）──────────────
+#   模式 B 是纯白名单裁剪（不做依赖闭包，否则 target 撑到 5.3G），会删掉运行时传递依赖：
+#     实测 execa → is-plain-obj、@js-temporal/polyfill → jsbi
+#     → 运行时 Cannot find package 'x' → DSH 内置插件 plugin-manager / otel / schedule /
+#       office-to-pdf failed to import → tool-schedule never started、新建会话失败。
+#   而 pnpm 的解析结果写在 .pnpm 的**目录列表**里，静态白名单必漏 → 必须探测驱动补包。
+#   ★ 为什么必须放在这里而不是 pack-spk/pack-fpk：
+#     CI 的打包 job 只下载【target artifact】，$BUILD_SRC（构建副本）在那个 job 里不存在 ✗
+#     → 原先放在打包器里调用，在 CI 里一直静默跳过（日志："跳过运行时补包"），
+#       即运行时补包在 CI 里从来没生效过。这里 BUILD_SRC 就在手边，补进的是 TARGET，
+#       两个打包器都直接受益。
+if _STAGE_OK prune && [ -x "$SCRIPT_DIR/fix-runtime-deps.sh" ] && [ -d "$BUILD_SRC/node_modules/.pnpm" ]; then
+  echo "▶ 运行时精准补包（fix-runtime-deps.sh；裁剪后、写 meta 前）"
+  "$SCRIPT_DIR/fix-runtime-deps.sh" "$TARGET" "$BUILD_SRC" || echo "  ⚠ 补包探测返回非零，继续（不阻断构建）"
+else
+  echo "▶ 跳过运行时补包（非 prune 阶段 / 脚本缺失 / 构建副本不完整）"
+fi
+
 fi   # 结束「二、源码副本 + 构建 + 三、裁剪」（skip-build=1 复用 target 时整体跳过）
 
 #===============================================================================
