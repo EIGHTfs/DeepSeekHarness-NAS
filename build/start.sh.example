@@ -957,6 +957,20 @@ code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
       clientRes.end(FORBIDDEN_PAGE);
       return;
     }
+    // ①b 陈旧 token 兜底（2026-10-09 实测必需）：URL 里带了 token，但【不是当次 token】。
+    //   fnOS 桌面/套件缓存的是【上次安装或上次启动时的 URL】，应用一重启 token 就变了 →
+    //   按钮带着过期 token 进来 → 直接透传给 DSH → DSH 401 → 用户观感"套件打不开"，
+    //   且**每次重启都会复发**（这正是反复出现的那类报告）。
+    //   这里直接 302 换成当次 token；局域网硬闸（⓪）已限定来源，安全边界不变。
+    if (dshToken && clientReq.method === 'GET' && !hasAuth && !clientReq.headers.upgrade) {
+      const _tm = clientReq.url.match(/[?&]token=([A-Za-z0-9_-]+)/);
+      if (_tm && _tm[1] !== dshToken) {
+        const _fixed = clientReq.url.replace(/([?&])token=[A-Za-z0-9_-]+/, '$1token=' + dshToken);
+        clientRes.writeHead(302, { 'Location': _fixed, 'Cache-Control': 'no-store, no-cache, must-revalidate' });
+        clientRes.end();
+        return;
+      }
+    }
     // ===== 以下为原有反代逻辑 =====
     // 不设置 x-forwarded-for / x-real-ip / forwarded：
     // 插件的重启接口要求 "loopback 直连且无代理转发痕迹"（trustedRestartRequest）
