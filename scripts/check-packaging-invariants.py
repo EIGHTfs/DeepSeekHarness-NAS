@@ -23,6 +23,9 @@
   9. build.yml 不得有 schedule（每日定时会破坏看门狗"成功后暂停 6 小时"口径）
  10. watch-official.yml 必须保留三条件（tag 未对齐 / 无构建在跑 / 距上次成功 ≥6h）
  11. 两条链路（SPK/FPK）的运行时补包调用必须同时存在（防止只修一条）
+ 12. 反代的「自动带 token」分支必须排在 403 之前
+     （fnOS 套件打开与地址栏直连都发 sec-fetch-site=none，无法区分；
+      403 在前 → 套件图标打开必吃 403，用户实测症状）
 
 用法：./scripts/check-packaging-invariants.py [--verbose]
 退出码 0 = 全部满足，1 = 有回归。
@@ -126,6 +129,16 @@ def main():
     chk(10, ok_watch,
         "watch-official.yml 保留三条件（tag 未对齐/无构建在跑/距上次成功 ≥6h）",
         "应保留：官方 tag≠本仓 tag / 无构建在跑 / 距上次成功 ≥6 小时（21600s）")
+
+    # 12. 反代里「自动带 token」必须排在 403 之前
+    #     fnOS 套件图标打开与地址栏直连**都**发 sec-fetch-site=none，无法区分；
+    #     403 若在前，从套件图标打开必吃 403（2026-10-09 用户实测症状：
+    #     "套件没打开 url，url 不带 token" → 页面显示「请从套件图标打开」）。
+    i_auto = start.find("autoAuthRedirect(clientReq, clientRes)")
+    i_403 = start.find("clientRes.end(FORBIDDEN_PAGE)")
+    chk(12, i_auto != -1 and i_403 != -1 and i_auto < i_403,
+        "反代的「自动带 token」分支排在 403 之前",
+        "autoAuth 位置=%s，403 位置=%s（前者必须更靠前；否则套件图标打开会吃 403）" % (i_auto, i_403))
 
     # 输出
     for no, ok, msg, hint in checks:

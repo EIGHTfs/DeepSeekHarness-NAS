@@ -3,6 +3,36 @@
 > 本文件承载**历史更新**。README 只保留"现在是什么样、怎么用"，不再逐条记录演变过程。
 > 每条一行；同一日期内按"改动面"归类。**解释性内容（为什么这么做、踩过什么坑）见 `docs/skills/`。**
 
+## 2026-10-09（下半场：FPK 安装/启动/门户全链路打通）
+
+**FPK 安装「设置目录权限失败」**
+- 根因：npm/pnpm 软链打包后成自引用/损坏链接，fnOS 解压逐条目设 ACL 时 `acl_get_file failed`。
+- 修法：app.tgz 后处理 —— 删全部软链、条目 uid/gid 归 root、目录 755 / 文件 644；软链清单存 `links.tar`，
+  安装期由 `cmd/install_callback` 原样解回（逐行 ln -s 的文本清单实测会错 542 条，已弃用）。
+- 实测：`appcenter-cli check` 由 Not Installed → **Installed**。
+
+**FPK 装完启动不了 / 插件全挂**
+- 根因一：`pack-fpk.sh` 钩子循环漏了 `install_callback`（fnOS 安装钩子不执行）。
+- 根因二：`pack-fpk.sh` 从未调用 `build/fix-runtime-deps.sh`（SPK 一直有）→ 缺 `is-plain-obj`/`jsbi`
+  等运行时传递依赖 → `plugin-manager`/`otel`/`schedule`/`office-to-pdf` failed to import、
+  `tool-schedule never started`、新建会话失败。
+
+**门户/套件打开打不开**
+- `sync_portal_token` 只认 DSM 的 `/var/packages/…`，飞牛上不命中 → 补上飞牛路径。
+- 反代的「自动带 token」分支排在 403 之后，而 fnOS 套件打开与地址栏直连**都发 `sec-fetch-site=none`**
+  无法区分 → 从套件图标打开必吃 403。改为自动跳转前置、403 仅在拿不到 token 时兜底。
+- 实测：模拟套件打开（不带 token）→ 302 带 token → 最终 **HTTP 200**。
+
+**临时目录**
+- `TMPDIR` 不再落在应用数据目录（`<PKG_VAR>/<version>/tmp`），改用平台自带的按应用临时目录
+  （`$TRIM_PKGTMP` / `/var/apps/<app>/tmp` → `/vol2/@apptemp/<app>`；群晖用 `/var/packages/<app>/tmp`）。
+
+**CI**
+- 新增 `workflow_dispatch` 输入 `dsh_tag`，可指定官方 tag 构建（用于补全历史版本）。
+- 新增两个守卫：`check-package-parity.py`（以安装成功版本为基准比对两个包的结构/软链/悬空目标）、
+  `check-packaging-invariants.py`（12 项打包不变量，已登记进 CI）。
+- 清理：删掉 pack-fpk.sh/README 里当初 AI 猜测的错误码与已被推翻的实验结论，只留可复现事实与做法。
+
 ## 2026-10-09
 
 **CI / 自动化**
