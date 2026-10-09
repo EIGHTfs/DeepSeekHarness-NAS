@@ -251,7 +251,7 @@ _phase_summary() {
   printf '%s' "$_DSH_PHASES" | while IFS='|' read -r _pn _pd; do
     [ -n "$_pn" ] && printf '     %-34s %s\n' "$_pn" "$_pd"
   done
-  echo "     环境: node=$(command -v node >/dev/null 2>&1 && node -v || echo '?')  pnpm=$("$PNPM_BIN" -v 2>/dev/null || echo '?')  磁盘=$(df -h "$BUILD_ROOT" 2>/dev/null | awk 'NR==2{print $4" 可用"}')"
+  echo "     环境: node=$(command -v node >/dev/null 2>&1 && node -v || echo '?')  pnpm=$("${PNPM_BIN:-/bin/true}" -v 2>/dev/null || echo '?')  磁盘=$(df -h "${BUILD_ROOT:-.}" 2>/dev/null | awk 'NR==2{print $4" 可用"}')"
   echo "     缓存: 目标缓存命中=${DSH_TARGET_CACHE_HIT:-未知}  源码镜像命中=${DSH_SRC_CACHE_HIT:-未知}  pnpm store 命中=${DSH_PNPM_CACHE_HIT:-未知}"
   echo "───────────────────────────────────────────────"
   return 0
