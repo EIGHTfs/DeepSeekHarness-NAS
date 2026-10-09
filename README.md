@@ -86,6 +86,7 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 | `build/build-lib.sh` | **打包公共函数库**（SPK/FPK 共用）：`gen_start_sh()` 等构建级函数收口；库头写明「哪些能共用、哪些是生成给安装包的独立脚本不能 source」 | 由 `pack-spk.sh` / `pack-fpk.sh` source |
 | `build/prune_common.py` | **裁剪公共模块**：`pkg_name()` / `pkg_deps()` / `index_pnpm()` / `expand_closure()`——按 pnpm 软链递归算运行时依赖闭包，供 `prune-target.sh` 各模式复用 | `PRUNE_COMMON_DIR` 指向其目录后 `from prune_common import ...` |
 | `build/fix-runtime-deps.sh` | **运行时依赖补齐（打包期）**：探测内置插件入口 import，抓 `Cannot find package 'x'` 并从构建源补齐闭包 | `fix-runtime-deps.sh <TARGET> <BUILD_SRC> <NODE> [--max-rounds N]` |
+| `build/fix-node-links.py` | **pnpm 三层链接补全（打包期 + 启动期自愈共用）**：顶层 `node_modules/<包名>`、提升 `.pnpm/node_modules/<包名>`、包内 `.pnpm/<包名>@<版本>/node_modules/<依赖>`；工作区包指向源码目录（横跨 `packages/` 与 `vendor/`），其余指向 `.pnpm` 实体。幂等、只增不删、纯本地 | `fix-node-links.py <应用体或 target> [--quiet]` |
 | `scripts/learn-prune-whitelist.sh` | **白名单自动学习**：把「构建期真正 import 到、但不在白名单」的包学进 `_autoLearned`（不覆盖 `extra` 手工项） | 无参数；结果写入 `build/build-prune-whitelist.json` |
 | `scripts/fix-pnpm-store.sh` | **pnpm storeDir 记录修复**：把 `.modules.yaml` 记录的 store 写进同级 `pnpm-workspace.yaml`（pnpm 11 不读 `.npmrc` 的 store-dir），无需重装 | 目标树路径（默认当前实例） |
 | `scripts/fetch-official-docs.py` | 抓官方文档快照到本地（离线查阅/比对用） | `python3 scripts/fetch-official-docs.py` |
