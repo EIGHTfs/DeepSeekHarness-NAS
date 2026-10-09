@@ -1,14 +1,24 @@
 name: fetch-latest
-description: 拉取官方最新源码（build-spk/build-fpk/release 共用）
+description: 拉取官方源码（build-spk/build-fpk/release 共用；可指定 tag）
 inputs:
   token:
     description: GitHub token（DS_FETCH_TOKEN）
     required: true
+  dsh_tag:
+    description: 指定官方 tag（如 dsh-v0.1.5-rc.2）；留空 = 官方最新
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
-    - name: 拉取官方最新源码到 src/deepseek-ai/{tag}
+    - name: 拉取官方源码到 src/deepseek-ai/{tag}
       shell: bash
-      run: ./scripts/fetch-dsh-latest.sh
+      run: |
+        if [ -n "${{ inputs.dsh_tag }}" ]; then
+          echo "▶ 指定 tag: ${{ inputs.dsh_tag }}"
+          ./scripts/fetch-dsh-latest.sh --tag "${{ inputs.dsh_tag }}"
+        else
+          ./scripts/fetch-dsh-latest.sh
+        fi
       env:
         DS_FETCH_TOKEN: ${{ inputs.token }}

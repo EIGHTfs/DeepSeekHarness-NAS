@@ -22,6 +22,10 @@ inputs:
     description: 拉取官方源码/Release 用的 token
     required: false
     default: ${{ github.token }}
+  dsh_tag:
+    description: 指定官方 tag（如 dsh-v0.1.5-rc.2）；留空 = 官方最新
+    required: false
+    default: ""
   artifact-name:
     description: target artifact 名称
     required: false
@@ -37,10 +41,15 @@ runs:
     - name: 随包 node / pnpm 环境
       uses: ./.github/actions/setup-node-env
 
-    - name: 解析官方最新 tag（作为 target 复用缓存的 key）
+    - name: 解析官方 tag（指定则用指定值，否则取最新；作为 target 复用缓存的 key）
       id: tag
       shell: bash
-      run: echo "tag=$(./scripts/fetch-dsh-latest.sh --print-tag)" >> "$GITHUB_OUTPUT"
+      run: |
+        if [ -n "${{ inputs.dsh_tag }}" ]; then
+          echo "tag=${{ inputs.dsh_tag }}" >> "$GITHUB_OUTPUT"
+        else
+          echo "tag=$(./scripts/fetch-dsh-latest.sh --print-tag)" >> "$GITHUB_OUTPUT"
+        fi
 
 
     # ── 缓存：官方源码 git 镜像（fetch-dsh-latest.sh 增量拉取的基础）──
@@ -59,10 +68,11 @@ runs:
       shell: bash
       run: "echo \"源码 git 镜像缓存命中: ${{ steps.cache-src-mirror.outputs.cache-hit }}（true=只拉增量）\""
 
-    - name: 拉取官方最新源码（增量）
+    - name: 拉取官方源码（增量；可指定 tag）
       uses: ./.github/actions/fetch-latest
       with:
         token: ${{ inputs.token }}
+        dsh_tag: ${{ inputs.dsh_tag }}
 
     - name: 构建目录清理
       uses: ./.github/actions/ci-clean

@@ -7,6 +7,11 @@ on:
   #   看门狗本身就是 48 次/天的兜底，cron 的兜底价值已归零；且同一 tag 重建只会浪费 20 分钟。
   #   现在触发只剩：① 看门狗自动对齐 ② Actions 页手动 workflow_dispatch ③ 推送 v* tag。
   workflow_dispatch:          # 手动触发（Actions 页点按钮）
+    inputs:
+      dsh_tag:
+        description: '指定官方 tag（如 dsh-v0.1.5-rc.2）；留空 = 官方最新。用于补全历史版本的 FPK/SPK'
+        required: false
+        default: ''
   push:
     tags: ['v*']              # 打 v* tag 自动触发（并发布 Release）
 
@@ -66,6 +71,7 @@ jobs:
       - uses: ./.github/actions/build-target
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          dsh_tag: ${{ inputs.dsh_tag }}
 
       # ── 方案 B：构建失败时自动学习缺失依赖并入库（用户 2026-10-09 定）──────────────
       # 为什么需要：官方新增构建期脚本可能 import 被裁剪剥掉的根 devDep（实测 alpha.2 的
@@ -154,9 +160,14 @@ jobs:
           cp -a build/staging/*.spk build/staging/*.fpk dist-main/ 2>/dev/null || true
           ls -lh dist-main || true
 
-      - name: 解析官方最新 tag（与官方同 tag 发布）
+      - name: 解析官方 tag（指定则用指定值，与官方同 tag 发布）
         id: reltag
-        run: echo "TAG=$(./scripts/fetch-dsh-latest.sh --print-tag)" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ -n "${{ inputs.dsh_tag }}" ]; then
+            echo "TAG=${{ inputs.dsh_tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "TAG=$(./scripts/fetch-dsh-latest.sh --print-tag)" >> "$GITHUB_OUTPUT"
+          fi
         env:
           DS_FETCH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
