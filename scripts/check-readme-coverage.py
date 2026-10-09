@@ -43,6 +43,10 @@ EXEMPT = {
     'PRUNE_SCRIPT',         # build-common 内部：prune-target.sh 路径
     'DSH_OWNER',            # build-fpk 内部：目标属主
     'build-placeholder.py',  # 仅被留档脚本 first-build-logic.sh 引用（打包流程不使用）
+    # ↓ CI 内部日志变量：仅用于把三种缓存命中汇总进构建日志（build-common.sh 的
+    #   _phase_summary），由 .github/actions/build-target/action.yml 写入 $GITHUB_ENV；
+    #   本地/用户无需设置，故不进 README。
+    'DSH_TARGET_CACHE_HIT', 'DSH_SRC_CACHE_HIT', 'DSH_PNPM_CACHE_HIT',
 }
 
 # 扫描时跳过的目录（vendored / 产物 / 垃圾桶 / 官方源码快照）
