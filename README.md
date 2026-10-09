@@ -895,40 +895,10 @@ sudo synopkg stop deepseek-harness-nas
 
 ---
 
-## 🧭 已知待办（有意未做，留档）
-
-> 这些是代码审计（git-sluice）逐条判定后**有意不做**的项：改动会触及运行时行为，或缺少验证条件。
-> 记录在此以便接手，**不是遗漏**。
-
-### 1. 网页安装页：内联脚本未外移、未加 CSP（审计 blocker：`security/script-unsafe-inline`）
-
-**2026-10-08 更新：原先登记的"8 处 `innerHTML`"已全部改为 DOM API 构造 —— 现在 0 处。**
-
-- 远端 SSH 输出与 `install-tasks.jsonl` 字段一律用 `textContent` 插入；
-  发布按钮由行内 `onclick` 改为 `addEventListener`；表格整行提示用 `colSpan` 而非拼串。
-- 本机用桩 `document` 真跑了 11 项断言（`node` 执行）：8 个单元格、`.code-xs` / `.text-ok` /
-  `.cell-note` / `btn-warn` 类、`colspan=8`、按钮的 click 绑定，以及关键一条 ——
-  注入串 `'<img src=x onerror=alert(1)>'` 仍按**纯文本**保留、**未被解析成元素**。
-- 顺带修掉：日志渲染由"每轮 `innerHTML=''` 再逐行 `+=`"改为整体 `textContent` 一次赋值
-  （原实现 1.5 秒一次全量重排 + N 次 HTML 解析）；`style="…"` 行内样式 72 处 → **0 处**。
-
-**仍未做的是配套的 CSP**，原因是它会连带两处改动、超出"单文件、不改服务端"的既有约束：
-
-- 页面依赖**内联 `<script>`**；要下 `script-src` 就得外移成独立文件，或由服务端注入 `nonce`/`hash`；
-- 而 `install-server.py` **没有静态资源路由**（`do_GET` 只认 3 个页面路径 + 8 个 `/api/*`），
-  外移脚本必然要同时加一条静态路由 + MIME 处理 —— 属**服务端改动**；
-- 另：`style="…"` 已清零，将来若要加 `style-src`，前提已具备。
-
-**建议的改法**（等决定"允许改服务端"时一并做）：给 `do_GET` 加 `/static/` 白名单路由（扩展名白名单 +
-路径穿越校验），把内联脚本外移为 `app.js`，再由服务端下发 `Content-Security-Policy`；
-最后在真实 NAS 上回归安装 / 卸载 / 构建全流程。
-
----
-
 ## 📄 许可证
 
 MIT License - Copyright (c) 2026 DeepSeek AI
 
 ---
 
-*最后更新: 2026-09-17（start.sh 自动指定 DSH_HOME：服务侧 export + dsh 命令 wrapper，插件安装不再落错 home；README 去除写死的基线版本号，改说明基线随官方滚动；新增 fetch-release-mt.sh 多线程下载 Release 资产）*
+*最后更新: 2026-10-09（网页安装页「路径 A」改造：设计令牌层 + 无障碍对比度全面达标 + 补响应式 + 暗色自动/手动切换 + 行内样式 72→0 + innerHTML 注入面归零；新增内联 JS 语法守卫 `check-html-inline-js.py`；`fetch-dsh-latest.sh` 固化快通道 `DSH_GIT_MIRROR_PREFIX`；官方源码重新拉取至 `dsh-v0.2.1-alpha.2`）*
