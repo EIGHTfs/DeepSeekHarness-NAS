@@ -97,12 +97,24 @@ jobs:
           git add build/build-prune-whitelist.json
           git commit -q -m "chore(prune): CI 自动学习并入构建必需包（方案 B）"
           git --no-pager diff --stat HEAD~1 -- build/build-prune-whitelist.json || true
-          git push origin HEAD:main
+          # ★ 先写输出再推送（2026-10-09 实测教训）：原顺序是 push 在前，一旦 push 被拒
+          #   （并发提交很正常：人手推的修复可能刚落到 main），本步被标 failure →
+          #   changed 从未写出 → "入库后自动重建"那步的 if 不成立 → 直接 skipped，
+          #   学到的白名单条目随被拒的提交一起丢失。
           echo "changed=yes" >> "$GITHUB_OUTPUT"
-          echo "… 已入库，下一步自动重建一次 …"
+          # push 抗竞争：先把远端新提交 rebase 进来再推；失败也不阻断（输出已写出，
+          # 重建会用远端最新 main —— 那里可能已经含有人手推的同名修复）。
+          git fetch -q origin main || true
+          git rebase -q origin/main || { git rebase --abort 2>/dev/null || true; }
+          git push origin HEAD:main || echo "  ⚠ push 被拒（远端已有新提交）→ 不阻断；重建将使用远端最新 main"
+          echo "… 已入库（或远端已有更新），下一步自动重建一次 …"
+          exit 0
 
       - name: 入库后自动重建一次
-        if: failure() && steps.selfheal.outputs.changed == 'yes'
+        # ★ 必须用 always()（2026-10-09 实测教训）：只用 failure() 时，一旦上一步自身被判失败，
+        #   这一步会被 skipped（实测 #84：自学步 failure → 重建步 skipped → 白名单条目丢失）。
+        #   always() 保证"只要自愈确实改了白名单"就一定重建。
+        if: always() && steps.selfheal.outputs.changed == 'yes'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
