@@ -313,7 +313,19 @@ PID_DIR="${DSH_HOME_PARENT:-$DSH_HOME_DIR}"
 PID_FILE="${PID_DIR}/${APP_NAME}.pid"
 LOG_FILE="${PID_DIR}/${APP_NAME}.log"
 # node 的临时文件走 TMPDIR；fnOS /tmp 不可写会让 mkdtemp EACCES → 启动崩溃
-export TMPDIR="${PID_DIR}/tmp" TMP="${PID_DIR}/tmp" TEMP="${PID_DIR}/tmp"
+# 【2026-10-09 用户口径】临时目录**不再落在应用数据目录里**（<PKG_VAR>/<version>/tmp ✗）：
+#   优先用平台自带的按应用临时目录 ——
+#     fnOS : $TRIM_PKGTMP，或 /var/apps/<app>/tmp（-> /vol2/@apptemp/<app>，安装时由 fnOS 建）
+#     群晖 : /var/packages/<app>/tmp（套件自己的临时目录）
+#   都没有才回退到版本数据目录下的 tmp（保持旧行为可用）。
+# ⚠ 顶层只【选路径】不建目录：只读子命令（check）必须真的只读，见下方 ensure_pid_dirs 注释。
+DSH_TMP_DIR=""
+for _cand in "${TRIM_PKGTMP:-}" "/var/apps/${APP_NAME}/tmp" "/var/packages/${APP_NAME}/tmp"; do
+  [ -n "$_cand" ] || continue
+  [ -d "$_cand" ] && [ -w "$_cand" ] && { DSH_TMP_DIR="$_cand"; break; }
+done
+[ -n "$DSH_TMP_DIR" ] || DSH_TMP_DIR="${PID_DIR}/tmp"
+export TMPDIR="$DSH_TMP_DIR" TMP="$DSH_TMP_DIR" TEMP="$DSH_TMP_DIR"
 # 【2026-10-03】目录创建推迟到 cmd_start：原先写在顶层，会让只读的 `check` 也产生副作用
 # （凭空建出数据目录/ tmp），且 status/stop 本就不该创建目录。只读子命令必须真的只读。
 ensure_pid_dirs() {
