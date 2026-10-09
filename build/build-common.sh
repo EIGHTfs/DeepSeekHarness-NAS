@@ -797,28 +797,49 @@ _ANN "stage=$BUILD_STAGE prune 开始"
 _ANN "stage=$BUILD_STAGE prune 结束"
 fi
 
-# ── 工作区链接补全（2026-10-09 实测必需，勿删）────────────────────────────────
-#   DSH 运行时靠 node_modules/@deepseek-ai/* → ../../packages/* 这些【工作区软链】解析；
-#   裁剪/组装后它们可能整批缺失（实测只剩 11 条），启动即：
-#     Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@deepseek-ai/dsh-app-boot'
-#     imported from <应用体>/apps/cli/lib/bin      → DSH 退出 code=1 → 反复重试 → "启动卡很久"
-#   这些链接可**确定性重建**：扫 packages/**/package.json 的 name 即可（实测补回 317 条）。
-#   ⚠ 必须放在裁剪之后、写 meta 之前，且要在 target 上做（打包器直接消费 target）。
-_wl_new=0
-if [ -d "$TARGET/packages" ] && [ -d "$TARGET/node_modules" ]; then
-  mkdir -p "$TARGET/node_modules/@deepseek-ai" 2>/dev/null || true
-  while IFS= read -r _pj; do
-    [ -n "$_pj" ] || continue
-    _d="$(dirname "$_pj")"
-    _name="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1],encoding='utf-8')).get('name',''))" "$_pj" 2>/dev/null || true)"
-    case "$_name" in @deepseek-ai/*) ;; *) continue ;; esac
-    _short="${_name#@deepseek-ai/}"
-    [ -e "$TARGET/node_modules/@deepseek-ai/$_short" ] && continue
-    _rel="$(realpath --relative-to="$TARGET/node_modules/@deepseek-ai" "$_d" 2>/dev/null || true)"
-    [ -n "$_rel" ] && ln -sfn "$_rel" "$TARGET/node_modules/@deepseek-ai/$_short" 2>/dev/null && _wl_new=$((_wl_new + 1))
-  done < <(find "$TARGET/packages" -maxdepth 4 -name package.json -not -path "*/node_modules/*" 2>/dev/null)
+# ── 顶层链接补全（2026-10-09 实测必需，勿删）──────────────────────────────────
+#   病根：DSH 运行时按 node_modules/<包名> 解析依赖，而这些【顶层链接】在
+#   裁剪 / 组装 / 安装任一环节可能整批缺失。实测 apps/cli 声明的 85 个依赖缺 8 个：
+#     commander / js-yaml / node-addon-require-builtin /
+#     @deepseek-ai/cordis{,-plugin-include,-plugin-loader,-plugin-timer} / @deepseek-ai/schemastery
+#   （.pnpm 实体都在，只是顶层这层链接没进包）→ 启动即 Cannot find package 'X'
+#   → DSH 退出 code=1 → 守护反复重试 → 用户观感"启动卡很久"。
+#   这些链接可**确定性重建**：工作区包 → 指向 packages/** 源码目录；
+#   第三方 → 从 .pnpm/<名字转义>@*/node_modules/<包名> 实体回链。
+#   ⚠ 必须放在裁剪之后、写 meta 之前，且作用在 target 上（打包器直接消费 target）。
+if [ -d "$TARGET/node_modules" ]; then
+  _wl_out="$(python3 - "$TARGET" <<'PYEOF'
+import json, os, sys, glob
+ad = sys.argv[1]; nm = os.path.join(ad, 'node_modules'); pnpm = os.path.join(nm, '.pnpm')
+names, ws = set(), {}
+for pat in ('packages', 'apps'):
+    for pj in glob.glob(os.path.join(ad, pat, '**', 'package.json'), recursive=True):
+        if '/node_modules/' in pj: continue
+        try: d = json.load(open(pj, encoding='utf-8'))
+        except Exception: continue
+        for sec in ('dependencies', 'optionalDependencies', 'peerDependencies'):
+            names.update((d.get(sec) or {}).keys())
+        if pat == 'packages' and d.get('name'): ws[d['name']] = os.path.dirname(pj)
+made, miss = 0, []
+for n in sorted(names):
+    link = os.path.join(nm, n)
+    if os.path.exists(link): continue
+    os.makedirs(os.path.dirname(link), exist_ok=True)
+    tgt = None
+    if n in ws:
+        tgt = os.path.relpath(ws[n], os.path.dirname(link))
+    else:
+        c = sorted(glob.glob(os.path.join(pnpm, n.replace('/', '+') + '@*', 'node_modules', n)))
+        if c: tgt = os.path.relpath(c[0], os.path.dirname(link))
+    if tgt:
+        try: os.symlink(tgt, link); made += 1
+        except Exception: miss.append(n)
+    else: miss.append(n)
+print('新建 %d 条；无实体 %d 个%s' % (made, len(miss), ('（' + ', '.join(miss[:8]) + '）') if miss else ''))
+PYEOF
+)"
+  echo "  ✓ 顶层链接补全: ${_wl_out}"
 fi
-echo "  ✓ 工作区链接补全: 新建 ${_wl_new} 条（node_modules/@deepseek-ai/*）"
 #   模式 B 是纯白名单裁剪（不做依赖闭包，否则 target 撑到 5.3G），会删掉运行时传递依赖：
 #     实测 execa → is-plain-obj、@js-temporal/polyfill → jsbi
 #     → 运行时 Cannot find package 'x' → DSH 内置插件 plugin-manager / otel / schedule /
