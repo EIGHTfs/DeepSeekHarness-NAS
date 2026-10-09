@@ -191,6 +191,18 @@ def main():
         "fix-node-links.py 用 os.scandir 手工遍历（无 ** 递归 glob）",
         "用 ** glob 会跟随 .pnpm 软链爆炸（#98 实测空转 14m45s）；发现 %s" % (_bad or '无'))
 
+    # 17. install_callback 必须把 ui/ 复制到 /var/apps/<app>/ui（2026-10-10 真机两次对照）
+    #     有这份 → 套件「打开」按钮可用；删掉 → 按钮消失（当时服务端一切正常：
+    #     running、三端口、套件模拟 200）。此前据"1Panel 那儿没有 ui/"推断不需要而删掉，
+    #     被真机推翻 —— 这条守卫专防再次被"凭推断"删掉。
+    try:
+        _fpk = open(os.path.join(ROOT, 'build', 'FPK', 'pack-fpk.sh'), encoding='utf-8').read()
+    except Exception:
+        _fpk = ''
+    chk(17, ('/var/apps/${APPNAME}/ui' in _fpk) and ('cp -a "$APP_DIR/ui/."' in _fpk),
+        "install_callback 复制 ui 到 /var/apps/<app>/ui（套件「打开」按钮依赖）",
+        "缺则飞牛应用中心「打开」按钮消失（两次实测对照：有=可用/删=消失）")
+
     # 输出
     for no, ok, msg, hint in checks:
         if ok:
