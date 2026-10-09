@@ -108,7 +108,7 @@ if [ "${1:-}" = "gen-portal" ]; then
     ".url": {
         "${_gp_prefix}${_gp_keyid}.Application": {
             "type": "${_gp_type}",
-            "icon": "images/icon-{0}.png",
+            "icon": "images/icon_{0}.png",
             "title": "__PORTAL_TITLE__",
             "desc": "__PORTAL_DESC__",
             "protocol": "http",
@@ -1153,8 +1153,16 @@ get_token() {
 # 为什么需要：浏览器「新开标签页」（= DSM 门户打开的方式）与「地址栏手输」的
 # Sec-Fetch-Site 都是 none，旧判定无法区分 → 从套件打开却被当成直连拦下（403 请从套件图标打开）。
 #
+# ★ 2026-10-10 实测结论（勿回退）：门户 url 必须【固定 "/"】。
+#   曾经在启动期把 token 写进 url（"/?token=…"），导致飞牛应用中心「打开」按钮
+#   点不开 —— 对照能正常打开的 1Panel：它的 .url 条目里根本没有 url 字段，
+#   而我们【包内原版】的 url 就是 "/"，装上就能打开。带 token 的免密由反代完成：
+#     ⓪ 局域网硬闸 → ① 无 token 自动 302 带当次 token → ①b 陈旧 token 换成当次
+#   （三种方式实测都 200）。因此本函数改为：把 url 【复位为 "/"】，
+#   既不再弄坏按钮，还能自动修好历史上被写成 "/?token=…" 的门户文件。
+#
 # 实现要点：
-#   · token 每次启动都会变 → 只能在运行期写，不能打包期固化（gen-portal --token 供手工/调试用）；
+#   · token 不再进门户文件（见上）；
 #   · 用包内自带 node 改 JSON（比 sed 稳）；解析失败 / 无 .url 段 → 静默跳过，绝不影响启动；
 #   · 只改 url 字段，端口等其余字段一律保持原样（端口由安装期 apply_wizard_ports 负责）。
 sync_portal_token() {
@@ -1176,7 +1184,7 @@ sync_portal_token() {
       const u = d && d[".url"]; if (!u || typeof u !== "object") process.exit(0);
       let hit = false;
       for (const k of Object.keys(u)) {
-        if (u[k] && typeof u[k] === "object") { u[k].url = "/?token=" + tok; hit = true; }
+        if (u[k] && typeof u[k] === "object") { u[k].url = "/"; hit = true; }
       }
       if (!hit) process.exit(0);
       fs.writeFileSync(p, JSON.stringify(d, null, 4) + "\n");

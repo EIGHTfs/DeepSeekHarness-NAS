@@ -634,15 +634,8 @@ install_callback() {
     echo "[install_callback] 按 links.tar 还原软链（清单 ${_LK}，$(tar -tf "$_LK" 2>/dev/null | wc -l) 条）" \
       >> "${TRIM_PKGVAR:-/vol1/@appdata/${APPNAME}}/install-callback.trace" 2>/dev/null || true
   fi
-  # ── 补齐 /var/apps/<app>/ui（2026-10-09 实测必需，勿删）──────────────────────
-  #   manifest 声明 desktop_uidir=ui、desktop_applaunchname=<App>.Application，
-  #   fnOS 据此在 /var/apps/<app>/ui/config 找「打开」按钮的入口。
-  #   实测：安装后 fnOS 解出了 cmd/ config/ wizard/，**唯独没有 ui/** ✗
-  #   → 应用中心「打开」按钮点了没反应（找不到入口）。
-  if [ -d "$APP_DIR/ui" ]; then
-    mkdir -p "/var/apps/${APPNAME}/ui" 2>/dev/null || true
-    cp -a "$APP_DIR/ui/." "/var/apps/${APPNAME}/ui/" 2>/dev/null || true
-  fi
+  # （2026-10-10 已回退：官方应用 /var/apps/<app>/ 下【没有】ui/，
+  #   fnOS 读的是应用体里的 ui/config。此前自作聪明复制一份属误改，已删。）
   exit 0
 }
 
