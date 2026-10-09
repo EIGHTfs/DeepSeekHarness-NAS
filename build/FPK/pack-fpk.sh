@@ -563,6 +563,27 @@ install_callback() {
   if [ -n "$VERSION" ]; then
     mkdir -p "${TRIM_PKGVAR:-/vol1/@appdata/${APPNAME}}/${VERSION}" 2>/dev/null || true
   fi
+  # ── 重建打包期移除的软链（2026-10-09 实测必需，勿删）────────────────────────
+  #   app.tgz 后处理会删掉全部 npm/pnpm 软链（不删则 fnOS 解压设 ACL 报
+  #   acl_get_file failed → 10234「设置目录权限失败」）；但 Node 靠这些链解析模块，
+  #   实测不补回来启动会 ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/dsh-app-boot'。
+  #   清单 links.txt 由打包期写在外层，安装时随包解出（依次在几个候选位置找）。
+  _LK=""
+  for _cand in "/var/apps/${APPNAME}/links.txt" "${TRIM_APPDEST:-}/links.txt" \
+               "$(dirname "$APP_DIR" 2>/dev/null)/links.txt"; do
+    [ -n "$_cand" ] && [ -f "$_cand" ] && { _LK="$_cand"; break; }
+  done
+  if [ -n "$_LK" ]; then
+    _LN=0
+    while IFS="$(printf '\t')" read -r _l _t; do
+      [ -n "$_l" ] || continue
+      _l="${_l#./}"
+      mkdir -p "$APP_DIR/$(dirname "$_l")" 2>/dev/null || true
+      ln -sfn "$_t" "$APP_DIR/$_l" 2>/dev/null && _LN=$((_LN + 1))
+    done < "$_LK"
+    echo "[install_callback] 重建软链 ${_LN} 条（清单 ${_LK}）" \
+      >> "${TRIM_PKGVAR:-/vol1/@appdata/${APPNAME}}/install-callback.trace" 2>/dev/null || true
+  fi
   exit 0
 }
 
