@@ -166,10 +166,11 @@ def main():
     #   而 prune 只保留 .pnpm 实体、顶层链被清掉 → 装完 commander/js-yaml/cordis 全缺
     #   （实测：补 661 条顶层链后应用立刻 running、套件打开 200）。
     #   多版本一律取最高版本（与提升目录同规则，见 ver_key 的实测教训）。
+    _nm_top = os.path.join(ad, "node_modules")
     for _n, _dirs in ent.items():
-        link(os.path.join(nm, _n), pick_entity(_dirs), top_stats)
+        link(os.path.join(_nm_top, _n), pick_entity(_dirs), top_stats)
     for _n, _src in ws.items():
-        link(os.path.join(nm, _n), _src, top_stats)
+        link(os.path.join(_nm_top, _n), _src, top_stats)
 
     # ③ 包内：按各 package.json 的依赖建链
     # .pnpm 内部实体：结构是已知扁平的（.pnpm/<目录>/node_modules/<包>/package.json），
