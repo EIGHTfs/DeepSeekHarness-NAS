@@ -320,10 +320,34 @@ LOG_FILE="${PID_DIR}/${APP_NAME}.log"
 #   都没有才回退到版本数据目录下的 tmp（保持旧行为可用）。
 # ⚠ 顶层只【选路径】不建目录：只读子命令（check）必须真的只读，见下方 ensure_pid_dirs 注释。
 DSH_TMP_DIR=""
-for _cand in "${TRIM_PKGTMP:-}" "/var/apps/${APP_NAME}/tmp" "/var/packages/${APP_NAME}/tmp"; do
+# ★ 2026-10-10 真机实证（DSM 7.4.1）：TMPDIR 还必须是【可执行】目录 ✗
+#   node-addon-require-builtin 的 loader 会把原生 .node 复制到 os.tmpdir() 再 require；
+#   而群晖 /tmp 是 tmpfs(noexec) → 复制过去也 dlopen 失败 →
+#   "No usable prebuilt binary found in linux-x64-gnu" → DSH host 准备失败 →
+#   静态/文档请求一律 400（存在=400、不存在=404，极具误导性）。
+#   实测：同一进程只改 TMPDIR —— /tmp → 失败；应用临时目录（btrfs）→ 成功。
+#   故候选目录必须通过"可写 + 可执行"双检（exec 探测：写一个脚本并运行）。
+_tmp_exec_ok() {
+  [ -n "$1" ] || return 1
+  [ -d "$1" ] && [ -w "$1" ] || return 1
+  _probe="$1/.dsh-exec-probe.$$"
+  printf '#!/bin/sh\nexit 0\n' > "$_probe" 2>/dev/null || return 1
+  chmod 700 "$_probe" 2>/dev/null
+  "$_probe" >/dev/null 2>&1
+  _rc=$?
+  rm -f "$_probe" 2>/dev/null
+  return $_rc
+}
+for _cand in "${TRIM_PKGTMP:-}" "/var/apps/${APP_NAME}/tmp" "/var/packages/${APP_NAME}/tmp" "${PID_DIR}/tmp"; do
   [ -n "$_cand" ] || continue
-  [ -d "$_cand" ] && [ -w "$_cand" ] && { DSH_TMP_DIR="$_cand"; break; }
+  _tmp_exec_ok "$_cand" && { DSH_TMP_DIR="$_cand"; break; }
 done
+# 全都不满足时仍取第一个可写候选（宁可有临时目录，也不要留空）
+if [ -z "$DSH_TMP_DIR" ]; then
+  for _cand in "${TRIM_PKGTMP:-}" "/var/apps/${APP_NAME}/tmp" "/var/packages/${APP_NAME}/tmp" "${PID_DIR}/tmp"; do
+    [ -n "$_cand" ] && [ -d "$_cand" ] && [ -w "$_cand" ] && { DSH_TMP_DIR="$_cand"; break; }
+  done
+fi
 [ -n "$DSH_TMP_DIR" ] || DSH_TMP_DIR="${PID_DIR}/tmp"
 export TMPDIR="$DSH_TMP_DIR" TMP="$DSH_TMP_DIR" TEMP="$DSH_TMP_DIR"
 # 【2026-10-03】目录创建推迟到 cmd_start：原先写在顶层，会让只读的 `check` 也产生副作用
@@ -624,6 +648,27 @@ document.write('<iframe src="http://' + host + ':' + ${proxyPort} + '/" id="dshF
 //   node-addon-native-custom-loader（第三层）。三层都可确定性重建：
 //   工作区包 → 指向源码目录（任何顶层目录下的 package.json）；其余 → 指向 .pnpm 实体。
 //   幂等、只增不删、纯本地、不依赖网络（打包期已在 build-common.sh 调 fix-node-links.py 固化）。
+// 清掉 DSH_HOME 下历史残留的 writer 锁（只在 DSH 未运行时调用 ✓）。
+function clearStaleLocks(dshHome) {
+  const fs = require('fs');
+  const path = require('path');
+  let removed = 0;
+  const walk = (dir, depth) => {
+    if (depth > 4) return;
+    let ents;
+    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const ent of ents) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) { walk(p, depth + 1); continue; }
+      if (ent.isFile() && /\.lock$/.test(ent.name)) {
+        try { fs.unlinkSync(p); removed++; } catch { /* 忽略 */ }
+      }
+    }
+  };
+  walk(dshHome, 0);
+  if (removed > 0) console.log(`[√] 清理 DSH 残留锁: ${removed} 个（上次异常退出的遗留）`);
+}
+
 function selfHealWorkspaceLinks(root) {
   const nm = path.join(root, 'node_modules');
   const pnpm = path.join(nm, '.pnpm');
@@ -772,6 +817,12 @@ async function main() {
 
   // 启动期自愈兜底（见上方 selfHealWorkspaceLinks / selfHealLinksTar 的说明）：
   // 必须在 spawn DSH 之前跑，否则缺链会直接 ERR_MODULE_NOT_FOUND → 退出重试 → "启动卡很久"
+  // ★ 2026-10-10 真机实证（DSM 7.4.1）：异常退出会残留 <DSH_HOME>/.credentials.yaml.lock，
+  //   下次启动 atomic-write 等锁超时 → 必需插件 connection 不激活 → 报
+  //   "connection (required) … timed out waiting for the writer lock" → DSH 退出 code=1
+  //   → 反代起不来 → 门户打不开（用户观感"装完打不开"）。清掉残留锁后立即恢复正常。
+  //   此刻 DSH 尚未启动（本函数在 spawn 之前跑），不存在活锁，删除是安全的。
+  try { clearStaleLocks(dshHome); } catch (e) { console.warn('[DSH] 残留锁清理跳过:', e && e.message); }
   try { selfHealWorkspaceLinks(dshDir); } catch (e) { console.error(`[!] 工作区链接兜底失败: ${e.message}`); }
   try { selfHealLinksTar(dshDir); } catch (e) { console.error(`[!] 软链清单兜底失败: ${e.message}`); }
 
