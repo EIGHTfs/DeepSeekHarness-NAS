@@ -112,6 +112,14 @@ runs:
         restore-keys: |
           dsh-target-${{ steps.tag.outputs.tag }}-
 
+      - name: 记录缓存命中（供日志汇总）
+        if: always()
+        run: |
+          echo "DSH_TARGET_CACHE_HIT=${{ steps.cache-target.outputs.cache-hit }}" >> "$GITHUB_ENV"
+          echo "DSH_SRC_CACHE_HIT=${{ steps.cache-src-mirror.outputs.cache-hit }}" >> "$GITHUB_ENV"
+          echo "DSH_PNPM_CACHE_HIT=${{ steps.cache-pnpm-store.outputs.cache-hit }}" >> "$GITHUB_ENV"
+          echo "缓存命中: 目标=${{ steps.cache-target.outputs.cache-hit }} 源码镜像=${{ steps.cache-src-mirror.outputs.cache-hit }} pnpm store=${{ steps.cache-pnpm-store.outputs.cache-hit }}"
+
     - name: 命中则解包 target（随后 build-common.sh 会跳过编译）
       if: steps.cache-target.outputs.cache-hit == 'true'
       shell: bash

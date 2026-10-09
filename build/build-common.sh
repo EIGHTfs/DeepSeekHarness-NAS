@@ -223,6 +223,36 @@ dry_note() { if _dry; then echo "  [dry-run] $1"; fi; return 0; }
 # GitHub annotation：存在 check run 里，日志 blob 丢（BlobNotFound）也能从 API 拿
 _ANN() { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::warning::$1" || echo "[stage] $1"; }
 
+# ── 日志增强：段耗时 + CI 折叠分组（2026-10-10 用户要求"日志能加的都加"）────────
+#   动机：在线构建偶发变慢，但日志里只有阶段名、没有耗时 → 无法回答"慢在哪"。
+#   用法：在每个阶段边界调 _tick "阶段名"（打印【本段】与【累计】耗时并累计到汇总）。
+#   · CI 里用 ::group:: / ::endgroup:: 折叠，本地退化为 ▶ 一行；
+#   · 全部只在 stdout 打，不改任何行为、不写文件。
+_DSH_T_START="${_DSH_T_START:-$(date +%s)}"
+_DSH_T_LAST="$_DSH_T_START"
+_DSH_PHASES=""
+_tick() {
+  local _now _seg _tot
+  _now="$(date +%s)"
+  _seg=$(( _now - _DSH_T_LAST )); _tot=$(( _now - _DSH_T_START ))
+  _DSH_T_LAST="$_now"
+  _DSH_PHASES="${_DSH_PHASES}${1}=$(printf '%dm%02ds' $((_seg/60)) $((_seg%60))) "
+  printf '⏱  %-32s 本段 %dm%02ds   累计 %dm%02ds\n' "$1" $((_seg/60)) $((_seg%60)) $((_tot/60)) $((_tot%60))
+  return 0
+}
+_group() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::group::$1"; else echo "▶ $1"; fi; return 0; }
+_endgroup() { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::endgroup::"; return 0; }
+_phase_summary() {
+  local _tot=$(( $(date +%s) - _DSH_T_START ))
+  echo "───────────────────────────────────────────────"
+  echo "⏱  构建各阶段耗时汇总（总 $((_tot/60))m$((_tot%60))s）"
+  for _kv in $_DSH_PHASES; do printf '     %-32s %s\n' "${_kv%%=*}" "${_kv##*=}"; done
+  echo "     环境: node=$(command -v node >/dev/null 2>&1 && node -v || echo '?')  pnpm=$("$PNPM_BIN" -v 2>/dev/null || echo '?')  磁盘=$(df -h "$BUILD_ROOT" 2>/dev/null | awk 'NR==2{print $4" 可用"}')"
+  echo "     缓存: 目标缓存命中=${DSH_TARGET_CACHE_HIT:-未知}  源码镜像命中=${DSH_SRC_CACHE_HIT:-未知}  pnpm store 命中=${DSH_PNPM_CACHE_HIT:-未知}"
+  echo "───────────────────────────────────────────────"
+  return 0
+}
+
 # 应用名（build-config.yaml defaults.appname 唯一真源；环境变量 APP_NAME 可覆盖）
 APP_NAME="${APP_NAME:-${_CFG_APPNAME:-DeepSeekHarness-NAS}}"
 APP_ID="$(echo "$APP_NAME" | tr -d -- '-_')"
@@ -522,6 +552,7 @@ elif _STAGE_OK install; then
   echo "▶ install 前裁剪已跳过（PRUNE_BEFORE_INSTALL=${PRUNE_BEFORE_INSTALL:-1}，本地构建物模式：全量 install，tsc 类型检查脚本不再缺包）"
 fi
 
+_tick "前置准备（配置/源码副本）"
 _ANN "stage=$BUILD_STAGE install 开始"
 if _STAGE_OK install && [ ! -d "$BUILD_SRC/node_modules" ]; then
   echo "▶ pnpm install (~2-5min) [store=$PNPM_STORE]（项目 pnpm: $PNPM_BIN）"
@@ -627,6 +658,7 @@ if _STAGE_OK install && [ ! -d "$BUILD_SRC/node_modules" ]; then
   fi
   tail -5 "$_PNPM_LOG" >&2
 fi
+_tick "install（pnpm install）"
 _ANN "stage=$BUILD_STAGE install 结束 (node_modules=$( [ -d "$BUILD_SRC/node_modules" ] && echo 有 || echo 无))"
 
 # ── build 前裁剪（2026-10-02，默认开）：install 完成立即按白名单裁 BUILD_SRC/node_modules/.pnpm，
@@ -646,6 +678,7 @@ elif _STAGE_OK build; then
 fi
 
 if _STAGE_OK build; then
+_tick "install 收尾/组装"
 _ANN "stage=$BUILD_STAGE build 开始"
 
 # ── native/system 编译自探测（2026-10-02）──────────────────────────────────
@@ -810,6 +843,7 @@ _normalize_portal_icons() {
 _normalize_portal_icons "$TARGET/ui/images"
 
 echo "▶ target 待裁剪: $TARGET ($(du -sh "$TARGET" 2>/dev/null | cut -f1))"
+_tick "build（pnpm build + 组装 target）"
 _ANN "stage=$BUILD_STAGE build 结束 (target=$(du -sh "$TARGET" 2>/dev/null | cut -f1))"
 fi   # 结束 build 门控（stage=install/prune 时跳过 build+组装）
 
@@ -820,8 +854,10 @@ fi   # 结束 build 门控（stage=install/prune 时跳过 build+组装）
 #   ⚠ native/ 保留：node-addon-system-linux-x64 软链真身，删了启动必挂
 #===============================================================================
 if _STAGE_OK prune; then
+_tick "build 收尾"
 _ANN "stage=$BUILD_STAGE prune 开始"
 "$SCRIPT_DIR/prune-target.sh" "$TARGET" "$WHITELIST_FILE"
+_tick "prune（白名单裁剪）"
 _ANN "stage=$BUILD_STAGE prune 结束"
 fi
 
@@ -845,6 +881,7 @@ fi
 #       即运行时补包在 CI 里从来没生效过。这里 BUILD_SRC 就在手边，补进的是 TARGET，
 #       两个打包器都直接受益。
 if _STAGE_OK prune && [ -x "$SCRIPT_DIR/fix-runtime-deps.sh" ] && [ -d "$BUILD_SRC/node_modules/.pnpm" ]; then
+_tick "链接补全（fix-node-links.py）"
   echo "▶ 运行时精准补包（fix-runtime-deps.sh；裁剪后、写 meta 前）"
   "$SCRIPT_DIR/fix-runtime-deps.sh" "$TARGET" "$BUILD_SRC" || echo "  ⚠ 补包探测返回非零，继续（不阻断构建）"
 else
@@ -872,6 +909,7 @@ EOF
 
 echo ""
 echo "════════════════════════════════════════════════"
+_phase_summary
 echo "✅ target 预编译完成"
 touch "$WORK/.build-done"   # 断点续传标记：下次 SKIP_BUILD=1 时跳过
 echo "  target   : $TARGET ($(du -sh "$TARGET" 2>/dev/null | cut -f1))"
