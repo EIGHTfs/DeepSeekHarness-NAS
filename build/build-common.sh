@@ -236,7 +236,9 @@ _tick() {
   _now="$(date +%s)"
   _seg=$(( _now - _DSH_T_LAST )); _tot=$(( _now - _DSH_T_START ))
   _DSH_T_LAST="$_now"
-  _DSH_PHASES="${_DSH_PHASES}${1}=$(printf '%dm%02ds' $((_seg/60)) $((_seg%60))) "
+  # 用 | 分隔：阶段名里含空格与括号，绝不能靠空格切分（实测会打印成乱码）
+  _DSH_PHASES="${_DSH_PHASES}${1}|$(printf '%dm%02ds' $((_seg/60)) $((_seg%60)))
+"
   printf '⏱  %-32s 本段 %dm%02ds   累计 %dm%02ds\n' "$1" $((_seg/60)) $((_seg%60)) $((_tot/60)) $((_tot%60))
   return 0
 }
@@ -246,7 +248,9 @@ _phase_summary() {
   local _tot=$(( $(date +%s) - _DSH_T_START ))
   echo "───────────────────────────────────────────────"
   echo "⏱  构建各阶段耗时汇总（总 $((_tot/60))m$((_tot%60))s）"
-  for _kv in $_DSH_PHASES; do printf '     %-32s %s\n' "${_kv%%=*}" "${_kv##*=}"; done
+  printf '%s' "$_DSH_PHASES" | while IFS='|' read -r _pn _pd; do
+    [ -n "$_pn" ] && printf '     %-34s %s\n' "$_pn" "$_pd"
+  done
   echo "     环境: node=$(command -v node >/dev/null 2>&1 && node -v || echo '?')  pnpm=$("$PNPM_BIN" -v 2>/dev/null || echo '?')  磁盘=$(df -h "$BUILD_ROOT" 2>/dev/null | awk 'NR==2{print $4" 可用"}')"
   echo "     缓存: 目标缓存命中=${DSH_TARGET_CACHE_HIT:-未知}  源码镜像命中=${DSH_SRC_CACHE_HIT:-未知}  pnpm store 命中=${DSH_PNPM_CACHE_HIT:-未知}"
   echo "───────────────────────────────────────────────"
