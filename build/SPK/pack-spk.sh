@@ -397,6 +397,24 @@ stop() {
   return 0
 }
 
+
+# ★ 2026-10-10 修复：与 FPK 同款 —— SPK 生成物里【调用了 running_dsh 却没有定义】，
+#   导致群晖/系统的服务状态判定失败、应用入口异常。实现照抄 scripts/lib/common.sh。
+running_dsh() {
+  local port="$1" startsh="$2"
+  if [ -n "$port" ]; then
+    if command -v netstat >/dev/null 2>&1; then
+      netstat -tln 2>/dev/null | grep -q ":${port} " && return 0
+    elif command -v ss >/dev/null 2>&1; then
+      ss -tln 2>/dev/null | grep -q ":${port} " && return 0
+    fi
+  fi
+  if [ -n "$startsh" ] && command -v pgrep >/dev/null 2>&1; then
+    pgrep -f "$(printf %s "$startsh" | sed "s/\./\\./g")" >/dev/null 2>&1 && return 0
+  fi
+  return 1
+}
+
 start() {
   mkdir -p "${PACKAGE_BASE}/var/logs" "${PACKAGE_BASE}/var/data"
   export HOME="${PACKAGE_BASE}"

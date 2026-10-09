@@ -294,6 +294,14 @@ pnpm = os.path.join(target, 'node_modules', '.pnpm')
 # 只用运行时依赖（lockfileDeps + workspaceRuntimeDeps），不用 extra
 #（extra 里的类型检查包只在模式 A 保护 tsc，不需要进最终 target）
 whitelist = set(white.get('lockfileDeps', []))
+# ★ 2026-10-10 修复：并入 _autoLearned（学习器写、此前【无人读】）
+#   实证：otel 插件真机报 Cannot find module '@szmarczak/http-timer'；该包已在
+#   extra 与 _autoLearned，却不在 lockfileDeps，而模式 B 只读 lockfileDeps +
+#   workspaceRuntimeDeps → 出货被删。全仓库搜索证实没有任何代码读 _autoLearned
+#   （学习成果全落空），而 README 把它写成"手工补充的强制保留项"（文档与代码不符）。
+#   学习器职责正是把构建/运行期真正用到、但不在白名单的包学进来，出货形态应尊重它，
+#   否则学习等于白学（got@11.8.6 的运行时依赖就是这么丢的）。
+whitelist.update(white.get('_autoLearned', []))
 if white.get('workspaceRuntimeDeps'):
     pkgs_root = os.path.join(target, 'packages')
     for dirpath, dirnames, filenames in os.walk(pkgs_root):

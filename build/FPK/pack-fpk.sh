@@ -371,6 +371,26 @@ fi
 
 # ── 运行检测：DSH 端口在听 或 start.sh 进程在（两者其一即视为运行）──
 
+# ★ 2026-10-10 修复【反复十几次的真因】：生成物【调用了 running_dsh，却没有定义它】。
+#   实测（飞牛真机）：cmd/main status → "行 89: running_dsh: 未找到命令"，rc=3；
+#   fnOS 应用中心据此把启动判为失败（error log: start app error 10330），
+#   而应用其实被 start.sh 拉起来了（端口在听）→ 应用中心「打开」按钮因此不出现。
+#   下面这份实现与 scripts/lib/common.sh 的同名函数逐字一致（照抄，勿改语义）：
+running_dsh() {
+  local port="$1" startsh="$2"
+  if [ -n "$port" ]; then
+    if command -v netstat >/dev/null 2>&1; then
+      netstat -tln 2>/dev/null | grep -q ":${port} " && return 0
+    elif command -v ss >/dev/null 2>&1; then
+      ss -tln 2>/dev/null | grep -q ":${port} " && return 0
+    fi
+  fi
+  if [ -n "$startsh" ] && command -v pgrep >/dev/null 2>&1; then
+    pgrep -f "$(printf %s "$startsh" | sed "s/\./\\./g")" >/dev/null 2>&1 && return 0
+  fi
+  return 1
+}
+
 start_process() {
   log_msg "Starting ${APPNAME}... (proxy=${PROXY_PORT} dsh=${DSH_PORT} container=${CONTAINER_PORT})"
   mkdir -p "${TRIM_PKGVAR}/logs" "${TRIM_PKGVAR}/data" 2>/dev/null || true
@@ -386,9 +406,24 @@ start_process() {
     --container-port "$CONTAINER_PORT" >> "${LOG_FILE}" 2>&1
   local rc=$?
   log_msg "start.sh rc=${rc}"
-  sleep 3
-  if ! running_dsh "$FPK_DSH_PORT" "${TRIM_APPDEST}/bin/start.sh" ; then
-    log_msg "启动后运行检测未通过（端口 ${DSH_PORT} 未监听）"
+  # ── 就绪等待（2026-10-10 修复）──
+  #   原实现只 sleep 3 秒就判定，而 DSH 冷启动约 10 秒（启动期自愈要补近 2000 条链接），
+  #   → running_dsh 失败 → cmd/main start 返回 1 → fnOS 记"启动失败"(10330)
+  #   → 「打开」按钮不出现（这就是反复复现十几次的真因）。
+  #   改为：有界轮询（最多 10 秒，每秒一次，命中即返回）；
+  #   超时但 start.sh 已成功 spawn（rc=0）也返回 0 —— 让 fnOS 自己的 status 轮询判定，
+  #   绝不把"还在启动中"误报成"启动失败"。
+  local _w=0
+  while [ "$_w" -lt 10 ]; do
+    running_dsh "${DSH_PORT:-$FPK_DSH_PORT}" "${TRIM_APPDEST}/bin/start.sh" && break
+    _w=$((_w + 1)); sleep 1
+  done
+  if ! running_dsh "${DSH_PORT:-$FPK_DSH_PORT}" "${TRIM_APPDEST}/bin/start.sh" ; then
+    if [ "${rc:-1}" = "0" ]; then
+      log_msg "启动仍在进行中（端口 ${DSH_PORT} 尚未监听），交由系统 status 判定"
+      return 0
+    fi
+    log_msg "启动后运行检测未通过（端口 ${DSH_PORT} 未监听，start.sh rc=${rc}）"
     return 1
   fi
   log_msg "运行检测通过"
@@ -425,7 +460,7 @@ stop_process() {
 status_process() {
   export TRIM_APPDEST="${TRIM_APPDEST}" TRIM_PKGVAR="${TRIM_PKGVAR}"
   "${TRIM_APPDEST}/bin/start.sh" status > /dev/null 2>&1 && return 0
-  running_dsh "$FPK_DSH_PORT" "${TRIM_APPDEST}/bin/start.sh"; }
+  running_dsh "${DSH_PORT:-$FPK_DSH_PORT}" "${TRIM_APPDEST}/bin/start.sh"; }
 
 case "$1" in
   start)   start_process && { echo "✓ 启动成功"; exit 0; } || { echo "✗ 启动失败（运行检测未通过）"; exit 1; } ;;
@@ -634,14 +669,15 @@ install_callback() {
     echo "[install_callback] 按 links.tar 还原软链（清单 ${_LK}，$(tar -tf "$_LK" 2>/dev/null | wc -l) 条）" \
       >> "${TRIM_PKGVAR:-/vol1/@appdata/${APPNAME}}/install-callback.trace" 2>/dev/null || true
   fi
-  # ── 补齐 /var/apps/<app>/ui（2026-10-10 真机实测：必需，勿再删）────────────
-  #   实测事实（两次对照）：
-  #     · 有这份时：应用中心「打开」按钮可用 ✓
-  #     · 删掉这份后：按钮【又没了】✗（服务端一切正常：running、三端口、套件模拟 200）
-  #   曾据"1Panel 的 /var/apps 下没有 ui/"推断不需要 → 被真机推翻。
-  #   以下是当时手工验证可用的原文命令，原样固化（不改命令、不改顺序）：
-  #     mkdir -p "/var/apps/${APPNAME}/ui"
-  #     cp -a "$APP_DIR/ui/." "/var/apps/${APPNAME}/ui/"
+  # ── 尽力补齐 /var/apps/<app>/ui（非必需；2026-10-10 复核后更正）─────────────
+  #   【已被真机推翻的旧结论，勿再据此排查】曾据"有它=按钮可用 / 删它=按钮消失"认定必需。
+  #   2026-10-10 复核（全机 5 个应用 + 1Panel 对照）：所有应用在 /var/apps/<app>/ 下都没有 ui/，
+  #   而它们的入口正常 → 说明 fnOS 读的是【应用目录】里的 ui/config（经 /var/apps/<app>/target），
+  #   按钮真正依赖的是【应用中心认定启动成功】。
+  #   「打开」按钮反复消失的真因是：生成的 cmd/main 缺 running_dsh 定义 + 端口变量用错
+  #   → fnOS 记 start app error 10330 → 按钮不出现（详见 pack-fpk.sh 生成物内的注释与 CHANGELOG）。
+  #   本段保留为【尽力而为】：回调以包用户身份运行，而 /var/apps/<app> 属 root:root，
+  #   写入会因权限失败（已实测），故此段实际不会生效，也不会造成任何损害。
   if [ -d "$APP_DIR/ui" ]; then
     mkdir -p "/var/apps/${APPNAME}/ui" 2>/dev/null || true
     cp -a "$APP_DIR/ui/." "/var/apps/${APPNAME}/ui/" 2>/dev/null || true

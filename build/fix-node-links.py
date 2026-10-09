@@ -138,6 +138,27 @@ def link(link_path, target, stats):
         return False
 
 
+def relink(link_path, target, stats):
+    """★ 2026-10-10 真机实测：pnpm 会把提升/顶层链指向【旧版本】实体 ——
+       execa@10.0.1 声明 get-stream ^9.0.1，而 .pnpm/node_modules/get-stream 指向 5.2.0(CJS)
+       → 报 "Named export 'getStreamAsArray' not found ... is a CommonJS module"。
+    原 link() 【只补缺、从不纠正】→ 错链永远错（plugin-manager 起不来的根因）。
+    此处：链已存在但目标不同 → 改指最高版本实体；不存在则交给 link() 新建。
+    """
+    try:
+        if os.path.islink(link_path):
+            if os.path.realpath(link_path) == os.path.realpath(target):
+                return False
+            os.makedirs(os.path.dirname(link_path), exist_ok=True)
+            os.remove(link_path)
+            os.symlink(os.path.relpath(target, os.path.dirname(link_path)), link_path)
+            stats[0] += 1
+            return True
+    except Exception:
+        pass
+    return link(link_path, target, stats)
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     quiet = "--quiet" in sys.argv
@@ -159,7 +180,7 @@ def main():
     if ent:
         os.makedirs(hoist, exist_ok=True)
         for name, dirs in ent.items():
-            link(os.path.join(hoist, name), pick_entity(dirs), top_stats)
+            relink(os.path.join(hoist, name), pick_entity(dirs), top_stats)
 
     # ① 顶层 node_modules/<包名>：★ 2026-10-10 真机验收发现——原来【从未补过这一层】。
     #   Node 从 apps/cli/lib/ 往上找依赖时，命中路径正是 <应用体>/node_modules/<包名>；
@@ -168,7 +189,7 @@ def main():
     #   多版本一律取最高版本（与提升目录同规则，见 ver_key 的实测教训）。
     _nm_top = os.path.join(ad, "node_modules")
     for _n, _dirs in ent.items():
-        link(os.path.join(_nm_top, _n), pick_entity(_dirs), top_stats)
+        relink(os.path.join(_nm_top, _n), pick_entity(_dirs), top_stats)
     for _n, _src in ws.items():
         link(os.path.join(_nm_top, _n), _src, top_stats)
 
