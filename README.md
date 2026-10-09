@@ -175,9 +175,24 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 #   build-target      唯一构建：setup → fetch → ci-clean → ./build/build-common.sh → 上传 target
 #   pack-and-release  复用 target → 打 SPK + FPK → 解析官方 tag → 发 Release（含官方更新日志）
 # 产物命名: <APP_NAME>_<平台>-<版本>.<spk|fpk>
+#
+# .github/workflows/watch-official.yml —— 官方更新看门狗（2026-10-09 新增）
+#   每 30 分钟比对【官方最新 tag ↔ 本仓最新 Release tag】；未对齐、且当前无构建在跑、
+#   且距最近一次成功构建 ≥6 小时 → 自动 dispatch build.yml。判定完全无状态（不依赖任何存储）。
 ```
 
-- 触发：①每日 04:00 UTC（北京 12:00）定时拉官方最新源构建；②Actions 页手动 `workflow_dispatch`；③推送 tag
+- 触发：①每日 04:00 UTC（北京 12:00）定时拉官方最新源构建；②Actions 页手动 `workflow_dispatch`；③推送 tag；④**看门狗**（见下）
+- **官方更新自动对齐（2026-10-09）**：`watch-official.yml` 每 **30 分钟**轮询一次官方 tag（一次 `api.github.com` 调用，实测 1~4 秒），满足三个条件才触发构建 ——
+  ① 官方 tag ≠ 本仓最新 Release tag（还没对齐）；② **当前没有构建在跑**（`build.yml` 是 `cancel-in-progress: true`，插队会把正在跑的取消掉）；③ 距最近一次**成功**构建 **≥6 小时**（用户口径：成功后暂停 6 小时）。任一不满足即静默跳过并在日志写明原因。
+  权限 `contents: read` + `actions: write`；自身 `cancel-in-progress: false`（看门狗不并发，也绝不取消别人）。
+- **失败自愈 · 方案 B（2026-10-09）**：`build-target` 失败时自动跑两步 ——
+  ①「自动学习缺失依赖并入库」：从**真实失败日志**（`build/master-build/*.log`、`assets/pnpm-install.log`）反查 `Cannot find module/package 'X'` 与 `Could not find a declaration file for module 'X'`（后者映射为 `@types/X`），学进白名单后 commit（author `EIGHTfs`）并 push；
+  ②「入库后自动重建一次」：仅当①确实改了白名单时 dispatch 重建。
+  **安全边界**：白名单无变化**绝不提交**（说明本次失败不是缺包导致）→ 非缺包类失败不会触发重建、**不存在死循环**；缺包类失败每轮至少并入 1 个包，有限次收敛。
+  ⚠ 两个实现要点（都是 #84 实测踩出来的）：`changed` 输出必须写在 `push` **之前**（push 被拒时该步会被判失败，输出就丢了）；重建步的条件必须用 `always()` 而非 `failure()`（否则会被 skipped）。
+- **npm 源并发探测（2026-10-09）**：`build-common.sh` 装依赖前先**并发探测**候选源（`NPM_REGISTRY_CANDIDATES` 数组，**加镜像只加一行**），取【HTTP 2xx/3xx 且**耗时最短**】者，再拿它跑 `pnpm install`；全不可达则回落默认源。
+  ★ 规则是「**最快者胜**」而不是「先回者胜」：本机实测 `registry.npmjs.org` 返回 200 但耗时 **5.99s**（"假可用"，几乎等于超时），`registry.npmmirror.com` 仅 **0.63s** —— 按列表顺序选会选错。海外 runner 上会自然选中 npmjs，两地自适应。
+  另两条配套：① **参数类错误不重试**（日志出现 `Unknown option` / `ERR_PNPM_BAD_OPTION` / `ERR_PNPM_INVALID` 立即中止 —— 实测该错误连报 3 次、每次还 `sleep 30`，白等 90 秒）；② 所选源仍失败时，保留 `npmmirror` 兜底一次。
 - **并发控制**：`concurrency: group=<workflow>-<ref>, cancel-in-progress: true` —— **新构建开始前会停掉上一个**（用户口径：同一时刻只有一个构建，也比两个并行更省 runner 分钟）
 - **构建只做一次（本次重构核心）**：只有 `build-target` 跑 `./build/build-common.sh`；打包在 `pack-and-release` 内完成，**复用 target 而非重编**（旧结构里 `build-spk` 与 `build-fpk-source` 各跑一遍完整构建，每次白烧约 20 分钟）
 - **target 复用缓存**：`build-target` 内按 **官方 tag + 构建逻辑指纹**（`build-config.yaml`/`build-common.sh`/`prune-target.sh`/`prune_common.py`/白名单 json/`scripts/lib/common.sh`/两个 action 文件）缓存 `build/master-build/build`，命中即解包 → `build-common.sh` 走 `SKIP_BUILD` **跳过编译**（日志会打印 `✓ 复用 target: …（未重新构建）`）
@@ -229,6 +244,13 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 
 **自动学习（`scripts/learn-prune-whitelist.sh`）**：把「构建期真正 import 到、但不在白名单」的包
 学进 `_autoLearned`，且**不覆盖** `extra` 里的人工项（`gen-prune-whitelist.sh` 只动 `lockfileDeps`）。
+
+**它已接入 CI（2026-10-09，方案 B）**：`build.yml` 的 `build-target` 失败时会自动调用它
+（`--log` 模式，喂真实失败日志）→ 学到的包直接 commit + push 入库 → 再自动重建一次。
+也就是说：**官方新增构建期依赖导致的构建失败，从此自愈，不再需要人工补白名单**。
+两种日志模式的能力边界：`--scan`（静态扫描）只覆盖 `package.json scripts` 引用的入口脚本，
+官方新增"非入口的构建期脚本"时**扫不到**（实测 alpha.2 的 `scripts/primary-runtime/prune-python-tests.ts`
+即属此类）；`--log`（日志反查）能兜住这类，CI 用的正是 `--log`。
 学习面的边界：当前主要覆盖根 `devDependencies` 与构建必需工具；**workspace 各包的构建期依赖
 （如 `vite`、`@types/semver`）仍需纳入学习面**，否则本地全量类型检查会缺包。
 
@@ -503,6 +525,8 @@ FPK：`pack-fpk.sh` 的「保留数据（推荐）」）。网页端此前**没�
 
 | 能力 | 说明 |
 |------|------|
+| 🎨 深色 / 浅色主题 | 顶栏 🌙/☀️ 一键切换，选择记 `localStorage`（`dsh-theme`）；不点则**跟随系统**（`prefers-color-scheme`）。首帧前由 `<head>` 内小脚本落 `data-theme`，**无闪烁** |
+| 🎛 构建参数 | 「自动构建」区可临时覆盖品牌 / 简介 / 端口等，只影响本次构建（详见下方「网页侧副本与构建参数面板」） |
 | 🔍 探测系统 | 填 IP/端口/账号密码 → 一键探测远端是 群晖 DSM 还是 飞牛 fnOS → **自动判定 SPK / FPK** |
 | 📦 安装包匹配 | 扫描 `build/staging/` 与 `release/`（含 `release/<tag>/` 子目录，自动同步落位的包）→ 探测后自动切到对应类型候选，显示来源相对路径 |
 | 📦 安装 / 🔧 修复 / 🔎 检查 / 🗑 卸载 | 网页直接远程执行（走 `install-remote-spk.sh` / `install-remote-fpk.sh`，安装后 root 补建 `/usr/bin/dsh` 软链） |
