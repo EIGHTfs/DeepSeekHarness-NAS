@@ -855,7 +855,7 @@ sudo synopkg stop deepseek-harness-nas
 | 内置 pnpm 11 | 随仓库分发构建工具，解决 pnpm 10 OOM 问题；pnpm-bridge.py 自动转换 package.json 的 pnpm 字段到 pnpm-workspace.yaml |
 | 一键构建 | `build-common.sh` 公共预编译 + `SPK/pack-spk.sh`、`FPK/pack-fpk.sh` 分平台打包（来源可 npm / 源码双链路） |
 | 断点续传 | build-common 完成写 `.build-done` 标记，中断/失败无标记→重新构建 |
-| CI 自动构建 | GitHub Actions 定时（每日 04:00 UTC）/ 手动 / tag 推送三种触发，自动构建 SPK+FPK |
+| CI 自动构建 | GitHub Actions **看门狗自动对齐官方 tag（每 30 分钟轮询；构建成功后暂停 6 小时）** / 手动 / tag 推送三种触发，自动构建 SPK+FPK；构建失败时**自动学习缺失依赖并入库 + 自动重建**（方案 B）。每日定时已于 2026-10-09 取消（与 6 小时口径冲突） |
 | 自动发布 | 定时/手动/tag 触发都建/更新 Release（统一正式版，2026-09-16 起不标 prerelease），spk 缺失仍发布 fpk |
 | pnpm 垫片自动生成 | `build-common.sh` 自动生成 `tools/pnpm/bin/pnpm` 包装垫片，解决 CI 环境 pnpm not found |
 
