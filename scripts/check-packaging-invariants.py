@@ -143,6 +143,14 @@ def main():
         "反代的「自动带 token」分支排在 403 之前",
         "autoAuth 位置=%s，403 位置=%s（前者必须更靠前；否则套件图标打开会吃 403）" % (i_auto, i_403))
 
+    # 13. start.sh 必须含启动期自愈兜底（工作区链接 + links.tar）
+    #     DSH 靠 node_modules/@deepseek-ai/* → packages/* 的工作区软链解析；任一环节漏掉
+    #     就 ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/dsh-app-boot'
+    #     → 退出 code=1 → 守护反复重试 → 用户观感"启动卡很久"。
+    chk(13, ("selfHealWorkspaceLinks" in start) and ("selfHealLinksTar" in start),
+        "start.sh 含启动期自愈兜底（工作区链接 + links.tar）",
+        "缺则安装期漏链时启动必失败并反复重试；两个函数与调用都要在")
+
     # 输出
     for no, ok, msg, hint in checks:
         if ok:
