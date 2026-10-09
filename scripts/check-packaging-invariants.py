@@ -72,14 +72,17 @@ def main():
         "pack-fpk.sh 钩子循环含 install_callback",
         "缺它 → fnOS 安装钩子不执行 → 权限/数据目录建不出来（当前: %s）" % hooks.strip()[:80])
 
-    # 2 & 11. 运行时补包
-    chk(2, "fix-runtime-deps.sh" in fpk,
-        "pack-fpk.sh 调用 fix-runtime-deps.sh",
-        "SPK 有、FPK 缺 → FPK 缺 is-plain-obj/jsbi → 插件 failed to import")
-    chk(11, "fix-runtime-deps.sh" in spk and "fix-runtime-deps.sh" in fpk,
-        "两条链路都调用 fix-runtime-deps.sh",
-        "SPK=%s FPK=%s" % ("有" if "fix-runtime-deps.sh" in spk else "无",
-                           "有" if "fix-runtime-deps.sh" in fpk else "无"))
+    # 2 & 11. 运行时补包（★ 必须在 build-common.sh 里，CI 的打包 job 没有构建副本）
+    chk(2, "fix-runtime-deps.sh" in common,
+        "build-common.sh 在裁剪后调用 fix-runtime-deps.sh",
+        "CI 打包 job 只有 target artifact，没有 BUILD_SRC → 放在打包器里会静默跳过"
+        "（实测 CI 从未生效，导致缺 is-plain-obj/jsbi → 插件 failed to import）")
+    chk(11, "fix-runtime-deps.sh" in common and
+            ("fix-runtime-deps.sh" in spk or "fix-runtime-deps.sh" in fpk),
+        "运行时补包在 build-common.sh（打包器里可留兜底）",
+        "common=%s SPK=%s FPK=%s" % ("有" if "fix-runtime-deps.sh" in common else "无",
+                                     "有" if "fix-runtime-deps.sh" in spk else "无",
+                                     "有" if "fix-runtime-deps.sh" in fpk else "无"))
 
     # 3. app.tgz 后处理三要素
     has_strip = ("-type l -delete" in fpk) or ("find \"$_APP_STAGE\" -type l -delete" in fpk)
