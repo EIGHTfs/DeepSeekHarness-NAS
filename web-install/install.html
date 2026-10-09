@@ -1,10 +1,11 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <!-- dsh-skip-sensitive: 本页【内联脚本 + 未启用 CSP】属已知待办（审计 blocker script-unsafe-inline）。
+    <!-- dsh-skip-sensitive: 本页【内联脚本 + 未启用 CSP】为审计 blocker（script-unsafe-inline）。
          innerHTML 已全部改为 DOM API 构造（0 处：远端 SSH 输出与任务字段一律 textContent 插入，
-         发布按钮由行内 onclick 改为 addEventListener）。剩余改造需外移内联脚本并加 CSP，
-         且必须实机验证安装/卸载/构建全流程；详见 README「🧭 已知待办」。
+         发布按钮由行内 onclick 改为 addEventListener）。配套 CSP 未做，原因是它属服务端改动：
+         需给 install-server.py 的 do_GET 加 /static/ 白名单路由（扩展名 + 路径穿越校验），
+         把内联脚本外移为 app.js 再由服务端下发 Content-Security-Policy。
          此处用文件头精确豁免【仅安全敏感类】，其余规则（短变量名/按钮事件等）照常显示。 -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -400,7 +401,7 @@
         </div>
     </div>
 
-    <script> <!-- dsh-skip-sensitive: 内联脚本 + 未启用 CSP 属已知待办（innerHTML 已归零，见 README「已知待办」）；改造需外移内联脚本并加 CSP、且须实机验证，故暂不重构。此行级标记只压本行安全敏感类，其余规则照常 -->
+    <script> <!-- dsh-skip-sensitive: 内联脚本 + 未启用 CSP 为审计 blocker（innerHTML 已归零；CSP 需改服务端加静态路由，未做）；故暂不重构。此行级标记只压本行安全敏感类，其余规则照常 -->
         const $ = id => document.getElementById(id);
         const host = $('host'), port = $('port'), username = $('username'), password = $('password');
         const saveBtn = $('saveBtn'), savedIndicator = $('savedIndicator');
