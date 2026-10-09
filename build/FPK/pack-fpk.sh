@@ -222,6 +222,28 @@ echo "▶ 打包 app.tgz（gzip, 预构建产物包, ${#_FPK_EXCLUDES[@]} 条排
 ( cd "$FPK_APP" && find . -maxdepth 1 -mindepth 1 -printf '%f\n' > /tmp/fpk-toplist.$$ && \
   tar -czf "$FPK_SRC/app.tgz" --hard-dereference "${_FPK_EXCLUDES[@]}" --files-from=/tmp/fpk-toplist.$$ 2>/dev/null; \
   rm -f /tmp/fpk-toplist.$$ )
+
+# ── app.tgz 后处理（2026-10-09，用户查证后的定论，勿回退）─────────────────────
+#   病根：npm/pnpm 生成的软链（5863 条，全是 node_modules/.pnpm 的相对链接）打包后
+#     成为自引用/损坏链接 → fnOS 解压 app.tgz 时逐个条目设权限 → acl_get_file failed
+#     → 报 10234「set app dir permissions failed: installType=volume … acl_get_file failed」。
+#   修法（三步，缺一不可）：
+#     ① 记录全部软链到外层 links.txt（相对路径 + 目标），供安装期原样重建；
+#     ② 删除 app.tgz 内全部软链；
+#     ③ 所有条目 uid/gid 重置为 root，目录 755 / 文件 644（正规化）。
+#   被删掉的软链由 cmd/install_callback 按 links.txt 重建（见该函数）。
+_APP_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/dsh-apptgz.XXXXXX")"
+tar -xzf "$FPK_SRC/app.tgz" -C "$_APP_STAGE"
+( cd "$_APP_STAGE" && find . -type l -printf '%p\t%l\n' ) > "$FPK_SRC/links.txt"
+_LINK_N="$(wc -l < "$FPK_SRC/links.txt" | tr -d ' ')"
+find "$_APP_STAGE" -type l -delete
+find "$_APP_STAGE" -type d -exec chmod 755 {} + 2>/dev/null
+find "$_APP_STAGE" -type f -exec chmod 644 {} + 2>/dev/null
+( cd "$_APP_STAGE" && find . -maxdepth 1 -mindepth 1 -printf '%f\n' > /tmp/fpk-toplist2.$$ && \
+  tar -czf "$FPK_SRC/app.tgz" --owner=0 --group=0 --numeric-owner --files-from=/tmp/fpk-toplist2.$$ 2>/dev/null; \
+  rm -f /tmp/fpk-toplist2.$$ )
+safe_rm_rf "$_APP_STAGE" 2>/dev/null || rm -rf "$_APP_STAGE"
+echo "  ✓ app.tgz 后处理：移除 ${_LINK_N} 条软链（清单存 links.txt），uid/gid→root，目录755/文件644"
 # app/（target 副本 ~600M）使命完成立即删除（build-artifact-cleanup：中间产物用完即删）
 rm -rf "$FPK_APP"
 
