@@ -52,6 +52,81 @@ def pick_entity(dirs):
     return sorted(dirs, key=lambda d: ver_key(d))[-1]
 
 
+# ── 2026-10-10 真机实证（DSM 7.4.1）：多版本【不能一律取最高】✗ ───────────────
+#   compression@1.8.2 声明 negotiator "~0.6.4"，包内却没有 node_modules/negotiator
+#   → Node 向上走到提升层的 negotiator@1.1.0（Express 5 那份）
+#   → negotiator@1.1 在 encoding 路径上用 content-type.parse('gzip')
+#     → TypeError: invalid media type ✗
+#   → 异常抛在 res.writeHead(200,…) 里（被 compression 中间件钩住）
+#   → web 载体兜底 catch 把【每一个响应】变成 HTTP 400（空 body），随后 DSH fatal 退出
+#     code=1 → 用户观感"只瞬间能访问、页面加载不完" ✗
+#   真机修复：compression 包内链接改回 0.6.4 → 立刻 200 ✓；全量同步修正 81 条 ✓
+import re as _re_v
+
+
+def _parse_ver(v):
+    m = _re_v.search(r'(\d+)\.(\d+)\.(\d+)', str(v))
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def satisfies(ver, rng):
+    """简版 semver 范围判定：^ ~ >= <= > < = 精确/前缀 ||（够用即可）。"""
+    if not rng or rng in ('*', 'latest'):
+        return True
+    have = _parse_ver(ver)
+    if not have:
+        return False
+    for part in str(rng).split('||'):
+        r = part.strip()
+        if not r or r == '*':
+            return True
+        m = _re_v.match(r'^(\^|~|>=|<=|>|<|=)?\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?', r)
+        if not m:
+            return True
+        op = m.group(1) or '='
+        want = (int(m.group(2)), int(m.group(3) or 0), int(m.group(4) or 0))
+        if op == '^':
+            if have[0] == want[0] and have >= want:
+                return True
+            continue
+        if op == '~':
+            if have[0] == want[0] and have[1] == want[1] and have >= want:
+                return True
+            continue
+        if op == '>=':
+            ok = have >= want
+        elif op == '>':
+            ok = have > want
+        elif op == '<=':
+            ok = have <= want
+        elif op == '<':
+            ok = have < want
+        elif m.group(4) is None:
+            ok = have[0] == want[0] and (m.group(3) is None or have[1] == want[1])
+        else:
+            ok = have == want
+        if ok:
+            return True
+    return False
+
+
+def _entity_version(entity_dir):
+    try:
+        return json.load(open(os.path.join(entity_dir, 'package.json'), encoding='utf-8')).get('version') or '0.0.0'
+    except Exception:
+        m = _re_v.search(r'@(\d+\.\d+\.\d+)', str(entity_dir))
+        return m.group(1) if m else '0.0.0'
+
+
+def pick_for_range(ent, name, rng):
+    """按消费者声明的范围取【满足范围的最高版本】；无匹配才回退最高版本 ✓。"""
+    dirs = ent.get(name)
+    if not dirs:
+        return None
+    good = [d for d in dirs if satisfies(_entity_version(d), rng)]
+    return pick_entity(good or dirs)
+
+
 def _walk_pkgjson(root, max_depth=6):
     """在 root 下找 package.json，但【绝不进入 node_modules】、【绝不跟随软链】。
 
@@ -226,11 +301,12 @@ def main():
                     _pp = json.load(open(_pj, encoding='utf-8'))
                 except Exception:
                     continue
-                for _sec in ('dependencies', 'optionalDependencies'):
+                for _sec in ('dependencies', 'optionalDependencies', 'peerDependencies'):
                     for _n in (_pp.get(_sec) or {}):
-                        _tgt = ws.get(_n) or (pick_entity(ent[_n]) if ent.get(_n) else None)
+                        _rng = (_pp.get(_sec) or {}).get(_n)
+                        _tgt = ws.get(_n) or pick_for_range(ent, _n, _rng) or (pick_entity(ent[_n]) if ent.get(_n) else None)
                         if _tgt:
-                            link(os.path.join(_dd, 'node_modules', _n), _tgt, dep_stats)
+                            relink(os.path.join(_dd, 'node_modules', _n), _tgt, dep_stats)
     _SKIP_TOPLEVEL_DEP_SCAN = True
     for top in os.listdir(ad):
         if top in SKIP_TOP:
@@ -243,16 +319,17 @@ def main():
                 p = json.load(open(pj, encoding="utf-8"))
             except Exception:
                 continue
-            for sec in ("dependencies", "optionalDependencies"):
+            for sec in ("dependencies", "optionalDependencies", "peerDependencies"):
                 for n in (p.get(sec) or {}):
-                    tgt = ws.get(n) or (pick_entity(ent[n]) if ent.get(n) else None)
+                    _rng = (p.get(sec) or {}).get(n)
+                    tgt = ws.get(n) or pick_for_range(ent, n, _rng) or (pick_entity(ent[n]) if ent.get(n) else None)
                     if tgt:
-                        link(os.path.join(d, "node_modules", n), tgt, dep_stats)
+                        relink(os.path.join(d, "node_modules", n), tgt, dep_stats)
 
     if not quiet:
         print("  ✓ 链接补全: 提升目录新建 %d 条（跳过 %d）；包内依赖新建 %d 条（跳过 %d）"
               % (top_stats[0], top_stats[1], dep_stats[0], dep_stats[1]))
-        print("    工作区包 %d 个，.pnpm 实体包名 %d 个" % (len(ws), len(ent)))
+        print("    工作区包 %d 个，.pnpm 实体包名 %d 个（包内链接按声明范围选版本 ✓）" % (len(ws), len(ent)))
     return 0
 
 
