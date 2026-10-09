@@ -214,6 +214,30 @@ src.ports="${FPK_PROXY_PORT}/tcp,${FPK_DSH_PORT}/tcp,${FPK_CONTAINER_PORT}/tcp"
 dst.ports="${FPK_PROXY_PORT}/tcp,${FPK_DSH_PORT}/tcp,${FPK_CONTAINER_PORT}/tcp"
 SC_EOF
 
+# ── 运行时精准补包（2026-10-09 补上；SPK 早就有，FPK 一直缺 ✗）──────────────
+#   背景（prune-target.sh 模式 B 的既定口径）：模式 B 不做依赖闭包（否则 target 撑到 5.3G），
+#   只用纯白名单 lockfileDeps + workspaceRuntimeDeps，**不含 extra**；缺的运行时传递依赖
+#   由 build/fix-runtime-deps.sh「探测驱动精准补包」在打包阶段补齐。
+#   SPK 在 pack-spk.sh:580 调用了它 ✓，**FPK 从未调用** ✗ → 实测后果：
+#     .pnpm/execa@10.0.1/node_modules/is-plain-obj 指向的实体被裁掉 →
+#     import 报 Cannot find package 'is-plain-obj' / 'jsbi' →
+#     DSH 内置插件 plugin-manager / otel / schedule / office-to-pdf failed to import →
+#     用户可见：tool-schedule never started、新建会话失败。
+#   ⚠ 必须在 app.tgz 生成【之前】跑，补回的包才会进包。
+_FIX_SCRIPT="$BUILD_ROOT/fix-runtime-deps.sh"
+_BUILD_SRC="${WORK:-}/source"
+if [ ! -d "$_BUILD_SRC/node_modules/.pnpm" ]; then
+  for _c in "$WS/src" "$BUILD_ROOT/master-build/source" "$WS/.build/source"; do
+    [ -d "$_c/node_modules/.pnpm" ] && { _BUILD_SRC="$_c"; break; }
+  done
+fi
+if [ -x "$_FIX_SCRIPT" ] && [ -d "$_BUILD_SRC/node_modules/.pnpm" ]; then
+  echo "▶ 运行时精准补包（fix-runtime-deps.sh）"
+  "$_FIX_SCRIPT" "$FPK_APP" "$_BUILD_SRC" || echo "  ⚠ 补包探测返回非零，继续打包"
+else
+  echo "▶ 跳过运行时补包（fix-runtime-deps.sh 缺失或构建副本不完整）"
+fi
+
 # app.tgz（gzip；--hard-dereference 硬链展开；软链保留——fnpack 官方支持 symlink）
 echo "▶ 打包 app.tgz（gzip, 预构建产物包, ${#_FPK_EXCLUDES[@]} 条排除规则）"
 # ⚠ 必须用 find 顶层列表而非 `-C dir .`：`. ` 让全部条目带 ./ 前缀，fnOS 后端解压时
