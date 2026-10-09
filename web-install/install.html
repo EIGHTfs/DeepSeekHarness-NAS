@@ -399,6 +399,28 @@
             </div>
             <div id="buildLog" class="log log-tall"></div>
         </div>
+
+        <!-- ⑦ 在线构建监控（GitHub Actions；token 由服务端代发，前端不接触） -->
+        <div id="ciPanel" class="mt-4">
+            <hr class="divider">
+            <h3 class="section-title">🛰 在线构建监控</h3>
+            <p class="hint mb-3">读取 GitHub Actions 的最近若干次构建（只读）。补包/链接/验包等步骤都在 CI 里跑，这里能看到每次构建的结论与各 job 进度。</p>
+            <div class="inline-actions mb-3">
+                <button type="button" class="btn btn-sm btn-secondary" id="ciRefreshBtn">🔄 刷新</button>
+                <label class="field-label"><input type="checkbox" id="ciAutoRefresh" checked> 自动刷新（20 秒）</label>
+                <a class="btn btn-sm btn-secondary" id="ciRepoLink" href="https://github.com/EIGHTfs/DeepSeekHarness-NAS/actions" target="_blank" rel="noopener">↗ 在 GitHub 打开</a>
+                <span id="ciUpdatedAt" class="pb-source"></span>
+            </div>
+            <div id="ciError" class="hidden mb-3"></div>
+            <div class="table-wrap">
+                <table class="table">
+                    <thead>
+                        <tr><th>#</th><th>状态</th><th>commit</th><th>触发</th><th>开始</th><th>耗时</th><th>jobs（最近一次）</th></tr>
+                    </thead>
+                    <tbody id="ciRunsBody"><tr><td colspan="7" class="hint">加载中…</td></tr></tbody>
+                </table>
+            </div>
+        </div>
     </div>
 
     <script> <!-- dsh-skip-sensitive: 内联脚本 + 未启用 CSP 为审计 blocker（innerHTML 已归零；CSP 需改服务端加静态路由，未做）；故暂不重构。此行级标记只压本行安全敏感类，其余规则照常 -->
@@ -963,6 +985,72 @@
             }
         }
         loadLastBuild();
-    </script>
+    
+        // ── 在线构建监控（GitHub Actions；服务端代发 token，前端不接触凭据）──
+        var ciTimer = null;
+        var CI_LABELS = { queued: '排队中', in_progress: '构建中', completed: '已完成', waiting: '等待', requested: '已请求', pending: '待处理', neutral: '中性', cancelled: '已取消', success: '成功', failure: '失败', skipped: '跳过', timed_out: '超时', action_required: '待处理' };
+        function ciColor(r) {
+            if (r.status !== 'completed') return '#1976d2';
+            if (r.conclusion === 'success') return '#2e7d32';
+            if (r.conclusion === 'cancelled') return '#8a8a8a';
+            return '#c62828';
+        }
+        function ciElapsed(r) {
+            if (!r.created_at) return '-';
+            var end = r.updated_at ? new Date(r.updated_at) : new Date();
+            var sec = Math.max(0, Math.floor((end - new Date(r.created_at)) / 1000));
+            var m = Math.floor(sec / 60), s2 = sec % 60;
+            return (m > 0 ? m + 'm' : '') + s2 + 's' + (r.status === 'completed' ? '' : '…');
+        }
+        async function loadCiBuilds() {
+            var body = document.getElementById('ciRunsBody');
+            var errBox = document.getElementById('ciError');
+            if (!body) return;
+            try {
+                var resp = await fetch('/api/ci-builds?per_page=6');
+                var d = await resp.json();
+                if (!d.success) {
+                    errBox.textContent = '⚠ ' + (d.error || '读取失败');
+                    errBox.classList.remove('hidden');
+                    return;
+                }
+                errBox.classList.add('hidden');
+                var rows = '';
+                (d.runs || []).forEach(function (r) {
+                    var jobs = (r.jobs || []).map(function (j) {
+                        return (j.name || '') + '(' + (CI_LABELS[j.status] || j.status) + ')';
+                    }).join(' ');
+                    rows += '<tr>'
+                        + '<td>#' + (r.number || '') + '</td>'
+                        + '<td><span style="color:' + ciColor(r) + ';font-weight:600">' + (CI_LABELS[r.status] || r.status) + (r.conclusion ? ' / ' + (CI_LABELS[r.conclusion] || r.conclusion) : '') + '</span></td>'
+                        + '<td><code>' + (r.head_sha || '') + '</code></td>'
+                        + '<td>' + (r.event || '') + '</td>'
+                        + '<td>' + String(r.created_at || '').replace('T', ' ').slice(5, 16) + '</td>'
+                        + '<td>' + ciElapsed(r) + '</td>'
+                        + '<td class="hint">' + (jobs || '-') + '</td>'
+                        + '</tr>';
+                });
+                body.innerHTML = rows || '<tr><td colspan="7" class="hint">暂无构建记录</td></tr>';
+                var u = document.getElementById('ciUpdatedAt');
+                if (u) u.textContent = '更新于 ' + new Date().toLocaleTimeString();
+            } catch (e) {
+                errBox.textContent = '⚠ 读取在线构建失败: ' + e.message;
+                errBox.classList.remove('hidden');
+            }
+        }
+        function ciSchedule() {
+            if (ciTimer) { clearInterval(ciTimer); ciTimer = null; }
+            var cb = document.getElementById('ciAutoRefresh');
+            if (cb && cb.checked) ciTimer = setInterval(loadCiBuilds, 20000);
+        }
+        (function () {
+            var btn = document.getElementById('ciRefreshBtn');
+            if (btn) btn.addEventListener('click', loadCiBuilds);
+            var cb = document.getElementById('ciAutoRefresh');
+            if (cb) cb.addEventListener('change', ciSchedule);
+            loadCiBuilds();
+            ciSchedule();
+        })();
+</script>
 </body>
 </html>

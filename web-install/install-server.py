@@ -44,6 +44,8 @@ GITHUB_TOKEN_PATHS = [
 ]
 GITHUB_REPO = 'EIGHTfs/DeepSeekHarness-NAS'
 GITHUB_API = 'https://api.github.com'
+GH_OWNER = 'EIGHTfs'
+GH_REPO = 'DeepSeekHarness-NAS'
 
 
 def log(msg):
@@ -72,6 +74,15 @@ def file_md5(path):
         return ''
 
 
+# JSON 形态的 token 来源：工作区 config.json 的 githubToken 键（网页安装工具用同一份凭据）
+GITHUB_TOKEN_JSON_PATHS = [
+    os.path.join(BASE_DIR, '..', '..', 'config.json'),          # <工作区>/config.json（仓库上一级）
+    os.path.join(BASE_DIR, '..', 'config.json'),                # <仓库>/config.json（兜底）
+    '/volume13/Artificial Intelligence/DeepSeek/DeepSeekHarness/工作区/config.json',  # 绝对兜底
+    os.path.join(BASE_DIR, 'install-config.json'),              # web-install/install-config.json
+]
+
+
 def _read_github_token():
     """读取 GitHub token（优先环境变量，其次 git-push 凭据文件）。"""
     tok = os.environ.get('GITHUB_TOKEN', '').strip()
@@ -82,6 +93,17 @@ def _read_github_token():
             try:
                 with open(p, 'r') as f:
                     tok = f.read().strip()
+                if tok:
+                    return tok
+            except Exception:
+                pass
+    # JSON 形态（工作区 config.json 的 githubToken）——网页安装工具与构建监控共用同一凭据
+    for p in GITHUB_TOKEN_JSON_PATHS:
+        if os.path.isfile(p):
+            try:
+                with open(p, 'r', encoding='utf-8') as f:
+                    cfg = json.load(f)
+                tok = (cfg.get('githubToken') or '').strip()
                 if tok:
                     return tok
             except Exception:
@@ -834,6 +856,51 @@ class Handler(BaseHTTPRequestHandler):
             return 404, {'success': False, 'error': '未找到构建任务 %s' % build_id}
         return 200, {'success': True, **info}
 
+    def _api_ci_builds(self, query):
+        """在线构建监控：读 GitHub Actions 的最近若干次运行（含各 job 状态）。
+
+        与 /api/builds（本地构建、内存态）区分：这里是 **CI 在线构建**。
+        token 复用 _read_github_token()（工作区 config.json 的 githubToken），
+        由服务端代发请求 → 前端不需要、也拿不到 token（不泄露）。
+        只读、幂等、失败即返回结构化错误（前端照常渲染，不炸页面）。
+        """
+        try:
+            per_page = int(parse_qs(query).get('per_page', ['6'])[0])
+        except Exception:
+            per_page = 6
+        per_page = max(1, min(20, per_page))
+        token = _read_github_token()
+        if not token:
+            return 200, {'success': False, 'error': '未找到 GitHub token（工作区 config.json 的 githubToken）', 'runs': []}
+        status, data = _github_api('GET', '/repos/%s/%s/actions/runs?per_page=%d' % (GH_OWNER, GH_REPO, per_page), token)
+        if status != 200 or not isinstance(data, dict):
+            msg = ''
+            if isinstance(data, dict):
+                msg = data.get('message') or ''
+            return 200, {'success': False, 'error': 'GitHub API %s %s' % (status, msg), 'runs': []}
+        runs = []
+        for r in (data.get('workflow_runs') or []):
+            runs.append({
+                'number': r.get('run_number'),
+                'id': r.get('id'),
+                'name': r.get('name'),
+                'status': r.get('status'),
+                'conclusion': r.get('conclusion'),
+                'head_sha': (r.get('head_sha') or '')[:7],
+                'head_branch': r.get('head_branch'),
+                'event': r.get('event'),
+                'created_at': r.get('created_at'),
+                'updated_at': r.get('updated_at'),
+                'html_url': r.get('html_url'),
+            })
+        # 最近一次运行若还在跑，顺带带上各 job 的状态（能看到 build-target / pack-and-release 各自进度）
+        if runs and runs[0].get('status') != 'completed':
+            st, jd = _github_api('GET', '/repos/%s/%s/actions/runs/%s/jobs' % (GH_OWNER, GH_REPO, runs[0]['id']), token)
+            if st == 200 and isinstance(jd, dict):
+                runs[0]['jobs'] = [{'name': j.get('name'), 'status': j.get('status'),
+                                    'conclusion': j.get('conclusion')} for j in (jd.get('jobs') or [])]
+        return 200, {'success': True, 'runs': runs, 'repo': '%s/%s' % (GH_OWNER, GH_REPO)}
+
     def _api_builds(self):
         with BUILDS_LOCK:
             builds = sorted(BUILDS.values(), key=lambda b: b.get('started', ''), reverse=True)
@@ -861,6 +928,7 @@ class Handler(BaseHTTPRequestHandler):
             '/api/tasks': lambda: self._api_tasks(parsed.query),
             '/api/build-status': lambda: self._api_build_status(parsed.query),
             '/api/builds': lambda: self._api_builds(),
+            '/api/ci-builds': lambda: self._api_ci_builds(parsed.query),
             '/api/build-config': lambda: self._api_build_config(),
         }
         handler = routes.get(path)
