@@ -702,13 +702,46 @@ function selfHealWorkspaceLinks(root) {
   //   → dsh-plugin-manager failed to import。此处必须与 python 侧一致。
   const entDirs = {};
   const verKey = (d) => { const m = String(d).match(/@(\d+)\.(\d+)\.(\d+)/); return m ? [+m[1], +m[2], +m[3]] : [0, 0, 0]; };
-  const pickEnt = (name) => {
-    const ds = entDirs[name] || (ent[name] ? [ent[name]] : []);
+  // ★ 2026-10-10 真机实证（DSM 7.4.1）：多版本【不能一律取最高】✗
+  //   compression@1.8.2 声明 negotiator "~0.6.4"，但被指到提升层的 1.1.0（Express 5 那份）
+  //   → negotiator@1.1 在 encoding 路径上用 content-type.parse('gzip')
+  //     → TypeError: invalid media type ✗
+  //   → 异常抛在 res.writeHead(200,…) 里（被 compression 中间件钩住）
+  //   → web 载体的兜底 catch 把【每一个响应】变成 HTTP 400（空 body）
+  //   → 用户观感"装完打不开"。真机修复：把 compression 包内链接改回 0.6.4 → 立刻 200 ✓
+  //   故：选择版本必须【尊重消费者声明的范围】，取"满足范围的最高版本"。
+  const parseVer = (v) => { const m = String(v).match(/(\d+)\.(\d+)\.(\d+)/); return m ? [+m[1], +m[2], +m[3]] : null; };
+  const cmpVer = (a, b) => (a[0]-b[0]) || (a[1]-b[1]) || (a[2]-b[2]);
+  const satisfies = (ver, range) => {
+    if (!range || range === '*' || range === 'latest') return true;
+    const have = parseVer(ver); if (!have) return false;
+    return String(range).split('||').some(part => {
+      const r = part.trim(); if (!r || r === '*') return true;
+      const m = r.match(/^(\^|~|>=|<=|>|<|=)?\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+      if (!m) return true;
+      const op = m[1] || '=';
+      const want = [ +m[2], +(m[3] ?? 0), +(m[4] ?? 0) ];
+      const c = cmpVer(have, want);
+      if (op === '^') return have[0] === want[0] && c >= 0;
+      if (op === '~') return have[0] === want[0] && have[1] === want[1] && c >= 0;
+      if (op === '>=') return c >= 0;
+      if (op === '>')  return c > 0;
+      if (op === '<=') return c <= 0;
+      if (op === '<')  return c < 0;
+      // 精确/前缀：只写主次版本时按前缀放宽（npm 语义）
+      if (m[4] === undefined) return have[0] === want[0] && (m[3] === undefined || have[1] === want[1]);
+      return c === 0;
+    });
+  };
+  const pickEnt = (name, range) => {
+    const ds = (entDirs[name] || (ent[name] ? [ent[name]] : [])).slice();
     if (!ds.length) return null;
-    return ds.slice().sort((a, b) => {
-      const x = verKey(a), y = verKey(b);
-      return (x[0] - y[0]) || (x[1] - y[1]) || (x[2] - y[2]);
-    })[ds.length - 1];
+    const byv = (a, b) => { const x = verKey(a), y = verKey(b); return (x[0]-y[0]) || (x[1]-y[1]) || (x[2]-y[2]); };
+    if (range) {
+      const ok = ds.filter(d => { const m = String(d).match(/@(\d+\.\d+\.\d+)/); return m && satisfies(m[1], range); });
+      if (ok.length) return ok.sort(byv)[ok.length - 1];
+    }
+    return ds.sort(byv)[ds.length - 1];
   };
   let pnpmDirs = [];
   try { pnpmDirs = fs.readdirSync(pnpm); } catch (e) { pnpmDirs = []; }
@@ -757,6 +790,42 @@ function selfHealWorkspaceLinks(root) {
     fixLink(path.join(pnpm, 'node_modules', name), _t);
     fixLink(path.join(nm, name), _t);
   }
+  // ★ 2026-10-10 新增：.pnpm 里【每个包自己的 node_modules】也要按声明范围补齐/纠正。
+  //   原 fixDeps 只走工作区根（apps/、packages/），**从不进 node_modules/.pnpm**
+  //   → compression 这类第三方包的包内依赖永远缺 → Node 向上走到提升层拿到错版本 ✗
+  //   （实测就是 negotiator 1.1.0 导致全部响应 400 ✗）
+  let nPnpm = 0;
+  const fixPnpmPkgs = () => {
+    let pd = [];
+    try { pd = fs.readdirSync(pnpm); } catch { return; }
+    for (const d of pd) {
+      if (d === 'node_modules') continue;
+      const group = path.join(pnpm, d, 'node_modules');
+      let tops = [];
+      try { tops = fs.readdirSync(group); } catch { continue; }
+      const pkgs = [];
+      for (const t of tops) {
+        if (t.charAt(0) === '@') {
+          let subs = []; try { subs = fs.readdirSync(path.join(group, t)); } catch { continue; }
+          for (const sub of subs) pkgs.push(path.join(group, t, sub));
+        } else pkgs.push(path.join(group, t));
+      }
+      for (const pkgDir of pkgs) {
+        let mf = null;
+        try { mf = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8')); } catch { continue; }
+        for (const sec of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+          const deps = mf[sec]; if (!deps) continue;
+          for (const n of Object.keys(deps)) {
+            const tgt = ws[n] || pickEnt(n, deps[n]);
+            if (!tgt) continue;
+            const lp = path.join(pkgDir, 'node_modules', n);
+            if (fixLink(lp, tgt)) nPnpm++;
+            else if (mk(lp, tgt)) nPnpm++;
+          }
+        }
+      }
+    }
+  };
   // ① 顶层 + ③ 包内：按各 package.json 的依赖建链
   const fixDeps = (dir, depth) => {
     if (depth > 4) return;
@@ -782,7 +851,8 @@ function selfHealWorkspaceLinks(root) {
     try { st = fs.statSync(path.join(root, top)); } catch (e) { continue; }
     if (st.isDirectory()) fixDeps(path.join(root, top), 0);
   }
-  if (nTop || nDep || nFix) console.log(`[√] 链接自愈兜底: 提升目录 ${nTop} 条 + 包内依赖 ${nDep} 条 + 错链纠正 ${nFix} 条`);
+  try { fixPnpmPkgs(); } catch (e) { console.warn('[DSH] .pnpm 包内链接补齐跳过:', e && e.message); }
+  if (nTop || nDep || nFix) console.log(`[√] 链接自愈兜底: 提升目录 ${nTop} 条 + 包内依赖 ${nDep} 条 + 错链纠正 ${nFix} 条 + .pnpm 包内 ${nPnpm} 条`);
 }
 
 // 软链清单兜底：外层 links.tar（只含软链条目）解回应用体，幂等；安装期没解回时这里补
