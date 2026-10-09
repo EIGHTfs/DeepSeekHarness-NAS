@@ -536,6 +536,13 @@ start.sh 已自动处理，**无需手工设置**：
 
 ### 卸载/修复：**默认保留数据**（2026-10-04）
 
+> **卸载时的提示语（2026-10-10）**：卸载流程会调用 `start.sh stop`；若服务本就已停，
+> `cmd_stop` 会输出 **「已卸载」** 而不是「DSH 未运行」（后者曾被平台当成错误弹窗弹给用户 ✗）。
+> 触发方式：SPK 的 `preuninst` 置环境变量 **`DSH_UNINSTALLING=1`**；
+> FPK 的 `uninstall_init` 写标记文件 **`<数据目录>/.uninstalling`**（跨进程只能靠文件），
+> 安装时由 `install_init` 清掉。手动执行 `start.sh stop` 时仍提示「DSH 未运行」（便于排障 ✓）。
+
+
 套件自身的卸载向导**默认保留数据**（SPK：`pack-spk.sh` 的 `wizard_keep_data` 单选，默认保留；
 FPK：`pack-fpk.sh` 的「保留数据（推荐）」）。网页端此前**没有该选项**，卸载时无条件调用
 `scripts/clean-dsm-residue.sh` 删除 `@appdata` / `@apphome` / `@appshare` —— 等于绕过用户选择直接清空数据

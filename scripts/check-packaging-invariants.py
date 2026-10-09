@@ -296,6 +296,17 @@ def main():
            and ('def pick_for_range' in _fnl) and ('pick_for_range(ent, _n, _rng)' in _fnl),
         "构建期与运行期都按声明范围选版本（否则压缩/解析类第三方包拿到不兼容大版本）",
         "取最高版本 → compression 拿到 negotiator 1.1 → 每个响应 400、DSH fatal 退出（真机实测）")
+
+    try:
+        _ssex = _code_only(open(os.path.join(ROOT, 'build', 'start.sh.example'), encoding='utf-8').read())
+        _spkex = _code_only(open(os.path.join(ROOT, 'build', 'SPK', 'pack-spk.sh'), encoding='utf-8').read())
+        _fpkex = _code_only(open(os.path.join(ROOT, 'build', 'FPK', 'pack-fpk.sh'), encoding='utf-8').read())
+    except Exception:
+        _ssex = _spkex = _fpkex = ''
+    chk(24, ('已卸载' in _ssex) and ('DSH_UNINSTALLING' in _ssex) and ('.uninstalling' in _ssex)
+           and ('DSH_UNINSTALLING=1' in _spkex) and ('.uninstalling' in _fpkex),
+        "卸载流程按场景输出「已卸载」",
+        "卸载时把「DSH 未运行」当弹窗弹给用户")
     # 输出
     for no, ok, msg, hint in checks:
         if ok:
