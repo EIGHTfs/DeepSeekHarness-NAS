@@ -257,8 +257,12 @@ echo "▶ 打包 app.tgz（gzip, 预构建产物包, ${#_FPK_EXCLUDES[@]} 条排
 #   被删掉的软链由 cmd/install_callback 按 links.txt 重建（见该函数）。
 _APP_STAGE="$(mktemp -d "${TMPDIR:-/tmp}/dsh-apptgz.XXXXXX")"
 tar -xzf "$FPK_SRC/app.tgz" -C "$_APP_STAGE"
-( cd "$_APP_STAGE" && find . -type l -printf '%p\t%l\n' ) > "$FPK_SRC/links.txt"
-_LINK_N="$(wc -l < "$FPK_SRC/links.txt" | tr -d ' ')"
+# 软链清单：**打包成 links.tar**（只含软链条目，路径→目标精确保留），安装期原样解回。
+#   ⚠ 不要用「文本清单 + 逐行 ln -s」：实测解析 tar -tv 的字段不可靠，5863 条里会错 542 条
+#     （含 node_modules/@deepseek-ai/dsh 断链）→ 插件 failed to import。tar 还原才是精确的。
+( cd "$_APP_STAGE" && find . -type l -print > /tmp/fpk-links.$$ && \
+  tar -cf "$FPK_SRC/links.tar" --no-recursion -T /tmp/fpk-links.$$ ; rm -f /tmp/fpk-links.$$ )
+_LINK_N="$(tar -tf "$FPK_SRC/links.tar" 2>/dev/null | wc -l | tr -d ' ')"
 find "$_APP_STAGE" -type l -delete
 find "$_APP_STAGE" -type d -exec chmod 755 {} + 2>/dev/null
 find "$_APP_STAGE" -type f -exec chmod 644 {} + 2>/dev/null
@@ -266,7 +270,7 @@ find "$_APP_STAGE" -type f -exec chmod 644 {} + 2>/dev/null
   tar -czf "$FPK_SRC/app.tgz" --owner=0 --group=0 --numeric-owner --files-from=/tmp/fpk-toplist2.$$ 2>/dev/null; \
   rm -f /tmp/fpk-toplist2.$$ )
 safe_rm_rf "$_APP_STAGE" 2>/dev/null || rm -rf "$_APP_STAGE"
-echo "  ✓ app.tgz 后处理：移除 ${_LINK_N} 条软链（清单存 links.txt），uid/gid→root，目录755/文件644"
+echo "  ✓ app.tgz 后处理：移除 ${_LINK_N} 条软链（清单存 links.tar），uid/gid→root，目录755/文件644"
 # app/（target 副本 ~600M）使命完成立即删除（build-artifact-cleanup：中间产物用完即删）
 rm -rf "$FPK_APP"
 
@@ -589,21 +593,16 @@ install_callback() {
   #   app.tgz 后处理会删掉全部 npm/pnpm 软链（不删则 fnOS 解压设 ACL 报
   #   acl_get_file failed，前端显示「设置目录权限失败」）；但 Node 靠这些链解析模块，
   #   实测不补回来启动会 ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/dsh-app-boot'。
-  #   清单 links.txt 由打包期写在外层，安装时随包解出（依次在几个候选位置找）。
+  #   清单 links.tar 由打包期写在外层（只含软链条目），安装期原样解回 —— 精确还原，
+  #   不要改成逐行 ln -s（文本解析不可靠，实测 5863 条里会错 542 条）。
   _LK=""
-  for _cand in "/var/apps/${APPNAME}/links.txt" "${TRIM_APPDEST:-}/links.txt" \
-               "$(dirname "$APP_DIR" 2>/dev/null)/links.txt"; do
+  for _cand in "/var/apps/${APPNAME}/links.tar" "${TRIM_APPDEST:-}/links.tar" \
+               "$(dirname "$APP_DIR" 2>/dev/null)/links.tar"; do
     [ -n "$_cand" ] && [ -f "$_cand" ] && { _LK="$_cand"; break; }
   done
   if [ -n "$_LK" ]; then
-    _LN=0
-    while IFS="$(printf '\t')" read -r _l _t; do
-      [ -n "$_l" ] || continue
-      _l="${_l#./}"
-      mkdir -p "$APP_DIR/$(dirname "$_l")" 2>/dev/null || true
-      ln -sfn "$_t" "$APP_DIR/$_l" 2>/dev/null && _LN=$((_LN + 1))
-    done < "$_LK"
-    echo "[install_callback] 重建软链 ${_LN} 条（清单 ${_LK}）" \
+    tar -xf "$_LK" -C "$APP_DIR" 2>/dev/null || true
+    echo "[install_callback] 按 links.tar 还原软链（清单 ${_LK}，$(tar -tf "$_LK" 2>/dev/null | wc -l) 条）" \
       >> "${TRIM_PKGVAR:-/vol1/@appdata/${APPNAME}}/install-callback.trace" 2>/dev/null || true
   fi
   exit 0
