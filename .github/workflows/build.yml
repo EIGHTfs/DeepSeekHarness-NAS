@@ -12,6 +12,9 @@ on:
 # 创建/更新 Release 需要写权限
 permissions:
   contents: write
+  # 方案 B（2026-10-09 用户定）：构建失败时自动学习缺失依赖并【入库】，随后 dispatch 一次重建。
+  # dispatch workflow 需要 actions: write。
+  actions: write
 # 用户口径（2026-10-04）：**每次新构建开始前，把上一个正在跑的停掉** ——
 # 保证同一时刻只有一个构建（禁并发），也省 runner 分钟（比两个并行更省）。
 # 注：曾用 cancel-in-progress: false 试过"排队"，实测会取消正在跑的运行且不排队，故按用户口径
@@ -62,6 +65,53 @@ jobs:
       - uses: ./.github/actions/build-target
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 方案 B：构建失败时自动学习缺失依赖并入库（用户 2026-10-09 定）──────────────
+      # 为什么需要：官方新增构建期脚本可能 import 被裁剪剥掉的根 devDep（实测 alpha.2 的
+      #   scripts/primary-runtime/prune-python-tests.ts → papaparse → TS2307 构建挂掉），
+      #   而学习器此前只靠人工调用。这里接上闭环：学 → 入库 → 自动重建一次。
+      # 边界：只从【真实失败日志】学（--log 模式，抓 Cannot find module 'X'），不猜；
+      #   白名单无变化就绝不提交（说明这次失败不是缺包导致）→ 不会造成重建死循环。
+      - name: 自动学习缺失依赖并入库（方案 B）
+        id: selfheal
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          LOGS=$(ls -1t build/master-build/*.log assets/pnpm-install.log 2>/dev/null | head -3 || true)
+          if [ -z "${LOGS:-}" ]; then
+            echo "… 未找到构建日志（build/master-build/*.log、assets/pnpm-install.log），跳过自动学习"
+            exit 0
+          fi
+          echo "… 从失败日志自动学习（$LOGS）…"
+          for L in $LOGS; do
+            bash scripts/learn-prune-whitelist.sh --log "$L" --apply || true
+          done
+          if git diff --quiet -- build/build-prune-whitelist.json; then
+            echo "… 白名单无变化（本次失败不是缺包导致）→ 不提交、不重建"
+            exit 0
+          fi
+          git config user.name EIGHTfs
+          git config user.email EIGHTfs@users.noreply.github.com
+          git add build/build-prune-whitelist.json
+          git commit -q -m "chore(prune): CI 自动学习并入构建必需包（方案 B）"
+          git --no-pager diff --stat HEAD~1 -- build/build-prune-whitelist.json || true
+          git push origin HEAD:main
+          echo "changed=yes" >> "$GITHUB_OUTPUT"
+          echo "… 已入库，下一步自动重建一次 …"
+
+      - name: 入库后自动重建一次
+        if: failure() && steps.selfheal.outputs.changed == 'yes'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          curl -sS -o /dev/null -w '  触发重建 HTTP %{http_code}\n' -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/dispatches" \
+            -d '{"ref":"main"}'
 
   # ── 打包：SPK · 源码链路（复用 build-target 的 artifact，不重复构建）──────────
   pack-and-release:
