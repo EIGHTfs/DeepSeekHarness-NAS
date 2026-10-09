@@ -151,6 +151,13 @@ def main():
         "start.sh 含启动期自愈兜底（工作区链接 + links.tar）",
         "缺则安装期漏链时启动必失败并反复重试；两个函数与调用都要在")
 
+    # 14. 反代必须有「陈旧 token 兜底」
+    #     fnOS 桌面缓存上次的 URL（带旧 token）→ 重启后 token 变了 → DSH 401 →
+    #     用户观感"套件打不开"，且每次重启复发。反代需把非当次 token 302 换成当次。
+    chk(14, "陈旧 token" in start and "_tm[1] !== dshToken" in start,
+        "反代含「陈旧 token 兜底」（非当次 token → 302 换成当次）",
+        "缺则每次重启应用后，套件图标都会带着过期 token 打不开")
+
     # 输出
     for no, ok, msg, hint in checks:
         if ok:
