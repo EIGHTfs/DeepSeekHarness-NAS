@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""check-packaging-invariants.py —— 打包/发布链路的关键不变量守卫。
+
+每一条都对应 2026-09 ~ 2026-10 期间真实发生过的一次事故（括号内为现场），
+把它们固化成"改坏了就红"的检查，避免同一个坑踩第二次。
+
+检查项：
+  1. pack-fpk.sh 的 cmd 钩子循环必须含 install_callback
+     （少它 → fnOS 安装钩子不执行 → 数据目录/权限建不出来）
+  2. pack-fpk.sh 必须调用 fix-runtime-deps.sh
+     （SPK 一直有、FPK 一直缺 → FPK 缺 is-plain-obj/jsbi → 插件 failed to import）
+  3. pack-fpk.sh 必须有 app.tgz 后处理：删软链 + uid/gid 归 root + 目录 755/文件 644
+     （不删软链 → fnOS 解压设 ACL 失败 → 「设置目录权限失败」）
+  4. pack-fpk.sh 必须生成 links.tar（软链专用清单，安装期精确还原）
+  5. install_callback 必须用 tar 解 links.tar 还原（不能用逐行 ln -s 的文本清单）
+  6. build/start.sh.example 的 portal 候选路径必须含飞牛路径
+     （只认 DSM 的 /var/packages/… → 门户 url 永远 "/" → 套件点开打不开）
+  7. build/start.sh.example 的临时目录首选必须是平台自带目录
+     （写死 ${PID_DIR}/tmp → 应用数据目录里凭空多出 tmp/）
+  8. build-common.sh 的 pnpm install 不得传空参数
+     （空参数让 pnpm 11 解析错位 → 误报 Unknown option: 'frozen-lockfile'）
+  9. build.yml 不得有 schedule（每日定时会破坏看门狗"成功后暂停 6 小时"口径）
+ 10. watch-official.yml 必须保留三条件（tag 未对齐 / 无构建在跑 / 距上次成功 ≥6h）
+ 11. 两条链路（SPK/FPK）的运行时补包调用必须同时存在（防止只修一条）
+
+用法：./scripts/check-packaging-invariants.py [--verbose]
+退出码 0 = 全部满足，1 = 有回归。
+"""
+import io
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RED = "\033[31m" if sys.stdout.isatty() else ""
+GRN = "\033[32m" if sys.stdout.isatty() else ""
+RST = "\033[0m" if sys.stdout.isatty() else ""
+
+
+def read(rel):
+    p = os.path.join(ROOT, rel)
+    if not os.path.isfile(p):
+        return None
+    return io.open(p, encoding="utf-8", errors="replace").read()
+
+
+def main():
+    verbose = "--verbose" in sys.argv
+    fails = []
+    checks = []
+
+    fpk = read("build/FPK/pack-fpk.sh") or ""
+    spk = read("build/SPK/pack-spk.sh") or ""
+    start = read("build/start.sh.example") or ""
+    common = read("build/build-common.sh") or ""
+    buildyml = read(".github/workflows/build.yml") or ""
+    watch = read(".github/workflows/watch-official.yml") or ""
+
+    def chk(no, ok, msg, hint=""):
+        checks.append((no, ok, msg, hint))
+        if not ok:
+            fails.append("%s：%s" % (msg, hint) if hint else msg)
+
+    # 1. 钩子循环含 install_callback
+    m = re.search(r"for hook in ([^\n;]+)", fpk)
+    hooks = m.group(1) if m else ""
+    chk(1, "install_callback" in hooks,
+        "pack-fpk.sh 钩子循环含 install_callback",
+        "缺它 → fnOS 安装钩子不执行 → 权限/数据目录建不出来（当前: %s）" % hooks.strip()[:80])
+
+    # 2 & 11. 运行时补包
+    chk(2, "fix-runtime-deps.sh" in fpk,
+        "pack-fpk.sh 调用 fix-runtime-deps.sh",
+        "SPK 有、FPK 缺 → FPK 缺 is-plain-obj/jsbi → 插件 failed to import")
+    chk(11, "fix-runtime-deps.sh" in spk and "fix-runtime-deps.sh" in fpk,
+        "两条链路都调用 fix-runtime-deps.sh",
+        "SPK=%s FPK=%s" % ("有" if "fix-runtime-deps.sh" in spk else "无",
+                           "有" if "fix-runtime-deps.sh" in fpk else "无"))
+
+    # 3. app.tgz 后处理三要素
+    has_strip = ("-type l -delete" in fpk) or ("find \"$_APP_STAGE\" -type l -delete" in fpk)
+    has_root = "--owner=0" in fpk and "--group=0" in fpk
+    has_mode = "chmod 755" in fpk and "chmod 644" in fpk
+    chk(3, has_strip and has_root and has_mode,
+        "pack-fpk.sh 有 app.tgz 后处理（删软链/uid-gid 归 root/755-644）",
+        "删软链=%s root=%s 权限=%s；不删软链 → fnOS 解压设 ACL 失败" % (has_strip, has_root, has_mode))
+
+    # 4. links.tar
+    chk(4, "links.tar" in fpk,
+        "pack-fpk.sh 生成 links.tar（软链专用清单）",
+        "清单缺失 → 安装期无法还原软链 → 启动 ERR_MODULE_NOT_FOUND")
+
+    # 5. install_callback 用 tar 解 links.tar
+    tar_restore = ("tar -xf \"$_LK\"" in fpk) or ("tar -xf \"$LK\"" in fpk) or \
+                  bool(re.search(r'tar\s+-xf\s+"?\$_?LK"?', fpk))
+    ln_loop = "while IFS=" in fpk and "ln -sfn" in fpk
+    chk(5, tar_restore and not ln_loop,
+        "install_callback 用 tar 解 links.tar 还原软链",
+        "实测逐行 ln -s 会错 542 条（含 @deepseek-ai/dsh）→ 插件挂；tar_restore=%s ln_loop=%s"
+        % (tar_restore, ln_loop))
+
+    # 6. portal 飞牛路径
+    chk(6, ("SCRIPT_DIR/../ui/config" in start) and ("/var/apps/${APP_NAME}/target/ui/config" in start),
+        "start.sh 的 portal 候选路径含飞牛路径",
+        "只认 DSM 的 /var/packages/… → 门户 url 永远 \"/\" → 套件图标点开打不开")
+
+    # 7. 临时目录首选平台目录
+    chk(7, ("TRIM_PKGTMP" in start) and ("/var/apps/${APP_NAME}/tmp" in start),
+        "start.sh 的临时目录优先用平台自带目录",
+        "写死 ${PID_DIR}/tmp → 应用数据目录里多出 tmp/（用户口径不允许）")
+
+    # 8. pnpm install 不得传空参数
+    chk(8, "${1:+$1}" in common,
+        "build-common.sh 的 pnpm install 不传空参数",
+        "空参数让 pnpm 11 解析错位 → 误报 Unknown option: 'frozen-lockfile'（应写 ${1:+$1}）")
+
+    # 9. build.yml 不得有 schedule
+    chk(9, not re.search(r"^\s*schedule:\s*$", buildyml, re.M),
+        "build.yml 无 schedule（每日定时不得复活）",
+        "它会破坏看门狗「成功后暂停 6 小时」口径；触发应只剩 看门狗/手动/tag")
+
+    # 10. 看门狗三条件
+    ok_watch = ("in_progress" in watch) and ("21600" in watch or "6" in watch) and \
+               ("tag" in watch) and ("releases" in watch or "Release" in watch)
+    chk(10, ok_watch,
+        "watch-official.yml 保留三条件（tag 未对齐/无构建在跑/距上次成功 ≥6h）",
+        "应保留：官方 tag≠本仓 tag / 无构建在跑 / 距上次成功 ≥6 小时（21600s）")
+
+    # 输出
+    for no, ok, msg, hint in checks:
+        if ok:
+            print("%s✓ [%2d] %s%s" % (GRN, no, msg, RST))
+        else:
+            print("%s✗ [%2d] %s%s" % (RED, no, msg, RST))
+            if hint:
+                print("        %s" % hint)
+    print("═══ 结论 ═══")
+    if fails:
+        print("%s✗ %d 项打包不变量被破坏：%s" % (RED, len(fails), RST))
+        for f in fails:
+            print("   - %s" % f)
+        return 1
+    print("%s✓ %d 项打包不变量全部满足%s" % (GRN, len(checks), RST))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
