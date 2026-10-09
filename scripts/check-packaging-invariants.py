@@ -158,6 +158,13 @@ def main():
         "反代含「陈旧 token 兜底」（非当次 token → 302 换成当次）",
         "缺则每次重启应用后，套件图标都会带着过期 token 打不开")
 
+    # 15. 门户 icon 必须是 images/icon-{0}.png（短横线）
+    #     实测：写成 icon_{0}.png（下划线）会让 fnOS 桌面入口取不到图标 →
+    #     应用中心「打开」按钮点不开（对照能打开的 1Panel 用的是短横线）。
+    chk(15, "images/icon-{0}.png" in start and "images/icon_{0}.png" not in start,
+        "门户 icon 用短横线模板 images/icon-{0}.png",
+        "下划线命名会让桌面入口图标取不到 → 「打开」按钮点不开")
+
     # 输出
     for no, ok, msg, hint in checks:
         if ok:

@@ -95,11 +95,11 @@ if [ "${1:-}" = "gen-portal" ]; then
     esac
   done
   _gp_url_line=""
-  if [ -n "${_gp_token:-}" ]; then
-    # 带 token：DSM 打开即携 token=，反代走「已带 token 放行」直达 DSH 认证，不依赖 Sec-Fetch-Site
-    _gp_url_line="
-            \"url\": \"/?token=${_gp_token}\","
-  elif [ "$_gp_url" = "true" ]; then
+  # ★ 2026-10-10 实测：fnOS 桌面/套件入口的 url 必须【不带参数】（对照能正常打开的
+  #   1Panel，它的 .url 条目里根本没有 url 字段，只有 protocol+port）。此前写
+  #   "/?token=…" 会让「打开」按钮失效；免密改由反代自动完成（⓪局域网硬闸 → ①无 token
+  #   自动带 token → ①b 陈旧 token 换成当次），实测三种方式都 200。
+  if [ "$_gp_url" = "true" ]; then
     _gp_url_line='
             "url": "/",'
   fi
@@ -108,7 +108,7 @@ if [ "${1:-}" = "gen-portal" ]; then
     ".url": {
         "${_gp_prefix}${_gp_keyid}.Application": {
             "type": "${_gp_type}",
-            "icon": "images/icon_{0}.png",
+            "icon": "images/icon-{0}.png",
             "title": "__PORTAL_TITLE__",
             "desc": "__PORTAL_DESC__",
             "protocol": "http",
