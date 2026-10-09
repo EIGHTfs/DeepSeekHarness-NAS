@@ -499,7 +499,7 @@ start.sh 已自动处理，**无需手工设置**：
 
 > ![fnOS 应用中心登录](docs/screenshots/飞牛.png)
 
-> 打包与错误码速查固化在 skill：`fnos-fpk-package-guide`（见技能仓库 `ai-work-archive/skills/execution-执行/`）——官方 fnpack、手动 tar+gzip 兜底、manifest 字段（**禁止 changelog 字段**，实测触发 10111）、CPU 配额/共存部署/污染防再犯均在；`fnos-fpk-error-table` 为安装错误码速查表。fpk 应用体与 spk 同源（官方 dsh 版本），门户打开自动带 token，机制与 spk 相同。
+> 打包要点：`app.tgz` 生成后做**后处理** —— 删掉全部 npm/pnpm 软链、所有条目 uid/gid 归 root、目录 755 / 文件 644；软链清单随包携带，安装期由 `cmd/install_callback` 原样还原（软链是 fnOS 解压设 ACL 失败的直接原因）。fpk 应用体与 spk 同源（官方 dsh 版本），门户打开自动带 token，机制与 spk 相同。
 
 ---
 

@@ -25,10 +25,10 @@
 #   - start.sh: 本脚本按 FPK 端口段生成（gen_start_sh，母版 build/start.sh.example；
 #     首启构建逻辑已抽离 scripts/first-build-logic.sh 留档，完整预构建包免构建）
 #   - app.tgz: gzip + --hard-dereference（硬链展开；软链保留，fnpack 官方支持 symlink）
-#     ⚠ 条目无 ./ 前缀（用 find 顶层列表，fnOS 后端把 ./ 当字面路径 → 10111）
-#   - 外层 .fpk: gzip；条目只列文件/软链不列目录（GNU tar 目录尾斜杠 → fnOS 解析错 → 10111）
+#     ⚠ 条目无 ./ 前缀（用 find 顶层列表，避免顶层结构与预期对不上）
+#   - 外层 .fpk: gzip；条目只列文件/软链不列目录（避免 GNU tar 给目录补尾斜杠）
 #   - 门户 ui/ 内外两份都要（app.tgz 内供门户「打开」按钮取图标；外层供 install_start 安全扫描枚举 dir:ui）
-#   - 外层 <appname>.sc 协议文件声明端口（manifest service_port 对应；缺失 → 10111）
+#   - 外层 <appname>.sc 协议文件声明端口（manifest service_port 对应）
 #   - manifest: version=官方完整版本；checksum=app.tgz 的 MD5（实测）
 #   - cmd 生命周期: 启停全代理到 bin/start.sh；username/groupname 必须小写
 #===============================================================================
@@ -203,8 +203,7 @@ cp "$D_ASSETS/ui/images/"*.png "$FPK_APP/ui/images/" 2>/dev/null || true
   > "$FPK_SRC/ui/config"
 cp "$FPK_SRC/ui/config" "$FPK_APP/ui/config"
 
-# 外层 .sc 协议文件（manifest service_port 对应；缺失 → 后端 GetCloudDetail 读端口
-# nil panic → CLI 10111。端口 = FPK 三段）
+# 外层 .sc 协议文件（manifest service_port 对应；端口 = FPK 三段）
 echo "▶ 生成外层 ${APP_NAME}.sc（端口 ${FPK_PROXY_PORT}/${FPK_DSH_PORT}/${FPK_CONTAINER_PORT}）"
 cat > "$FPK_SRC/${APP_NAME}.sc" <<SC_EOF
 [${APP_NAME}]
@@ -218,7 +217,7 @@ SC_EOF
 # app.tgz（gzip；--hard-dereference 硬链展开；软链保留——fnpack 官方支持 symlink）
 echo "▶ 打包 app.tgz（gzip, 预构建产物包, ${#_FPK_EXCLUDES[@]} 条排除规则）"
 # ⚠ 必须用 find 顶层列表而非 `-C dir .`：`. ` 让全部条目带 ./ 前缀，fnOS 后端解压时
-#   把 ./ 当字面路径 → 顶层结构对不上 → GetCloudDetail 崩溃 10111
+#   把 ./ 当字面路径 → 顶层结构对不上
 ( cd "$FPK_APP" && find . -maxdepth 1 -mindepth 1 -printf '%f\n' > /tmp/fpk-toplist.$$ && \
   tar -czf "$FPK_SRC/app.tgz" --hard-dereference "${_FPK_EXCLUDES[@]}" --files-from=/tmp/fpk-toplist.$$ 2>/dev/null; \
   rm -f /tmp/fpk-toplist.$$ )
@@ -226,7 +225,7 @@ echo "▶ 打包 app.tgz（gzip, 预构建产物包, ${#_FPK_EXCLUDES[@]} 条排
 # ── app.tgz 后处理（2026-10-09，用户查证后的定论，勿回退）─────────────────────
 #   病根：npm/pnpm 生成的软链（5863 条，全是 node_modules/.pnpm 的相对链接）打包后
 #     成为自引用/损坏链接 → fnOS 解压 app.tgz 时逐个条目设权限 → acl_get_file failed
-#     → 报 10234「set app dir permissions failed: installType=volume … acl_get_file failed」。
+#     → 安装报「set app dir permissions failed: … acl_get_file failed」（appcenter error.log 原文）。
 #   修法（三步，缺一不可）：
 #     ① 记录全部软链到外层 links.txt（相对路径 + 目标），供安装期原样重建；
 #     ② 删除 app.tgz 内全部软链；
@@ -252,7 +251,7 @@ rm -rf "$FPK_APP"
 #===============================================================================
 # manifest（version=官方完整版本；checksum=app.tgz MD5 实测）
 # ⚠ 禁止添加 changelog 字段！实测（2026-09-13）fnOS GetCloudDetail 解析未知字段
-#   changelog → nil pointer → 10111。mod13 对照实验：仅删 changelog 一行即安装成功。
+#   保持最小字段集（与已验证可安装的包一致）。
 FPK_CHECKSUM="$(md5sum "$FPK_SRC/app.tgz" | awk '{print $1}')"
 cat > "$FPK_SRC/manifest" <<EOF
 appname               = ${APP_NAME}
@@ -701,7 +700,7 @@ cat > "$FPK_SRC/wizard/uninstall" <<'EOF'
     }
 ]
 EOF
-# ⚠ 禁止把 wizard/uninstall 写成空数组 []：实测 fnOS GetCloudDetail 解析 WizardData 遇空数组 → nil panic → 10111（2026-09-13 exp-j 对照实验锁定：仅换 uninstall 为完整 JSON 即装成功）
+# ⚠ wizard/uninstall 必须是完整 JSON（不要写成空数组 []）
 
 # ICON（透明化处理后）
 cp "$D_ASSETS/PACKAGE_ICON.PNG" "$FPK_SRC/ICON.PNG"
