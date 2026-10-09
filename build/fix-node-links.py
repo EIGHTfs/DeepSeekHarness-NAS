@@ -161,7 +161,17 @@ def main():
         for name, dirs in ent.items():
             link(os.path.join(hoist, name), pick_entity(dirs), top_stats)
 
-    # ① 顶层 + ③ 包内：按各 package.json 的依赖建链
+    # ① 顶层 node_modules/<包名>：★ 2026-10-10 真机验收发现——原来【从未补过这一层】。
+    #   Node 从 apps/cli/lib/ 往上找依赖时，命中路径正是 <应用体>/node_modules/<包名>；
+    #   而 prune 只保留 .pnpm 实体、顶层链被清掉 → 装完 commander/js-yaml/cordis 全缺
+    #   （实测：补 661 条顶层链后应用立刻 running、套件打开 200）。
+    #   多版本一律取最高版本（与提升目录同规则，见 ver_key 的实测教训）。
+    for _n, _dirs in ent.items():
+        link(os.path.join(nm, _n), pick_entity(_dirs), top_stats)
+    for _n, _src in ws.items():
+        link(os.path.join(nm, _n), _src, top_stats)
+
+    # ③ 包内：按各 package.json 的依赖建链
     # .pnpm 内部实体：结构是已知扁平的（.pnpm/<目录>/node_modules/<包>/package.json），
     # 直接枚举即可，绝不对此做 ** 递归遍历（#98 实测会因软链跟随而爆炸）。
     PNPM_ENTITY_FLAT = True
