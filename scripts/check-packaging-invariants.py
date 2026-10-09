@@ -276,6 +276,21 @@ def main():
            and ('启动仍在进行中' in _spk),
         "SPK 生成物用运行时端口变量 + 有界轮询（否则 DSM 记启动失败、前端报安装失败）",
         "打包期变量在生成物里为空 → running_dsh 恒判未运行 → ret=[1] → DSM 报安装失败（真机实测）")
+
+    # 23. 链接修复必须【按消费者声明的范围】选版本（2026-10-10 DSM 真机实证）
+    #     compression@1.8.2 声明 negotiator ~0.6.4，却被指到提升层 1.1.0（Express 5 那份）
+    #     → negotiator@1.1 用 content-type.parse('gzip') → TypeError: invalid media type
+    #     → 异常抛在 res.writeHead 里 → web 载体兜底 catch 把每个响应变成 400（空 body）
+    #     → 用户"装完打不开"。真机把 compression 包内链接改回 0.6.4 后立刻 200。
+    #     并要求覆盖 .pnpm 里【每个包自己的 node_modules】（原实现只走工作区根，从不进 .pnpm）。
+    try:
+        _ss = _code_only(open(os.path.join(ROOT, 'build', 'start.sh.example'), encoding='utf-8').read())
+    except Exception:
+        _ss = ''
+    chk(23, ('const satisfies' in _ss) and ('const fixPnpmPkgs' in _ss)
+           and ('pickEnt(n, deps[n])' in _ss) and ('fixPnpmPkgs();' in _ss),
+        "链接修复按声明范围选版本 + 覆盖 .pnpm 各包自己的 node_modules",
+        "取最高版本会让第三方包拿到不兼容的大版本 → negotiator 1.1 让所有响应 400（真机实测）")
     # 输出
     for no, ok, msg, hint in checks:
         if ok:
