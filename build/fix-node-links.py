@@ -52,15 +52,46 @@ def pick_entity(dirs):
     return sorted(dirs, key=lambda d: ver_key(d))[-1]
 
 
+def _walk_pkgjson(root, max_depth=6):
+    """在 root 下找 package.json，但【绝不进入 node_modules】、【绝不跟随软链】。
+
+    ★ 2026-10-10 实测教训（CI #98 铁证）：原实现用
+        glob.glob(os.path.join(root, '**', 'package.json'), recursive=True)
+      Python 的 glob 对 `**` 会**跟随软链**下降，而裁剪后的 .pnpm 里实体之间全是软链
+      （A→B→C…），遍历量组合爆炸 —— 实测让 build-common.sh 在这一步空转
+      【14 分 45 秒】（日志：取消时残留进程 pid (3205) (python3)）。
+      改为手工 scandir：遇 node_modules 不下降、is_dir(follow_symlinks=False)，
+      遍历量降回“工作区包”本身，秒级完成。
+    """
+    out = []
+    stack = [(root, 0)]
+    while stack:
+        d, depth = stack.pop()
+        if depth > max_depth:
+            continue
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            if e.name in ('node_modules', '.git'):
+                                continue
+                            stack.append((e.path, depth + 1))
+                        elif e.name == 'package.json':
+                            out.append(e.path)
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return out
+
 def collect_workspace(ad):
     """任何顶层目录下的 package.json → {包名: 目录}。"""
     ws = {}
     for top in os.listdir(ad):
         if top in SKIP_TOP or not os.path.isdir(os.path.join(ad, top)):
             continue
-        for pj in glob.glob(os.path.join(ad, top, "**", "package.json"), recursive=True):
-            if "/node_modules/" in pj:
-                continue
+        for pj in _walk_pkgjson(os.path.join(ad, top)):
             try:
                 d = json.load(open(pj, encoding="utf-8"))
             except Exception:
@@ -131,10 +162,50 @@ def main():
             link(os.path.join(hoist, name), pick_entity(dirs), top_stats)
 
     # ① 顶层 + ③ 包内：按各 package.json 的依赖建链
+    # .pnpm 内部实体：结构是已知扁平的（.pnpm/<目录>/node_modules/<包>/package.json），
+    # 直接枚举即可，绝不对此做 ** 递归遍历（#98 实测会因软链跟随而爆炸）。
+    PNPM_ENTITY_FLAT = True
+    for _d in sorted(os.listdir(pnpm)) if os.path.isdir(pnpm) else []:
+        _p = os.path.join(pnpm, _d)
+        if _d == 'node_modules' or not os.path.isdir(_p):
+            continue
+        _nmm = os.path.join(_p, 'node_modules')
+        if not os.path.isdir(_nmm):
+            continue
+        try:
+            _ents = os.listdir(_nmm)
+        except OSError:
+            continue
+        for _e in _ents:
+            if _e.startswith('@'):
+                _sub = os.path.join(_nmm, _e)
+                try:
+                    _subs = os.listdir(_sub)
+                except OSError:
+                    continue
+                _cands = [os.path.join(_sub, _x, 'package.json') for _x in _subs]
+            else:
+                _cands = [os.path.join(_nmm, _e, 'package.json')]
+            for _pj in _cands:
+                if not os.path.isfile(_pj):
+                    continue
+                _dd = os.path.dirname(_pj)
+                try:
+                    _pp = json.load(open(_pj, encoding='utf-8'))
+                except Exception:
+                    continue
+                for _sec in ('dependencies', 'optionalDependencies'):
+                    for _n in (_pp.get(_sec) or {}):
+                        _tgt = ws.get(_n) or (pick_entity(ent[_n]) if ent.get(_n) else None)
+                        if _tgt:
+                            link(os.path.join(_dd, 'node_modules', _n), _tgt, dep_stats)
+    _SKIP_TOPLEVEL_DEP_SCAN = True
     for top in os.listdir(ad):
         if top in SKIP_TOP:
             continue
-        for pj in glob.glob(os.path.join(ad, top, "**", "package.json"), recursive=True):
+        if _SKIP_TOPLEVEL_DEP_SCAN and top == 'node_modules':
+            continue
+        for pj in _walk_pkgjson(os.path.join(ad, top)):
             d = os.path.dirname(pj)
             try:
                 p = json.load(open(pj, encoding="utf-8"))
