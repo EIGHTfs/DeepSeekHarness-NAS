@@ -614,39 +614,66 @@ document.write('<iframe src="http://' + host + ':' + ${proxyPort} + '/" id="dshF
 }
 
 // ── 启动期自愈兜底（2026-10-09）───────────────────────────────────────────────
-//   病根：DSH 运行时靠 node_modules/@deepseek-ai/* → ../../packages/* 这些【工作区软链】
-//   解析；裁剪 / 组装 / 安装任一环节漏掉它们，启动即
-//     Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@deepseek-ai/dsh-app-boot'
-//     imported from <应用体>/apps/cli/lib/bin
-//   → DSH 退出 code=1 → 守护反复重试 → 用户观感是"启动卡很久"。
-//   这些链接可**确定性重建**（扫 packages/**/package.json 的 name），所以在启动前兜底补一遍：
-//   幂等、纯本地、不依赖网络，任何安装形态都能自愈（打包期已在 build-common.sh 固化，
-//   这里是运行期兜底，双保险）。
+//   病根：DSH 运行时按 node_modules/<包名> 解析依赖，而这些【顶层链接】在
+//   裁剪 / 组装 / 安装任一环节可能整批缺失。实测 apps/cli 声明的 85 个依赖缺 8 个：
+//     commander / js-yaml / node-addon-require-builtin / @deepseek-ai/cordis* / schemastery
+//   （.pnpm 实体都在，只是顶层链接没进包）→ 启动即
+//     Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'X'
+//   → DSH 退出 code=1 → 守护反复重试 → 用户观感"启动卡很久"。
+//   这些链接可**确定性重建**：工作区包 → 指向 packages/** 源码目录；
+//   第三方 → 从 .pnpm/<名字转义>@*/node_modules/<包名> 实体回链。
+//   幂等、纯本地、不依赖网络（打包期已在 build-common.sh 固化，这里是运行期兜底）。
 function selfHealWorkspaceLinks(root) {
-  const pkgsRoot = path.join(root, 'packages');
-  const linkRoot = path.join(root, 'node_modules', '@deepseek-ai');
-  if (!fs.existsSync(pkgsRoot) || !fs.existsSync(path.join(root, 'node_modules'))) return;
-  try { fs.mkdirSync(linkRoot, { recursive: true }); } catch (e) { return; }
-  let made = 0;
-  const walk = (dir, depth) => {
-    if (depth > 4) return;
-    let ents = [];
-    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
-    for (const e of ents) {
-      const p = path.join(dir, e.name);
-      if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p, depth + 1); continue; }
-      if (e.name !== 'package.json') continue;
-      let name = '';
-      try { name = JSON.parse(fs.readFileSync(p, 'utf8')).name || ''; } catch (e) { continue; }
-      if (name.indexOf('@deepseek-ai/') !== 0) continue;
-      const short = name.slice('@deepseek-ai/'.length);
-      const link = path.join(linkRoot, short);
-      if (fs.existsSync(link)) continue;
-      try { fs.symlinkSync(path.relative(linkRoot, path.dirname(p)), link); made++; } catch (e) {}
+  const nm = path.join(root, 'node_modules');
+  const pnpm = path.join(nm, '.pnpm');
+  if (!fs.existsSync(nm) || !fs.existsSync(pnpm)) return;
+  // 收集所有 workspace 包声明的依赖名 + 工作区包名→目录
+  const names = new Set();
+  const ws = {};
+  for (const top of ['packages', 'apps']) {
+    const base = path.join(root, top);
+    if (!fs.existsSync(base)) continue;
+    const walk = (dir, depth) => {
+      if (depth > 4) return;
+      let ents = [];
+      try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+      for (const e of ents) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p, depth + 1); continue; }
+        if (e.name !== 'package.json') continue;
+        let d = {};
+        try { d = JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { continue; }
+        for (const sec of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
+          for (const n of Object.keys(d[sec] || {})) names.add(n);
+        }
+        if (top === 'packages' && d.name) ws[d.name] = path.dirname(p);
+      }
+    };
+    walk(base, 0);
+  }
+  let made = 0; const miss = [];
+  for (const n of Array.from(names).sort()) {
+    const link = path.join(nm, n);
+    if (fs.existsSync(link)) continue;
+    try { fs.mkdirSync(path.dirname(link), { recursive: true }); } catch (e) {}
+    let tgt = null;
+    if (ws[n]) {
+      tgt = path.relative(path.dirname(link), ws[n]);
+    } else {
+      const esc = n.replace(/\//g, '+');
+      let cands = [];
+      try {
+        cands = fs.readdirSync(pnpm).filter(x => x.indexOf(esc + '@') === 0)
+          .map(x => path.join(pnpm, x, 'node_modules', n)).filter(x => fs.existsSync(x)).sort();
+      } catch (e) {}
+      if (cands.length) tgt = path.relative(path.dirname(link), cands[0]);
     }
-  };
-  walk(pkgsRoot, 0);
-  if (made) console.log(`[√] 工作区链接兜底: 补 ${made} 条（node_modules/@deepseek-ai/*）`);
+    if (tgt) { try { fs.symlinkSync(tgt, link); made++; } catch (e) { miss.push(n); } }
+    else miss.push(n);
+  }
+  if (made || miss.length) {
+    console.log(`[√] 顶层链接兜底: 补 ${made} 条${miss.length ? '；无实体 ' + miss.length + ' 个（' + miss.slice(0, 6).join(', ') + '）' : ''}`);
+  }
 }
 
 // 软链清单兜底：外层 links.tar（只含软链条目）解回应用体，幂等；安装期没解回时这里补
