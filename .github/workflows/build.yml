@@ -161,6 +161,15 @@ jobs:
           cp -a build/staging/*.spk build/staging/*.fpk dist-main/ 2>/dev/null || true
           ls -lh dist-main || true
 
+      - name: 出货级验包（载荷检查；不合格即失败）
+        run: |
+          set -e
+          FPK="$(ls -t build/staging/*.fpk 2>/dev/null | head -1)"
+          if [ -z "$FPK" ]; then echo "✗ 没有产出 fpk"; exit 1; fi
+          echo "验包: $FPK"
+          python3 scripts/check-fpk-payload.py "$FPK" \
+            --expect-pkg commander --expect-pkg js-yaml --expect-pkg @deepseek-ai/cordis
+
       - name: 解析官方 tag（指定则用指定值，与官方同 tag 发布）
         id: reltag
         run: |

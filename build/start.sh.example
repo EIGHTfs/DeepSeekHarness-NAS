@@ -614,66 +614,93 @@ document.write('<iframe src="http://' + host + ':' + ${proxyPort} + '/" id="dshF
 }
 
 // ── 启动期自愈兜底（2026-10-09）───────────────────────────────────────────────
-//   病根：DSH 运行时按 node_modules/<包名> 解析依赖，而这些【顶层链接】在
-//   裁剪 / 组装 / 安装任一环节可能整批缺失。实测 apps/cli 声明的 85 个依赖缺 8 个：
-//     commander / js-yaml / node-addon-require-builtin / @deepseek-ai/cordis* / schemastery
-//   （.pnpm 实体都在，只是顶层链接没进包）→ 启动即
-//     Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'X'
+//   病根：DSH 运行时按 node_modules/<包名> 解析依赖，而 pnpm 的链接分三层：
+//     ① 顶层  node_modules/<包名>
+//     ② 提升  node_modules/.pnpm/node_modules/<包名>
+//     ③ 包内  node_modules/.pnpm/<包名>@<版本>/node_modules/<依赖>
+//   任一层缺失，启动即 Cannot find module / Cannot find package
 //   → DSH 退出 code=1 → 守护反复重试 → 用户观感"启动卡很久"。
-//   这些链接可**确定性重建**：工作区包 → 指向 packages/** 源码目录；
-//   第三方 → 从 .pnpm/<名字转义>@*/node_modules/<包名> 实体回链。
-//   幂等、纯本地、不依赖网络（打包期已在 build-common.sh 固化，这里是运行期兜底）。
+//   实测：apps/cli 的 85 个依赖缺 8 个顶层链接；node-addon-require-builtin 内部缺
+//   node-addon-native-custom-loader（第三层）。三层都可确定性重建：
+//   工作区包 → 指向源码目录（任何顶层目录下的 package.json）；其余 → 指向 .pnpm 实体。
+//   幂等、只增不删、纯本地、不依赖网络（打包期已在 build-common.sh 调 fix-node-links.py 固化）。
 function selfHealWorkspaceLinks(root) {
   const nm = path.join(root, 'node_modules');
   const pnpm = path.join(nm, '.pnpm');
   if (!fs.existsSync(nm) || !fs.existsSync(pnpm)) return;
-  // 收集所有 workspace 包声明的依赖名 + 工作区包名→目录
-  const names = new Set();
+  // 工作区包索引 + .pnpm 实体索引
   const ws = {};
-  for (const top of ['packages', 'apps']) {
-    const base = path.join(root, top);
-    if (!fs.existsSync(base)) continue;
-    const walk = (dir, depth) => {
-      if (depth > 4) return;
-      let ents = [];
-      try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
-      for (const e of ents) {
-        const p = path.join(dir, e.name);
-        if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p, depth + 1); continue; }
-        if (e.name !== 'package.json') continue;
-        let d = {};
-        try { d = JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { continue; }
-        for (const sec of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
-          for (const n of Object.keys(d[sec] || {})) names.add(n);
-        }
-        if (top === 'packages' && d.name) ws[d.name] = path.dirname(p);
-      }
-    };
-    walk(base, 0);
-  }
-  let made = 0; const miss = [];
-  for (const n of Array.from(names).sort()) {
-    const link = path.join(nm, n);
-    if (fs.existsSync(link)) continue;
-    try { fs.mkdirSync(path.dirname(link), { recursive: true }); } catch (e) {}
-    let tgt = null;
-    if (ws[n]) {
-      tgt = path.relative(path.dirname(link), ws[n]);
-    } else {
-      const esc = n.replace(/\//g, '+');
-      let cands = [];
-      try {
-        cands = fs.readdirSync(pnpm).filter(x => x.indexOf(esc + '@') === 0)
-          .map(x => path.join(pnpm, x, 'node_modules', n)).filter(x => fs.existsSync(x)).sort();
-      } catch (e) {}
-      if (cands.length) tgt = path.relative(path.dirname(link), cands[0]);
+  const ent = {};
+  const SKIP = new Set(['node_modules', '.git']);
+  const walkPkg = (dir, depth) => {
+    if (depth > 4) return;
+    let ents = [];
+    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+    for (const e of ents) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { if (e.name !== 'node_modules') walkPkg(p, depth + 1); continue; }
+      if (e.name !== 'package.json') continue;
+      let d = {};
+      try { d = JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { continue; }
+      if (d.name && !ws[d.name]) ws[d.name] = path.dirname(p);
     }
-    if (tgt) { try { fs.symlinkSync(tgt, link); made++; } catch (e) { miss.push(n); } }
-    else miss.push(n);
+  };
+  for (const top of fs.readdirSync(root)) {
+    if (SKIP.has(top)) continue;
+    let st = null;
+    try { st = fs.statSync(path.join(root, top)); } catch (e) { continue; }
+    if (st.isDirectory()) walkPkg(path.join(root, top), 0);
   }
-  if (made || miss.length) {
-    console.log(`[√] 顶层链接兜底: 补 ${made} 条${miss.length ? '；无实体 ' + miss.length + ' 个（' + miss.slice(0, 6).join(', ') + '）' : ''}`);
+  const addEnt = (name, tgt) => { if (!ent[name]) ent[name] = tgt; };
+  let pnpmDirs = [];
+  try { pnpmDirs = fs.readdirSync(pnpm); } catch (e) { pnpmDirs = []; }
+  for (const d of pnpmDirs) {
+    if (d === 'node_modules') continue;
+    const nmm = path.join(pnpm, d, 'node_modules');
+    let names = [];
+    try { names = fs.readdirSync(nmm); } catch (e) { continue; }
+    for (const e of names) {
+      if (e.charAt(0) === '@') {
+        let subs = [];
+        try { subs = fs.readdirSync(path.join(nmm, e)); } catch (err) { continue; }
+        for (const s of subs) addEnt(e + '/' + s, path.join(nmm, e, s));
+      } else addEnt(e, path.join(nmm, e));
+    }
   }
+  const mk = (link, tgt) => {
+    if (fs.existsSync(link) || fs.lstatSync(link, { throwIfNoEntry: false })) return false;
+    try { fs.mkdirSync(path.dirname(link), { recursive: true }); fs.symlinkSync(path.relative(path.dirname(link), tgt), link); return true; }
+    catch (e) { return false; }
+  };
+  let nTop = 0, nDep = 0;
+  // ② 提升目录：每个实体一条
+  for (const name of Object.keys(ent)) if (mk(path.join(pnpm, 'node_modules', name), ent[name])) nTop++;
+  // ① 顶层 + ③ 包内：按各 package.json 的依赖建链
+  const fixDeps = (dir, depth) => {
+    if (depth > 4) return;
+    let ents = [];
+    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+    for (const e of ents) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { if (e.name !== 'node_modules') fixDeps(p, depth + 1); continue; }
+      if (e.name !== 'package.json') continue;
+      let d = {};
+      try { d = JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { continue; }
+      for (const sec of ['dependencies', 'optionalDependencies']) {
+        for (const n of Object.keys(d[sec] || {})) {
+          const tgt = ws[n] || ent[n];
+          if (tgt && mk(path.join(path.dirname(p), 'node_modules', n), tgt)) nDep++;
+        }
+      }
+    }
+  };
+  for (const top of fs.readdirSync(root)) {
+    if (top === '.git') continue;
+    let st = null;
+    try { st = fs.statSync(path.join(root, top)); } catch (e) { continue; }
+    if (st.isDirectory()) fixDeps(path.join(root, top), 0);
+  }
+  if (nTop || nDep) console.log(`[√] 链接自愈兜底: 提升目录 ${nTop} 条 + 包内依赖 ${nDep} 条`);
 }
 
 // 软链清单兜底：外层 links.tar（只含软链条目）解回应用体，幂等；安装期没解回时这里补
@@ -1123,6 +1150,7 @@ sync_portal_token() {
   local f
   for f in "$SCRIPT_DIR/ui/config" "$SCRIPT_DIR/../ui/config" \
            "/var/packages/${APP_NAME}/ui/config" \
+           "/var/apps/${APP_NAME}/ui/config" \
            "/var/apps/${APP_NAME}/target/ui/config" \
            "/vol1/@appcenter/${APP_NAME}/ui/config" \
            "/vol2/@appcenter/${APP_NAME}/ui/config"; do
