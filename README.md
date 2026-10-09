@@ -500,6 +500,8 @@ start.sh 已自动处理，**无需手工设置**：
 > ![fnOS 应用中心登录](docs/screenshots/飞牛.png)
 
 > 打包要点：`app.tgz` 生成后做**后处理** —— 删掉全部 npm/pnpm 软链、所有条目 uid/gid 归 root、目录 755 / 文件 644；软链清单随包携带，安装期由 `cmd/install_callback` 原样还原（软链是 fnOS 解压设 ACL 失败的直接原因）。fpk 应用体与 spk 同源（官方 dsh 版本），门户打开自动带 token，机制与 spk 相同。
+>
+> 📖 飞牛 FPK 的完整打包与排障经验（安装「设置目录权限失败」、装完插件 failed to import / 新建会话失败、套件图标打不开、数据目录多出 `tmp/`、appcenter 日志位置等）见 [`docs/skills/飞牛FPK打包与排障.md`](docs/skills/飞牛FPK打包与排障.md)。
 
 ---
 
