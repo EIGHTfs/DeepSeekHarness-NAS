@@ -168,6 +168,29 @@ def main():
         "写成 /?token=… 会让飞牛「打开」按钮点不开（实测）")
 
 
+    # 16. fix-node-links.py 禁止对含软链的树用 ** 递归 glob
+    #     CI #98 实测：glob('**') 会跟随软链下降，裁剪后的 .pnpm 实体互相软链 →
+    #     遍历组合爆炸，build-common.sh 在这一步空转 14 分 45 秒
+    #     （日志：取消时残留进程 pid (3205) (python3)）。必须用 os.scandir 手工遍历
+    #     （遇 node_modules 不下降、is_dir(follow_symlinks=False)）。
+    try:
+        _fnl = open(os.path.join(ROOT, 'build', 'fix-node-links.py'), encoding='utf-8').read()
+    except Exception:
+        _fnl = ''
+    import ast as _ast
+    _bad = []
+    try:
+        for _n in _ast.walk(_ast.parse(_fnl)):
+            if isinstance(_n, _ast.Call) and isinstance(_n.func, _ast.Attribute) and _n.func.attr == 'glob':
+                for _a in _ast.walk(_n):
+                    if isinstance(_a, _ast.Constant) and isinstance(_a.value, str) and '**' in _a.value:
+                        _bad.append(_a.value)
+    except Exception:
+        pass
+    chk(16, ('_walk_pkgjson' in _fnl) and not _bad,
+        "fix-node-links.py 用 os.scandir 手工遍历（无 ** 递归 glob）",
+        "用 ** glob 会跟随 .pnpm 软链爆炸（#98 实测空转 14m45s）；发现 %s" % (_bad or '无'))
+
     # 输出
     for no, ok, msg, hint in checks:
         if ok:
