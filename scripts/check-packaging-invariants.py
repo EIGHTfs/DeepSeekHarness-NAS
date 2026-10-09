@@ -261,6 +261,21 @@ def main():
            and 'running_dsh "$FPK_DSH_PORT"' not in _fpkgen,
         "FPK 生成物用运行时端口变量（$DSH_PORT 优先），不用打包期变量",
         "打包期变量在生成物里为空 → running_dsh 恒失败 → fnOS 记启动失败 10330（实测）")
+
+    # 22. SPK 生成物（scripts/start-stop-status）同样规则（2026-10-10 真机实证）
+    #     VirtualDSM 7.4.1 实测：install 阶段 start-stop-status start 返回 ret=[1]
+    #     → DSM 记 "start version failed" → 前端报"安装失败"。
+    #     两处原因与 FPK 同款：端口用了打包期变量 $SPK_DSH_PORT（引号 heredoc 运行时空）；
+    #     只 sleep 5 就判定（DSH 冷启动约 10 秒）。chk(21) 只管 FPK，这里补 SPK。
+    try:
+        _spk = _code_only(open(os.path.join(ROOT, 'build', 'SPK', 'pack-spk.sh'), encoding='utf-8').read())
+    except Exception:
+        _spk = ''
+    chk(22, ('running_dsh "${DSH_PORT:-$SPK_DSH_PORT}"' in _spk)
+           and ('running_dsh "$SPK_DSH_PORT"' not in _spk)
+           and ('启动仍在进行中' in _spk),
+        "SPK 生成物用运行时端口变量 + 有界轮询（否则 DSM 记启动失败、前端报安装失败）",
+        "打包期变量在生成物里为空 → running_dsh 恒判未运行 → ret=[1] → DSM 报安装失败（真机实测）")
     # 输出
     for no, ok, msg, hint in checks:
         if ok:

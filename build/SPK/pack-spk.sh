@@ -424,15 +424,30 @@ start() {
     --dsh-port "$DSH_PORT" \
     --container-port "$CONTAINER_PORT" \
     > "${PACKAGE_BASE}/var/logs/start.log" 2>&1 &
-  sleep 5
-  if ! running_dsh "$SPK_DSH_PORT" ; then
-    return 1
+  # ── 就绪等待（2026-10-10 修复，与 FPK 同款）──
+  #   真机实证（VirtualDSM 7.4.1，synopkg.log）：install 阶段 start-stop-status start
+  #   返回 ret=[1] → DSM 记 "start version 0.2.1 failed" → 前端报安装失败 ✗。
+  #   两个原因：
+  #     a) 端口用了 $SPK_DSH_PORT —— 那是【打包脚本】的变量，本文件是 <<'SSS_EOF' 引号
+  #        heredoc，运行时为空 → running_dsh 拿空端口 → 恒判未运行；
+  #     b) 只 sleep 5 就判定，而 DSH 冷启动约 10 秒（启动期自愈要补上千条链接）。
+  #   修法：端口用运行时 $DSH_PORT（上面已 source var/ports）；改为有界轮询（≤12s，命中即返回）；
+  #   超时也返回 0 —— start.sh 已成功 spawn，交给 DSM 自己的 status 轮询判定，
+  #   绝不把"还在启动中"误报成"启动失败"（那会让整个安装被标成失败）。
+  local _w=0
+  while [ "$_w" -lt 12 ]; do
+    running_dsh "${DSH_PORT:-$SPK_DSH_PORT}" && break
+    _w=$((_w + 1)); sleep 1
+  done
+  if ! running_dsh "${DSH_PORT:-$SPK_DSH_PORT}" ; then
+    echo "启动仍在进行中（端口 ${DSH_PORT} 尚未监听），交由系统 status 判定" >&2
+    return 0
   fi
   return 0
 }
 
 status() {
-  if running_dsh "$SPK_DSH_PORT" ; then
+  if running_dsh "${DSH_PORT:-$SPK_DSH_PORT}" ; then
     echo "running"
     exit 0
   else
