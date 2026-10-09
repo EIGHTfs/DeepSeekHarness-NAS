@@ -1022,7 +1022,11 @@ sync_portal_token() {
   [ -n "$tok" ] || return 0
   [ -x "$NODE_BIN" ] || return 0
   local f
-  for f in "$SCRIPT_DIR/ui/config" "/var/packages/${APP_NAME}/ui/config"; do
+  for f in "$SCRIPT_DIR/ui/config" "$SCRIPT_DIR/../ui/config" \
+           "/var/packages/${APP_NAME}/ui/config" \
+           "/var/apps/${APP_NAME}/target/ui/config" \
+           "/vol1/@appcenter/${APP_NAME}/ui/config" \
+           "/vol2/@appcenter/${APP_NAME}/ui/config"; do
     [ -f "$f" ] || continue
     "$NODE_BIN" -e '
       const fs = require("fs");
