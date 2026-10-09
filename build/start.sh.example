@@ -1672,7 +1672,14 @@ DSH_WRAPPER_EOF
 # ---------- stop ----------
 cmd_stop() {
   if ! is_running; then
-    echo "DSH 未运行"
+    # ★ 2026-10-10：卸载流程里这句会以弹窗形式弹给用户，观感像"出错" ✗
+    #   卸载钩子会先置 DSH_UNINSTALLING=1 或写 .uninstalling 标记 →
+    #   此时说"已卸载"（符合事实 ✓）；普通手动 stop 仍说"DSH 未运行"（便于排障 ✓）。
+    if [ -n "${DSH_UNINSTALLING:-}" ] || [ -f "${PID_DIR:-/tmp}/.uninstalling" ]; then
+      echo "已卸载"
+    else
+      echo "DSH 未运行"
+    fi
     return 0
   fi
   local pid

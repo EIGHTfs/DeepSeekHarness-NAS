@@ -324,7 +324,8 @@ cleanup_uninstall() {
 }
 
 preuninst() {
-  "${PACKAGE_SSS}" stop
+  # ★ 2026-10-10：卸载时置标记 → start.sh stop 输出"已卸载"而不是"DSH 未运行"（避免无谓弹窗 ✗）
+  DSH_UNINSTALLING=1 "${PACKAGE_SSS}" stop
   cleanup_uninstall
   exit 0
 }

@@ -635,7 +635,11 @@ _version_from() {
   return 0
 }
 
-install_init() { exit 0; }
+install_init() {
+  # 安装即代表"不是卸载中" → 清掉可能残留的标记（幂等 ✓）
+  rm -f "${TRIM_PKGVAR:-/var/apps/${APPNAME}}/.uninstalling" 2>/dev/null || true
+  exit 0
+}
 
 install_callback() {
   # 执行痕迹（写应用数据目录而非 /tmp：fnOS /tmp 属 root 且无 sticky，应用用户写不进）
@@ -685,7 +689,13 @@ install_callback() {
   exit 0
 }
 
-uninstall_init() { exit 0; }
+uninstall_init() {
+  # ★ 2026-10-10：先写"卸载中"标记（跨进程传不过环境变量，用文件 ✓）
+  #   → 随后 cmd/main stop → start.sh cmd_stop 输出"已卸载"（而不是"DSH 未运行" ✗ 弹窗）
+  mkdir -p "${TRIM_PKGVAR:-/var/apps/${APPNAME}}" 2>/dev/null || true
+  : > "${TRIM_PKGVAR:-/var/apps/${APPNAME}}/.uninstalling" 2>/dev/null || true
+  exit 0
+}
 
 uninstall_callback() {
   # 执行痕迹（真机验证 fnOS 是否执行本钩子 + 选项是否传达）
