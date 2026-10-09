@@ -170,7 +170,8 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 ### GitHub Actions 自动构建（发版走这里）
 
 ```yaml
-# .github/workflows/build.yml —— 触发: 定时(每日04:00 UTC) / workflow_dispatch(手动) / tag推送
+# .github/workflows/build.yml —— 触发: 看门狗自动对齐 / workflow_dispatch(手动) / tag推送
+#   （2026-10-09 起【取消每日定时】：它与看门狗的"成功后暂停 6 小时"口径冲突 —— 见下）
 # jobs（2026-10-04 重构后共 2 个）:
 #   build-target      唯一构建：setup → fetch → ci-clean → ./build/build-common.sh → 上传 target
 #   pack-and-release  复用 target → 打 SPK + FPK → 解析官方 tag → 发 Release（含官方更新日志）
@@ -181,7 +182,8 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 #   且距最近一次成功构建 ≥6 小时 → 自动 dispatch build.yml。判定完全无状态（不依赖任何存储）。
 ```
 
-- 触发：①每日 04:00 UTC（北京 12:00）定时拉官方最新源构建；②Actions 页手动 `workflow_dispatch`；③推送 tag；④**看门狗**（见下）
+- 触发：①**看门狗自动对齐**（见下，2026-10-09 起成为主通道）；②Actions 页手动 `workflow_dispatch`；③推送 tag
+- ⚠ **每日 04:00 UTC 定时已取消（2026-10-09）**：它与看门狗的「成功后暂停 6 小时」**直接冲突** —— cron 是**无条件**构建，若上次成功在 1 小时前它照样跑，等于废掉那条规则；而看门狗每 30 分钟已经在盯（48 次/天的兜底），cron 的兜底价值已归零，且同一 tag 重建只会白费 20 分钟。
 - **官方更新自动对齐（2026-10-09）**：`watch-official.yml` 每 **30 分钟**轮询一次官方 tag（一次 `api.github.com` 调用，实测 1~4 秒），满足三个条件才触发构建 ——
   ① 官方 tag ≠ 本仓最新 Release tag（还没对齐）；② **当前没有构建在跑**（`build.yml` 是 `cancel-in-progress: true`，插队会把正在跑的取消掉）；③ 距最近一次**成功**构建 **≥6 小时**（用户口径：成功后暂停 6 小时）。任一不满足即静默跳过并在日志写明原因。
   权限 `contents: read` + `actions: write`；自身 `cancel-in-progress: false`（看门狗不并发，也绝不取消别人）。

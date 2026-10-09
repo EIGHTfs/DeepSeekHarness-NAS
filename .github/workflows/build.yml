@@ -1,10 +1,11 @@
 name: Build SPK + FPK (DeepSeekHarness-NAS)
 
 on:
-  schedule:
-    # 每日自动打包：拉官方最新源码 → 构建 SPK + FPK → 上传 artifact + 自动发布 Release
-    # 04:00 UTC = 北京时间 12:00（避开凌晨低谷；artifact 保留 14 天）
-    - cron: '0 4 * * *'
+  # 2026-10-09：删除「每日 04:00 UTC」定时触发（用户口径）。
+  #   原因：看门狗 watch-official.yml 每 30 分钟比对官方 tag，且**成功后暂停 6 小时**；
+  #   而每日 cron 是【无条件】构建 → 若上次成功在 1 小时前，它照样跑 → 直接破坏 6 小时规则。
+  #   看门狗本身就是 48 次/天的兜底，cron 的兜底价值已归零；且同一 tag 重建只会浪费 20 分钟。
+  #   现在触发只剩：① 看门狗自动对齐 ② Actions 页手动 workflow_dispatch ③ 推送 v* tag。
   workflow_dispatch:          # 手动触发（Actions 页点按钮）
   push:
     tags: ['v*']              # 打 v* tag 自动触发（并发布 Release）
