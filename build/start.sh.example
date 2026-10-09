@@ -652,6 +652,19 @@ function selfHealWorkspaceLinks(root) {
     if (st.isDirectory()) walkPkg(path.join(root, top), 0);
   }
   const addEnt = (name, tgt) => { if (!ent[name]) ent[name] = tgt; };
+  // ★ 多版本取最高（与 python 侧 pick_entity 同规则）——实测：按"第一个"取会让
+  //   signal-exit 顶层/提升链指到 3.0.7，而消费者要 4.x（v4 才有 onExit）
+  //   → dsh-plugin-manager failed to import。此处必须与 python 侧一致。
+  const entDirs = {};
+  const verKey = (d) => { const m = String(d).match(/@(\d+)\.(\d+)\.(\d+)/); return m ? [+m[1], +m[2], +m[3]] : [0, 0, 0]; };
+  const pickEnt = (name) => {
+    const ds = entDirs[name] || (ent[name] ? [ent[name]] : []);
+    if (!ds.length) return null;
+    return ds.slice().sort((a, b) => {
+      const x = verKey(a), y = verKey(b);
+      return (x[0] - y[0]) || (x[1] - y[1]) || (x[2] - y[2]);
+    })[ds.length - 1];
+  };
   let pnpmDirs = [];
   try { pnpmDirs = fs.readdirSync(pnpm); } catch (e) { pnpmDirs = []; }
   for (const d of pnpmDirs) {
@@ -663,8 +676,8 @@ function selfHealWorkspaceLinks(root) {
       if (e.charAt(0) === '@') {
         let subs = [];
         try { subs = fs.readdirSync(path.join(nmm, e)); } catch (err) { continue; }
-        for (const s of subs) addEnt(e + '/' + s, path.join(nmm, e, s));
-      } else addEnt(e, path.join(nmm, e));
+        for (const s of subs) { const _k = e + '/' + s; (entDirs[_k] = entDirs[_k] || []).push(path.join(nmm, e, s)); addEnt(_k, path.join(nmm, e, s)); }
+      } else { (entDirs[e] = entDirs[e] || []).push(path.join(nmm, e)); addEnt(e, path.join(nmm, e)); }
     }
   }
   const mk = (link, tgt) => {
@@ -674,12 +687,12 @@ function selfHealWorkspaceLinks(root) {
   };
   let nTop = 0, nDep = 0;
   // ② 提升目录：每个实体一条
-  for (const name of Object.keys(ent)) if (mk(path.join(pnpm, 'node_modules', name), ent[name])) nTop++;
+  for (const name of Object.keys(ent)) { const _t = pickEnt(name); if (_t && mk(path.join(pnpm, 'node_modules', name), _t)) nTop++; }
   // ① 顶层 node_modules/<包名>：★ 2026-10-10 真机验收发现原来【从未补过这一层】。
   //   Node 从 apps/cli/lib/ 往上找依赖，命中的正是 <应用体>/node_modules/<包名>；
   //   而 prune 只留 .pnpm 实体、顶层链被清 → 装完 commander/js-yaml/cordis 全缺
   //   （实测：补 661 条顶层链后应用立刻 running、套件打开 200）。
-  for (const name of Object.keys(ent)) if (mk(path.join(nm, name), ent[name])) nTop++;
+  for (const name of Object.keys(ent)) { const _t = pickEnt(name); if (_t && mk(path.join(nm, name), _t)) nTop++; }
   for (const name of Object.keys(ws)) if (mk(path.join(nm, name), ws[name])) nTop++;
   // ① 顶层 + ③ 包内：按各 package.json 的依赖建链
   const fixDeps = (dir, depth) => {
@@ -694,7 +707,7 @@ function selfHealWorkspaceLinks(root) {
       try { d = JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { continue; }
       for (const sec of ['dependencies', 'optionalDependencies']) {
         for (const n of Object.keys(d[sec] || {})) {
-          const tgt = ws[n] || ent[n];
+          const tgt = ws[n] || pickEnt(n);
           if (tgt && mk(path.join(path.dirname(p), 'node_modules', n), tgt)) nDep++;
         }
       }
