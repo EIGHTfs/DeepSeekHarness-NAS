@@ -1,0 +1,92 @@
+name: Watch official DSH releases
+
+# ── 官方更新自动对齐（用户 2026-10-09 定：轮询 30 分钟；构建成功后暂停 6 小时）──────────
+# 为什么用轮询：官方不会给我们发 webhook，轮询是唯一可行的自动对齐手段；代价极小 ——
+#   每 30 分钟一次 api.github.com 调用（实测 1~4 秒），且只在"确实需要构建"时才触发。
+# 判定是无状态的（不依赖任何额外存储），三个条件全部满足才触发：
+#   ① 官方最新 tag ≠ 本仓最新 Release tag（还没对齐）
+#   ② 当前没有构建在跑（build.yml 是 cancel-in-progress: true，插队会把它取消掉）
+#   ③ 距最近一次【成功】构建 ≥ 6 小时（用户口径：成功后暂停 6 小时）
+# 与 build.yml 的"方案 B（失败时自动学习依赖并入库 + 自动重建）"配套，形成无人值守闭环。
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'      # 每 30 分钟
+  workflow_dispatch:            # 手动触发（便于随时验证判定逻辑）
+
+permissions:
+  contents: read
+  actions: write                # 需要 dispatch build.yml
+
+concurrency:
+  group: watch-official
+  cancel-in-progress: false     # 看门狗自身不并发，但也绝不取消别人
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 判定是否需要构建
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          API="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY"
+          AUTH=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json")
+
+          # ① 官方最新 tag（api.github.com，匿名亦可；脚本自身不读凭据文件）
+          OFFICIAL="$(bash scripts/fetch-dsh-latest.sh --print-tag 2>/dev/null | tail -1)"
+          echo "官方最新 tag: ${OFFICIAL:-（取不到）}"
+          if [ -z "$OFFICIAL" ]; then
+            echo "… 取不到官方 tag（网络/限流）→ 本次跳过，等下一轮"
+            exit 0
+          fi
+
+          # ② 本仓最新 Release tag = 上一次已构建并发布的版本
+          MINE="$(curl -sS --max-time 20 "${AUTH[@]}" "$API/releases/latest" \
+                  | python3 -c 'import sys,json;print(json.load(sys.stdin).get("tag_name",""))' 2>/dev/null || true)"
+          echo "本仓已发布 tag: ${MINE:-（无 Release）}"
+          if [ "$OFFICIAL" = "$MINE" ]; then
+            echo "… 已与官方对齐（tag 相同）→ 无需构建"
+            exit 0
+          fi
+
+          # ③ 有构建在跑就不插队（避免把正在跑的取消掉）
+          RUNNING="$(curl -sS --max-time 20 "${AUTH[@]}" \
+                     "$API/actions/workflows/build.yml/runs?status=in_progress&per_page=1" \
+                     | python3 -c 'import sys,json;print(len(json.load(sys.stdin).get("workflow_runs") or []))' 2>/dev/null || echo 0)"
+          if [ "${RUNNING:-0}" != "0" ]; then
+            echo "… 已有构建在跑 → 本次跳过（不插队、不互相取消）"
+            exit 0
+          fi
+
+          # ④ 成功后暂停 6 小时（21600 秒）
+          LAST_OK="$(curl -sS --max-time 20 "${AUTH[@]}" \
+                     "$API/actions/workflows/build.yml/runs?status=success&per_page=1" \
+                     | python3 -c 'import sys,json;r=(json.load(sys.stdin).get("workflow_runs") or [{}])[0];print(r.get("updated_at") or r.get("created_at") or "")' 2>/dev/null || true)"
+          if [ -n "$LAST_OK" ]; then
+            AGE=$(( $(date -u +%s) - $(date -u -d "$LAST_OK" +%s) ))
+            echo "最近一次成功构建: $LAST_OK（$((AGE/3600)) 小时 $((AGE%3600/60)) 分钟前）"
+            if [ "$AGE" -lt 21600 ]; then
+              echo "… 距上次成功不足 6 小时 → 按口径暂停，本次跳过"
+              exit 0
+            fi
+          fi
+
+          echo "… 判定：需要构建（官方 $OFFICIAL ≠ 本仓 $MINE，且已过 6 小时窗口）…"
+          echo "need=yes" >> "$GITHUB_OUTPUT"
+
+      - name: 触发构建（对齐官方 tag）
+        if: steps.decide.outputs.need == 'yes'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          curl -sS -o /dev/null -w '  触发构建 HTTP %{http_code}\n' -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/dispatches" \
+            -d '{"ref":"main"}'
