@@ -287,10 +287,15 @@ def main():
         _ss = _code_only(open(os.path.join(ROOT, 'build', 'start.sh.example'), encoding='utf-8').read())
     except Exception:
         _ss = ''
+    try:
+        _fnl = _code_only(open(os.path.join(ROOT, 'build', 'fix-node-links.py'), encoding='utf-8').read())
+    except Exception:
+        _fnl = ''
     chk(23, ('const satisfies' in _ss) and ('const fixPnpmPkgs' in _ss)
-           and ('pickEnt(n, deps[n])' in _ss) and ('fixPnpmPkgs();' in _ss),
-        "链接修复按声明范围选版本 + 覆盖 .pnpm 各包自己的 node_modules",
-        "取最高版本会让第三方包拿到不兼容的大版本 → negotiator 1.1 让所有响应 400（真机实测）")
+           and ('pickEnt(n, deps[n])' in _ss) and ('fixPnpmPkgs();' in _ss)
+           and ('def pick_for_range' in _fnl) and ('pick_for_range(ent, _n, _rng)' in _fnl),
+        "构建期与运行期都按声明范围选版本（否则压缩/解析类第三方包拿到不兼容大版本）",
+        "取最高版本 → compression 拿到 negotiator 1.1 → 每个响应 400、DSH fatal 退出（真机实测）")
     # 输出
     for no, ok, msg, hint in checks:
         if ok:
