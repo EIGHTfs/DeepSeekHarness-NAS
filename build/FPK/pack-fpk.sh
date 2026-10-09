@@ -250,8 +250,7 @@ rm -rf "$FPK_APP"
 # 二、manifest + cmd + config + wizard + ICON
 #===============================================================================
 # manifest（version=官方完整版本；checksum=app.tgz MD5 实测）
-# ⚠ 禁止添加 changelog 字段！实测（2026-09-13）fnOS GetCloudDetail 解析未知字段
-#   保持最小字段集（与已验证可安装的包一致）。
+# ⚠ manifest 保持最小字段集（与已验证可安装的包一致），不要加 changelog 等额外字段。
 FPK_CHECKSUM="$(md5sum "$FPK_SRC/app.tgz" | awk '{print $1}')"
 cat > "$FPK_SRC/manifest" <<EOF
 appname               = ${APP_NAME}
@@ -564,7 +563,7 @@ install_callback() {
   fi
   # ── 重建打包期移除的软链（2026-10-09 实测必需，勿删）────────────────────────
   #   app.tgz 后处理会删掉全部 npm/pnpm 软链（不删则 fnOS 解压设 ACL 报
-  #   acl_get_file failed → 10234「设置目录权限失败」）；但 Node 靠这些链解析模块，
+  #   acl_get_file failed，前端显示「设置目录权限失败」）；但 Node 靠这些链解析模块，
   #   实测不补回来启动会 ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/dsh-app-boot'。
   #   清单 links.txt 由打包期写在外层，安装时随包解出（依次在几个候选位置找）。
   _LK=""
