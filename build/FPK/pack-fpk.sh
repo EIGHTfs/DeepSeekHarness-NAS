@@ -634,8 +634,18 @@ install_callback() {
     echo "[install_callback] 按 links.tar 还原软链（清单 ${_LK}，$(tar -tf "$_LK" 2>/dev/null | wc -l) 条）" \
       >> "${TRIM_PKGVAR:-/vol1/@appdata/${APPNAME}}/install-callback.trace" 2>/dev/null || true
   fi
-  # （2026-10-10 已回退：官方应用 /var/apps/<app>/ 下【没有】ui/，
-  #   fnOS 读的是应用体里的 ui/config。此前自作聪明复制一份属误改，已删。）
+  # ── 补齐 /var/apps/<app>/ui（2026-10-10 真机实测：必需，勿再删）────────────
+  #   实测事实（两次对照）：
+  #     · 有这份时：应用中心「打开」按钮可用 ✓
+  #     · 删掉这份后：按钮【又没了】✗（服务端一切正常：running、三端口、套件模拟 200）
+  #   曾据"1Panel 的 /var/apps 下没有 ui/"推断不需要 → 被真机推翻。
+  #   以下是当时手工验证可用的原文命令，原样固化（不改命令、不改顺序）：
+  #     mkdir -p "/var/apps/${APPNAME}/ui"
+  #     cp -a "$APP_DIR/ui/." "/var/apps/${APPNAME}/ui/"
+  if [ -d "$APP_DIR/ui" ]; then
+    mkdir -p "/var/apps/${APPNAME}/ui" 2>/dev/null || true
+    cp -a "$APP_DIR/ui/." "/var/apps/${APPNAME}/ui/" 2>/dev/null || true
+  fi
   exit 0
 }
 
