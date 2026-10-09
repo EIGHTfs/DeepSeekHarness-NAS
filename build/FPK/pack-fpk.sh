@@ -462,7 +462,7 @@ EOF
 # 生命周期钩子：官方薄壳结构（fnOS 只执行薄壳，自包含大脚本实测不被执行——
 #   2026-09-13 skill 实测铁证 + 2026-09-22 飞牛真机复验：数据保留但无 trace）。
 # 每个钩子 = source config/common/package + 调同名函数（函数定义在 package）。
-for hook in install_init uninstall_init upgrade_init config_init config_callback uninstall_callback upgrade_callback; do
+for hook in install_init install_callback uninstall_init upgrade_init config_init config_callback uninstall_callback upgrade_callback; do
   cat > "$FPK_SRC/cmd/$hook" <<'SHELL'
 #!/bin/bash
 
