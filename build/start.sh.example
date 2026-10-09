@@ -830,17 +830,23 @@ code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
     }
     // ② 已持 dsh-auth cookie → 直连也放行（带过 token 即免密）
     const hasAuth = cookieHeader.includes('dsh-auth');
-    if (!hasAuth && isDirectAccess(clientReq)) {
-      clientRes.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-      clientRes.end(FORBIDDEN_PAGE);
-      return;
-    }
-    // ① 门户打开（无 cookie 且非直连）→ 302 无条件带 token
+    // ① 门户/套件打开（无 cookie、无 token）→ 302 无条件带 token 自动登录
+    //   ★ 2026-10-09 实测修正：fnOS 套件图标打开与「地址栏直连」**都会**发
+    //     sec-fetch-site=none，二者无法区分 → 原先先判 isDirectAccess 直接 403，
+    //     导致用户「明明从套件图标打开，却看到 403 请从套件图标打开」。
+    //     上面 ⓪ 的局域网硬闸已经限定了来源，因此这里改为：
+    //     局域网内 + 无 token + 无 cookie → 一律 302 带当次 token 自动登录；
+    //     仅当拿不到 token（dshToken 为空）时才回落到 403 提示页。
     if (dshToken && clientReq.method === 'GET' &&
         !clientReq.url.includes('token=') &&
         !hasAuth &&
         !clientReq.headers.upgrade) {
       autoAuthRedirect(clientReq, clientRes);
+      return;
+    }
+    if (!hasAuth && isDirectAccess(clientReq)) {
+      clientRes.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      clientRes.end(FORBIDDEN_PAGE);
       return;
     }
     // ===== 以下为原有反代逻辑 =====
