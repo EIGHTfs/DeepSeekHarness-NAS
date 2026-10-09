@@ -675,6 +675,12 @@ function selfHealWorkspaceLinks(root) {
   let nTop = 0, nDep = 0;
   // ② 提升目录：每个实体一条
   for (const name of Object.keys(ent)) if (mk(path.join(pnpm, 'node_modules', name), ent[name])) nTop++;
+  // ① 顶层 node_modules/<包名>：★ 2026-10-10 真机验收发现原来【从未补过这一层】。
+  //   Node 从 apps/cli/lib/ 往上找依赖，命中的正是 <应用体>/node_modules/<包名>；
+  //   而 prune 只留 .pnpm 实体、顶层链被清 → 装完 commander/js-yaml/cordis 全缺
+  //   （实测：补 661 条顶层链后应用立刻 running、套件打开 200）。
+  for (const name of Object.keys(ent)) if (mk(path.join(nm, name), ent[name])) nTop++;
+  for (const name of Object.keys(ws)) if (mk(path.join(nm, name), ws[name])) nTop++;
   // ① 顶层 + ③ 包内：按各 package.json 的依赖建链
   const fixDeps = (dir, depth) => {
     if (depth > 4) return;
