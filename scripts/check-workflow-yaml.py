@@ -97,8 +97,30 @@ def check(path):
     if path.endswith("workflows/build.yml") or path.endswith("build.yml"):
         out += _check_needs(path, text)
     if path.endswith("action.yml"):
+        out += check_step_indent(path, text.splitlines())
         out += _check_action_keys(path, text)
     return out
+
+
+def check_step_indent(path, lines):
+    """同一文件内所有 `- name:` 步骤的缩进必须一致。
+
+    ★ 2026-10-10 血的教训：给 build-target/action.yml 插"记录缓存命中"步骤时用了 6 空格，
+      而既有步骤是 4 空格 → YAML 结构被插坏，GitHub 直接拒绝加载：
+        ##[error]Failed to load .../action.yml
+        System.ArgumentException: Unexpected type '' encountered while reading 'action manifest root'
+      该 run（#99 / #101）连构建都没开始就失败。旧守卫只查已知模式（未装 PyYAML），
+      查不出"缩进层级错"，故补此项。
+    """
+    indents = {}
+    for i, l in enumerate(lines, 1):
+        m = re.match(r'^(\s*)- name:', l)
+        if m:
+            indents.setdefault(len(m.group(1)), []).append(i)
+    if len(indents) > 1:
+        detail = '; '.join('%d 空格: 行 %s' % (k, ','.join(map(str, v[:4]))) for k, v in sorted(indents.items()))
+        return ['步骤缩进不一致（%s）—— 同级 - name: 必须同缩进' % detail]
+    return []
 
 
 def main():
