@@ -29,7 +29,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO="${RELEASE_REPO:-EIGHTfs/DeepSeekHarness-NAS}"
-# token 配置文件候选（插件托管；按存在性取第一个，不打印内容）
+# token 配置文件候选（兜底路径；按存在性取第一个，不打印内容）。取值优先级见下方 TOKEN= 那行
 TOKEN_FILES=(
   "${DSH_TOKEN_FILE:-}"
   "$WS/../../.dsh/git-push/config.json"
@@ -40,6 +40,7 @@ TAG=""
 ONLY=""
 THREADS=16
 JOBS_PER_FILE=2
+TOKEN_ARG=""          # --token 显式传入（优先于环境变量与配置文件，2026-10-09 用户要求）
 
 usage() { sed -n '3,20p' "$0"; }
 
@@ -49,6 +50,7 @@ while [[ $# -gt 0 ]]; do
     --only)     ONLY="${2:?--only 需要一个值}"; shift 2 ;;
     --threads)  THREADS="${2:?--threads 需要一个值}"; shift 2 ;;
     --repo)     REPO="${2:?--repo 需要一个值}"; shift 2 ;;
+    --token)    TOKEN_ARG="${2:?--token 需要一个值}"; shift 2 ;;
     -h|--help)  usage; exit 0 ;;
     *) echo "未知参数: $1" >&2; usage; exit 1 ;;
   esac
@@ -69,9 +71,17 @@ for path in sys.argv[1:]:
             break
 PYEOF
 }
-TOKEN="$(read_token)"  # dsh-skip-sensitive dsh-skip-residue 运行时读取，非硬编码凭据
+# 取值优先级（2026-10-09 用户要求"改成传参传 token"）：
+#   ① --token <ghp_...>            显式传参（最高优先）
+#   ② DS_FETCH_TOKEN / GH_TOKEN / GITHUB_TOKEN  环境变量（DS_FETCH_TOKEN 与 fetch-dsh-latest.sh 同名同序）
+#   ③ 配置文件里的 githubToken     兜底（插件托管路径，见 TOKEN_FILES）
+#   ⚠ 三种方式都不会打印 token 内容。
+TOKEN="${TOKEN_ARG:-${DS_FETCH_TOKEN:-${GH_TOKEN:-${GITHUB_TOKEN:-$(read_token)}}}}"  # dsh-skip-sensitive dsh-skip-residue 运行时取值，非硬编码凭据
 if [[ -z "$TOKEN" ]]; then
-  echo "[!] 未取到 GitHub token（查 ${TOKEN_FILES[*]} 的 githubToken）" >&2
+  echo "[!] 未取到 GitHub token。三种给法（任选其一）：" >&2
+  echo "      ① --token <ghp_...>" >&2
+  echo "      ② DS_FETCH_TOKEN=<ghp_...>（或 GH_TOKEN / GITHUB_TOKEN）" >&2
+  echo "      ③ 在以下任一文件写 githubToken: ${TOKEN_FILES[*]}" >&2
   exit 1
 fi
 
