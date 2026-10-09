@@ -613,6 +613,55 @@ document.write('<iframe src="http://' + host + ':' + ${proxyPort} + '/" id="dshF
 </html>`;
 }
 
+// ── 启动期自愈兜底（2026-10-09）───────────────────────────────────────────────
+//   病根：DSH 运行时靠 node_modules/@deepseek-ai/* → ../../packages/* 这些【工作区软链】
+//   解析；裁剪 / 组装 / 安装任一环节漏掉它们，启动即
+//     Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@deepseek-ai/dsh-app-boot'
+//     imported from <应用体>/apps/cli/lib/bin
+//   → DSH 退出 code=1 → 守护反复重试 → 用户观感是"启动卡很久"。
+//   这些链接可**确定性重建**（扫 packages/**/package.json 的 name），所以在启动前兜底补一遍：
+//   幂等、纯本地、不依赖网络，任何安装形态都能自愈（打包期已在 build-common.sh 固化，
+//   这里是运行期兜底，双保险）。
+function selfHealWorkspaceLinks(root) {
+  const pkgsRoot = path.join(root, 'packages');
+  const linkRoot = path.join(root, 'node_modules', '@deepseek-ai');
+  if (!fs.existsSync(pkgsRoot) || !fs.existsSync(path.join(root, 'node_modules'))) return;
+  try { fs.mkdirSync(linkRoot, { recursive: true }); } catch (e) { return; }
+  let made = 0;
+  const walk = (dir, depth) => {
+    if (depth > 4) return;
+    let ents = [];
+    try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+    for (const e of ents) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p, depth + 1); continue; }
+      if (e.name !== 'package.json') continue;
+      let name = '';
+      try { name = JSON.parse(fs.readFileSync(p, 'utf8')).name || ''; } catch (e) { continue; }
+      if (name.indexOf('@deepseek-ai/') !== 0) continue;
+      const short = name.slice('@deepseek-ai/'.length);
+      const link = path.join(linkRoot, short);
+      if (fs.existsSync(link)) continue;
+      try { fs.symlinkSync(path.relative(linkRoot, path.dirname(p)), link); made++; } catch (e) {}
+    }
+  };
+  walk(pkgsRoot, 0);
+  if (made) console.log(`[√] 工作区链接兜底: 补 ${made} 条（node_modules/@deepseek-ai/*）`);
+}
+
+// 软链清单兜底：外层 links.tar（只含软链条目）解回应用体，幂等；安装期没解回时这里补
+function selfHealLinksTar(root) {
+  const appName = process.env.TRIM_APPNAME || path.basename(root);
+  const cands = [path.join(root, 'links.tar'), '/var/apps/' + appName + '/links.tar'];
+  let src = '';
+  for (const c of cands) { try { if (fs.existsSync(c)) { src = c; break; } } catch (e) {} }
+  if (!src) return;
+  try {
+    const r = require('child_process').spawnSync('tar', ['-xf', src, '-C', root], { stdio: 'ignore' });
+    if (r.status === 0) console.log('[√] 软链清单兜底: 已按 links.tar 还原');
+  } catch (e) {}
+}
+
 async function main() {
   console.log('═══════════════════════════════════════');
   console.log('  DSH 修复/守护（内嵌于 start.sh）');
@@ -629,6 +678,11 @@ async function main() {
   try { fs.mkdirSync(home, { recursive: true, mode: 0o700 }); } catch (e) {}
   secureDshTree(dshHome);
   preflightCredentials(dshHome);
+
+  // 启动期自愈兜底（见上方 selfHealWorkspaceLinks / selfHealLinksTar 的说明）：
+  // 必须在 spawn DSH 之前跑，否则缺链会直接 ERR_MODULE_NOT_FOUND → 退出重试 → "启动卡很久"
+  try { selfHealWorkspaceLinks(dshDir); } catch (e) { console.error(`[!] 工作区链接兜底失败: ${e.message}`); }
+  try { selfHealLinksTar(dshDir); } catch (e) { console.error(`[!] 软链清单兜底失败: ${e.message}`); }
 
   let waitCount = 0;
   while (waitCount < 10) {

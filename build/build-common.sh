@@ -797,7 +797,28 @@ _ANN "stage=$BUILD_STAGE prune 开始"
 _ANN "stage=$BUILD_STAGE prune 结束"
 fi
 
-# ── 运行时精准补包（2026-10-09 移到这里；这是 CI 缺包的最终根因）──────────────
+# ── 工作区链接补全（2026-10-09 实测必需，勿删）────────────────────────────────
+#   DSH 运行时靠 node_modules/@deepseek-ai/* → ../../packages/* 这些【工作区软链】解析；
+#   裁剪/组装后它们可能整批缺失（实测只剩 11 条），启动即：
+#     Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@deepseek-ai/dsh-app-boot'
+#     imported from <应用体>/apps/cli/lib/bin      → DSH 退出 code=1 → 反复重试 → "启动卡很久"
+#   这些链接可**确定性重建**：扫 packages/**/package.json 的 name 即可（实测补回 317 条）。
+#   ⚠ 必须放在裁剪之后、写 meta 之前，且要在 target 上做（打包器直接消费 target）。
+_wl_new=0
+if [ -d "$TARGET/packages" ] && [ -d "$TARGET/node_modules" ]; then
+  mkdir -p "$TARGET/node_modules/@deepseek-ai" 2>/dev/null || true
+  while IFS= read -r _pj; do
+    [ -n "$_pj" ] || continue
+    _d="$(dirname "$_pj")"
+    _name="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1],encoding='utf-8')).get('name',''))" "$_pj" 2>/dev/null || true)"
+    case "$_name" in @deepseek-ai/*) ;; *) continue ;; esac
+    _short="${_name#@deepseek-ai/}"
+    [ -e "$TARGET/node_modules/@deepseek-ai/$_short" ] && continue
+    _rel="$(realpath --relative-to="$TARGET/node_modules/@deepseek-ai" "$_d" 2>/dev/null || true)"
+    [ -n "$_rel" ] && ln -sfn "$_rel" "$TARGET/node_modules/@deepseek-ai/$_short" 2>/dev/null && _wl_new=$((_wl_new + 1))
+  done < <(find "$TARGET/packages" -maxdepth 4 -name package.json -not -path "*/node_modules/*" 2>/dev/null)
+fi
+echo "  ✓ 工作区链接补全: 新建 ${_wl_new} 条（node_modules/@deepseek-ai/*）"
 #   模式 B 是纯白名单裁剪（不做依赖闭包，否则 target 撑到 5.3G），会删掉运行时传递依赖：
 #     实测 execa → is-plain-obj、@js-temporal/polyfill → jsbi
 #     → 运行时 Cannot find package 'x' → DSH 内置插件 plugin-manager / otel / schedule /
