@@ -199,7 +199,11 @@ def main():
         _fpk = open(os.path.join(ROOT, 'build', 'FPK', 'pack-fpk.sh'), encoding='utf-8').read()
     except Exception:
         _fpk = ''
-    chk(17, ('/var/apps/${APPNAME}/ui' in _fpk) and ('cp -a "$APP_DIR/ui/."' in _fpk),
+    #   ★ 必须先剥掉注释行再检查：我固化时把命令原文写进了注释，而"注释里含该字符串"
+    #     会让检查【假绿】—— 反向验证实测：删掉真代码后守卫仍退出 0 ✗。剥注释后才是真检查。
+    _fpk_code = '\n'.join(l for l in _fpk.split('\n') if not l.lstrip().startswith('#'))
+    chk(17, ('mkdir -p "/var/apps/${APPNAME}/ui"' in _fpk_code)
+           and ('cp -a "$APP_DIR/ui/." "/var/apps/${APPNAME}/ui/"' in _fpk_code),
         "install_callback 复制 ui 到 /var/apps/<app>/ui（套件「打开」按钮依赖）",
         "缺则飞牛应用中心「打开」按钮消失（两次实测对照：有=可用/删=消失）")
 
