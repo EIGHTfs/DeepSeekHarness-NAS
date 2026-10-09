@@ -109,3 +109,34 @@
 ```
 `check-package-parity.py` 会抓：外层条目/钩子缺失、FPK 载荷含软链、
 **links.tar / links.txt 里的悬空软链**（即"运行时必缺包"）、manifest 字段差异。
+
+## 八、★ 同版本「覆盖安装」不会把新增文件拷进应用体
+
+实测（2026-10-09）：应用已装、再 `install-fpk` 同一个版本号的包时，fnOS **保留已有的
+应用目录**，只做增量 —— 于是"新版本包里多出来的那 59 个 `.pnpm` 目录"**不会被拷进去**，
+装完 `appcenter-cli check` 仍是 Installed，但插件照旧 `failed to import`。
+
+判定与处置：
+
+| 现象 | 判定 | 处置 |
+|---|---|---|
+| 包内 `.pnpm` 目录数 ≠ 应用体内数量 | 覆盖安装没拷全 | **从 Web UI 卸载**（CLI 会拒绝：`please uninstall it from Web UI`）后重新安装 |
+| 应用体内数量对，但仍有悬空软链 | `links.tar` 没解回 | `tar -xf links.tar -C <应用体>`（`install_callback` 本应做，可手工补） |
+
+应急修复（不动数据、可重复执行）：
+
+```bash
+# ① 补齐缺的 .pnpm 实体（只补缺，不动已有）
+zcat x.fpk | tar -xOf - app.tgz > /tmp/a.tgz && mkdir -p /tmp/a && tar -xzf /tmp/a.tgz -C /tmp/a
+for d in /tmp/a/node_modules/.pnpm/*/; do n=$(basename "$d"); \
+  [ -e "$AD/node_modules/.pnpm/$n" ] || cp -a "$d" "$AD/node_modules/.pnpm/"; done
+# ② 精确还原全部软链（幂等）
+zcat x.fpk | tar -xOf - links.tar > /tmp/lk.tar && tar -xf /tmp/lk.tar -C "$AD"
+# ③ 重启
+appcenter-cli stop <app> && appcenter-cli start <app>
+```
+
+**验证成功的判据**（缺一不可）：
+`appcenter-cli status` = running；端口 3080/3081/3082 全监听；
+启动日志里 **没有** `failed to import` / `did not activate`；
+套件图标模拟（不带 token、`Sec-Fetch-Site: none`）最终 **HTTP 200**。
