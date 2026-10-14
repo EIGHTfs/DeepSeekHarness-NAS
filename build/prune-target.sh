@@ -111,11 +111,31 @@ if white.get('workspaceRuntimeDeps'):
                 pass
 
 # 纯白名单：根 devDependencies 不在白名单的一律删除
+# ★ 2026-10-15 实证（官方 dsh-v0.2.1-alpha.3 构建失败的真因）：
+#   上游在 alpha.3 的【根 devDependencies】新增了 @types/react ~18.3.1 与 @types/react-dom ~18.3.0，
+#   而白名单里没有它们 → 本步把它们剥掉 → pnpm install 根本不装 React 类型 →
+#   pnpm build 的 tsc 报:
+#     scoped-slots.tsx(435,63): TS2339 Property 'props' does not exist on type 'FactoryErrorBoundary'
+#     scoped-slots.tsx(439,35): TS7026 JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists
+#   → 构建失败 → 看门狗每 30 分钟重试、每 30 分钟再失败（#131/#132 实证）。
+#   原则修正：**类型层依赖永不裁剪** —— @types/* 与 typescript/@typescript-eslint/* 体积很小，
+#   却是 tsc 的必需品；"非白名单就删"对它们是错的。
+#   （配套：白名单 extra 也补了 @types/react / @types/react-dom，双保险）
+def _keep_devdep(k):
+    if k in whitelist:
+        return True
+    if k.startswith('@types/'):
+        return True
+    if k == 'typescript' or k.startswith('@typescript-eslint/'):
+        return True
+    return False
+
+
 root_pkg = os.path.join(build_src, 'package.json')
 try:
     data = json.load(open(root_pkg, encoding='utf-8'))
     dev = data.get('devDependencies') or {}
-    candidates = [k for k in dev if k not in whitelist]
+    candidates = [k for k in dev if not _keep_devdep(k)]
     if candidates:
         for k in candidates:
             dev.pop(k, None)
