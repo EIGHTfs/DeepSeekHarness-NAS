@@ -26,10 +26,10 @@ inputs:
     description: 指定官方 tag（如 dsh-v0.1.5-rc.2）；留空 = 官方最新
     required: false
     default: ""
-arch:
-  description: '目标架构：x86_64（默认）| arm64（→ SPK arch=armv8 / FPK platform=arm）'
-  required: false
-  default: 'x86_64'
+  arch:
+    description: '目标架构：x86_64（默认）| arm64（→ SPK arch=armv8 / FPK platform=arm）'
+    required: false
+    default: 'x86_64'
   artifact-name:
     description: target artifact 名称
     required: false
