@@ -1,0 +1,2 @@
+2026-10-14T21:25:06.0000000Z packages/experimental/inspector/scripts/devtools/vite.ts(12,20): error TS2307: Cannot find module 'vite' or its corresponding type declarations.
+2026-10-14T21:25:06.0000000Z packages/client/web/src/seed.ts(10,34): error TS2307: Cannot find module 'react/jsx-runtime' or its corresponding type declarations.
