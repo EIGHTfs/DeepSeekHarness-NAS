@@ -1,0 +1,203 @@
+[
+  {
+    "run": 132,
+    "id": 38639561278,
+    "date": "2026-10-14T21:20:58",
+    "job": "build-target",
+    "file": "132-build-target.log",
+    "hits": 44,
+    "dups": [
+      131
+    ]
+  },
+  {
+    "run": 106,
+    "id": 37966210189,
+    "date": "2026-10-09T17:25:52",
+    "job": "pack-and-release",
+    "file": "106-pack-and-release.log",
+    "hits": 15,
+    "dups": []
+  },
+  {
+    "run": 104,
+    "id": 37965428613,
+    "date": "2026-10-09T17:19:19",
+    "job": "pack-and-release",
+    "file": "104-pack-and-release.log",
+    "hits": 1,
+    "dups": []
+  },
+  {
+    "run": 102,
+    "id": 37965240525,
+    "date": "2026-10-09T17:17:42",
+    "job": "build-target",
+    "file": "102-build-target.log",
+    "hits": 3,
+    "dups": [
+      101,
+      99,
+      60
+    ]
+  },
+  {
+    "run": 84,
+    "id": 37935435622,
+    "date": "2026-10-09T13:14:27",
+    "job": "build-target",
+    "file": "084-build-target.log",
+    "hits": 9,
+    "dups": [
+      83
+    ]
+  },
+  {
+    "run": 82,
+    "id": 37921361555,
+    "date": "2026-10-09T11:03:13",
+    "job": "build-target",
+    "file": "082-build-target.log",
+    "hits": 9,
+    "dups": []
+  },
+  {
+    "run": 68,
+    "id": 37152738979,
+    "date": "2026-10-03T20:46:27",
+    "job": "build-target",
+    "file": "068-build-target.log",
+    "hits": 2,
+    "dups": []
+  },
+  {
+    "run": 67,
+    "id": 37151978464,
+    "date": "2026-10-03T20:33:39",
+    "job": "pack-and-release",
+    "file": "067-pack-and-release.log",
+    "hits": 5,
+    "dups": []
+  },
+  {
+    "run": 62,
+    "id": 37149821702,
+    "date": "2026-10-03T19:58:17",
+    "job": "build-target",
+    "file": "062-build-target.log",
+    "hits": 2,
+    "dups": []
+  },
+  {
+    "run": 61,
+    "id": 37149348583,
+    "date": "2026-10-03T19:50:30",
+    "job": "build-target",
+    "file": "061-build-target.log",
+    "hits": 23,
+    "dups": [
+      58
+    ]
+  },
+  {
+    "run": 59,
+    "id": 37146438733,
+    "date": "2026-10-03T19:02:12",
+    "job": "release",
+    "file": "059-release.log",
+    "hits": 1,
+    "dups": []
+  },
+  {
+    "run": 57,
+    "id": 37113459482,
+    "date": "2026-10-03T09:33:37",
+    "job": "build-fpk",
+    "file": "057-build-fpk.log",
+    "hits": 1,
+    "dups": [
+      3
+    ]
+  },
+  {
+    "run": 36,
+    "id": 35707474492,
+    "date": "2026-09-22T08:55:35",
+    "job": "build-fpk",
+    "file": "036-build-fpk.log",
+    "hits": 10,
+    "dups": []
+  },
+  {
+    "run": 19,
+    "id": 34842033863,
+    "date": "2026-09-14T12:11:08",
+    "job": "build-spk",
+    "file": "019-build-spk.log",
+    "hits": 59,
+    "dups": []
+  },
+  {
+    "run": 18,
+    "id": 34839917914,
+    "date": "2026-09-14T11:46:35",
+    "job": "build-spk",
+    "file": "018-build-spk.log",
+    "hits": 78,
+    "dups": []
+  },
+  {
+    "run": 17,
+    "id": 34835536225,
+    "date": "2026-09-14T10:55:04",
+    "job": "build-spk",
+    "file": "017-build-spk.log",
+    "hits": 83,
+    "dups": []
+  },
+  {
+    "run": 16,
+    "id": 34832728320,
+    "date": "2026-09-14T10:21:02",
+    "job": "build-spk",
+    "file": "016-build-spk.log",
+    "hits": 2,
+    "dups": []
+  },
+  {
+    "run": 15,
+    "id": 34830076552,
+    "date": "2026-09-14T09:50:31",
+    "job": "build-spk",
+    "file": "015-build-spk.log",
+    "hits": 2,
+    "dups": []
+  },
+  {
+    "run": 14,
+    "id": 34829239695,
+    "date": "2026-09-14T09:40:43",
+    "job": "build-spk",
+    "file": "014-build-spk.log",
+    "hits": 2,
+    "dups": []
+  },
+  {
+    "run": 11,
+    "id": 34823174962,
+    "date": "2026-09-14T08:31:41",
+    "job": "build-spk",
+    "file": "011-build-spk.log",
+    "hits": 2,
+    "dups": []
+  },
+  {
+    "run": 4,
+    "id": 34798232370,
+    "date": "2026-09-14T02:09:09",
+    "job": "build-fpk",
+    "file": "004-build-fpk.log",
+    "hits": 1,
+    "dups": []
+  }
+]

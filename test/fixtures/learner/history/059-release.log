@@ -1,0 +1,4 @@
+# 历史失败夹具（自动采集，请勿手改；来源见 index.json）
+# run=#59 id=37146438733 date=2026-10-03T19:02:12 job=release
+# 采集: scripts/collect-failure-fixtures.py（只读远端 + 只写本目录）
+##[error]Process completed with exit code 126.

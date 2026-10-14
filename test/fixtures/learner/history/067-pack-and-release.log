@@ -1,0 +1,8 @@
+# 历史失败夹具（自动采集，请勿手改；来源见 index.json）
+# run=#67 id=37151978464 date=2026-10-03T20:33:39 job=pack-and-release
+# 采集: scripts/collect-failure-fixtures.py（只读远端 + 只写本目录）
+##[error]Process completed with exit code 126.
+✗ 未找到 $TAR（artifact 名是否与 build-target 一致？）"; ls -la "$RUNNER_TEMP" || true; exit 1; }
+✗ 解包后缺少 $T/target"; exit 1; }
+✗ 解包后缺少 $T/build-meta.env"; exit 1; }
+✗ 解包后缺少 $T/.build-done（复用判据，缺失说明打包时漏了）"; exit 1; }

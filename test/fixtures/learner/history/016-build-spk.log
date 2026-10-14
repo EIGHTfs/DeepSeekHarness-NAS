@@ -1,0 +1,5 @@
+# 历史失败夹具（自动采集，请勿手改；来源见 index.json）
+# run=#16 id=34832728320 date=2026-09-14T10:21:02 job=build-spk
+# 采集: scripts/collect-failure-fixtures.py（只读远端 + 只写本目录）
+Cannot find package 'lefthook'
+##[error]Process completed with exit code 1.

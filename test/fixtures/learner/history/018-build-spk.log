@@ -1,0 +1,63 @@
+# 历史失败夹具（自动采集，请勿手改；来源见 index.json）
+# run=#18 id=34839917914 date=2026-09-14T11:46:35 job=build-spk
+# 采集: scripts/collect-failure-fixtures.py（只读远端 + 只写本目录）
+Cannot find module 'fast-check'
+Cannot find module 'mdast-util-from-markdown'
+Cannot find module 'mdast-util-gfm'
+Cannot find module 'micromark-extension-gfm'
+Cannot find module 'mdast'
+Could not find a declaration file for module 'js-yaml'
+error TS7006: Parameter 'index' implicitly has an 'any' type.
+error TS7006: Parameter 'text' implicitly has an 'any' type.
+error TS7006: Parameter 'r' implicitly has an 'any' type.
+error TS7006: Parameter 'message' implicitly has an 'any' type.
+error TS7006: Parameter 'chunks' implicitly has an 'any' type.
+error TS7006: Parameter 'c' implicitly has an 'any' type.
+error TS7016: Could not find a declaration file for module 'js-yaml'. '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/buil
+error TS2307: Cannot find module 'fast-check' or its corresponding type declarations.
+error TS7006: Parameter 'everySeconds' implicitly has an 'any' type.
+error TS7006: Parameter 'skipped' implicitly has an 'any' type.
+error TS7006: Parameter 'rawOffset' implicitly has an 'any' type.
+error TS6307: File '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/source/scripts/gen-cordis-c
+error TS6307: File '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/source/scripts/cordis-walk.
+error TS6307: File '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/source/scripts/cordis-core-
+error TS6307: File '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/source/scripts/translation-
+error TS6307: File '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/source/scripts/verify-md-li
+error TS2307: Cannot find module 'mdast-util-from-markdown' or its corresponding type declarations.
+error TS2307: Cannot find module 'mdast-util-gfm' or its corresponding type declarations.
+error TS2307: Cannot find module 'micromark-extension-gfm' or its corresponding type declarations.
+error TS2307: Cannot find module 'mdast' or its corresponding type declarations.
+error TS7006: Parameter 'child' implicitly has an 'any' type.
+error TS7006: Parameter 'node' implicitly has an 'any' type.
+error TS6307: File '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/source/scripts/jsdoc.ts' is
+error TS6307: File '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/source/scripts/markdown.ts'
+error TS6307: File '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/source/scripts/repo-files.t
+error TS6307: File '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build/spk-build/build-0.1.5/source/scripts/project-doc-
+##[error]packages/llm/llm/tests/properties.spec.ts(32,60): error TS7006: Parameter 'index' implicitly has an 'any' type.
+##[error]packages/llm/llm/tests/properties.spec.ts(36,20): error TS7006: Parameter 'text' implicitly has an 'any' type.
+##[error]packages/llm/llm/tests/properties.spec.ts(37,20): error TS7006: Parameter 'text' implicitly has an 'any' type.
+##[error]packages/llm/llm/tests/properties.spec.ts(39,11): error TS7006: Parameter 'r' implicitly has an 'any' type.
+##[error]packages/llm/llm/tests/properties.spec.ts(44,36): error TS7006: Parameter 'message' implicitly has an 'any' type.
+##[error]packages/llm/llm/tests/properties.spec.ts(62,39): error TS7006: Parameter 'chunks' implicitly has an 'any' type.
+##[error]packages/llm/llm/tests/properties.spec.ts(75,39): error TS7006: Parameter 'chunks' implicitly has an 'any' type.
+##[error]packages/llm/llm/tests/properties.spec.ts(84,39): error TS7006: Parameter 'chunks' implicitly has an 'any' type.
+##[error]packages/llm/llm/tests/properties.spec.ts(93,39): error TS7006: Parameter 'chunks' implicitly has an 'any' type.
+##[error]packages/llm/llm/tests/properties.spec.ts(95,38): error TS7006: Parameter 'c' implicitly has an 'any' type.
+##[error]packages/preset/agent-presets/tests/shipped-root.spec.ts(20,23): error TS7016: Could not find a declaration file for mod
+##[error]packages/schedule/schedule/tests/recurrence.spec.ts(2,16): error TS2307: Cannot find module 'fast-check' or its correspo
+##[error]packages/schedule/schedule/tests/recurrence.spec.ts(23,8): error TS7006: Parameter 'everySeconds' implicitly has an 'any
+##[error]packages/schedule/schedule/tests/recurrence.spec.ts(23,22): error TS7006: Parameter 'skipped' implicitly has an 'any' ty
+##[error]packages/schedule/schedule/tests/recurrence.spec.ts(23,31): error TS7006: Parameter 'rawOffset' implicitly has an 'any'
+##[error]packages/subagent/subagent-claude-code/tests/subagent-claude-code.spec.ts(15,23): error TS7016: Could not find a declara
+##[error]packages/subagent/subagent-codex/tests/subagent-codex.spec.ts(7,23): error TS7016: Could not find a declaration file for
+##[error]packages/typert/generator/tests/cordis-catalog.spec.ts(17,8): error TS6307: File '/home/runner/work/DeepSeekHarness-NAS/
+##[error]scripts/cordis-core-api.ts(7,34): error TS6307: File '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build/sp
+##[error]scripts/gen-cordis-catalog.ts(31,42): error TS6307: File '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/buil
+##[error]scripts/gen-cordis-catalog.ts(40,8): error TS6307: File '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build
+##[error]scripts/gen-persistence-catalog.ts(13,28): error TS6307: File '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS
+##[error]scripts/markdown.ts(3,30): error TS2307: Cannot find module 'mdast-util-from-markdown' or its corresponding type declara
+##[error]scripts/markdown.ts(4,33): error TS2307: Cannot find module 'mdast-util-gfm' or its corresponding type declarations.
+##[error]scripts/markdown.ts(5,21): error TS2307: Cannot find module 'micromark-extension-gfm' or its corresponding type declarat
+##[error]scripts/markdown.ts(6,28): error TS2307: Cannot find module 'mdast' or its corresponding type declarations.
+##[error]scripts/markdown.ts(179,52): error TS7006: Parameter 'child' implicitly has an 'any' type.
+##[error]scripts/project-doc-site.ts(15,30): error TS2307: Cannot find module 'mdast-util-from-markdown' or its corresponding typ
