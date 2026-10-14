@@ -5,6 +5,15 @@
 # 第一大类：全局默认配置（SPK 与 FPK 共用）
 # ============================================================================
 defaults:
+  # ── 目标架构（2026-10-15 新增，参数化改造）─────────────────────────────────
+  #   取值: x86_64（默认）| arm64；别名也接受（x64/amd64 → x86_64，aarch64/armv8 → arm64）
+  #   映射（由 build/build-lib.sh 的 resolve_arch() 统一解析，脚本内不再写死 ✗）:
+  #     x86_64 → SPK arch="x86_64"  产物 ..._x86_64-<ver>.spk ；FPK platform=x86  产物 ..._x86-<ver>.fpk
+  #     arm64  → SPK arch="armv8"   产物 ..._armv8-<ver>.spk  ；FPK platform=arm  产物 ..._arm-<ver>.fpk
+  #   （DSM 官方平台表: armv8 = rtd1296 / armada37xx / rtd1619 / rtd1619b）
+  #   覆盖优先级: 环境变量 ARCH / BUILD_ARCH > 本文件 > 默认 x86_64
+  arch: x86_64
+
   # 应用名（用于 INFO package / manifest appname / applaunchname / config/resource 等）
   appname: DeepSeekHarness-NAS
 

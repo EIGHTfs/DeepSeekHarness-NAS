@@ -33,3 +33,22 @@ fi
 
 # shellcheck disable=SC1090
 . "$_DSH_COMMON_LIB"
+
+# ── 架构解析（2026-10-15 参数化改造）──────────────────────────────────────────
+# 目标架构只允许在 build-config.yaml 的 defaults.arch 里配（或环境变量覆盖），
+# 打包脚本内一律用下面导出的三个变量，不得再写死 x86_64 ✗。
+#   BUILD_ARCH  规范名: x86_64 | arm64
+#   SPK_ARCH    DSM 的 arch 值: x86_64 | armv8
+#   FPK_ARCH    飞牛的 platform 值: x86 | arm
+# 别名: x64/amd64 → x86_64 ；aarch64/armv8/arm64 → arm64
+resolve_arch() {
+  local raw="${1:-${ARCH:-${BUILD_ARCH:-x86_64}}}"
+  case "$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')" in
+    x86_64|x64|amd64|x86)      BUILD_ARCH="x86_64"; SPK_ARCH="x86_64"; FPK_ARCH="x86" ;;
+    arm64|aarch64|armv8|arm)   BUILD_ARCH="arm64";  SPK_ARCH="armv8";  FPK_ARCH="arm"  ;;
+    *)
+      echo "✗ 不支持的架构: $raw（支持 x86_64/x64/amd64 与 arm64/aarch64/armv8）" >&2
+      return 1 ;;
+  esac
+  export BUILD_ARCH SPK_ARCH FPK_ARCH
+}

@@ -83,6 +83,7 @@ for k, v in {**defaults, **fpk}.items():
         continue
     print(f'{name}=\"{v}\"')
 " 2>/dev/null || true)"
+resolve_arch "${FPKCFG_ARCH:-${ARCH:-x86_64}}"   # 架构参数化：x86_64 | arm64（→ FPK platform: x86 | arm）
 FPK_PROXY_PORT="${FPKCFG_PROXY_PORT:-3080}"
 FPK_DSH_PORT="${FPKCFG_DSH_PORT:-3081}"
 FPK_CONTAINER_PORT="${FPKCFG_CONTAINER_PORT:-3082}"
@@ -313,7 +314,7 @@ cat > "$FPK_SRC/manifest" <<EOF
 appname               = ${APP_NAME}
 version               = ${FPK_VERSION}
 display_name          = ${CFG_DISPLAY_NAME}
-platform              = x86
+platform              = ${FPK_ARCH}
 maintainer            = ${CFG_MAINTAINER}
 maintainer_url        = ${CFG_MAINTAINER_URL}
 distributor           = ${CFG_DISTRIBUTOR}
@@ -830,7 +831,7 @@ fi
 #     DeepSeekHarness-NAS_x86-<ver>-npm.fpk，文案由 release-note.sh 分别展示）
 _FPK_SUFFIX=""
 [ "$NPM_MODE" = "1" ] && _FPK_SUFFIX="-npm"
-OUT_FPK="$D_STAGING/${APP_NAME}_x86-${FPK_VERSION}${_FPK_SUFFIX}.fpk"
+OUT_FPK="$D_STAGING/${APP_NAME}_${FPK_ARCH}-${FPK_VERSION}${_FPK_SUFFIX}.fpk"
 # ⚠ staging 是 gitignore 的产物目录，CI 全新 checkout 不存在 → tar 写不进去
 #   报 exit code 2（stderr 被 2>/dev/null 吞掉，只留一句 exit 2，极难定位）。
 mkdir -p "$D_STAGING"
