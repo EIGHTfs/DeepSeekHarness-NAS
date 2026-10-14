@@ -1,0 +1,126 @@
+{
+  "132-build-target.log": {
+    "proposed": [
+      "@types/react",
+      "@types/react-dom",
+      "react"
+    ],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "106-pack-and-release.log": {
+    "proposed": [],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "104-pack-and-release.log": {
+    "proposed": [],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "102-build-target.log": {
+    "proposed": [],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "084-build-target.log": {
+    "proposed": [
+      "@types/papaparse"
+    ],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "082-build-target.log": {
+    "proposed": [
+      "papaparse"
+    ],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "068-build-target.log": {
+    "proposed": [],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "067-pack-and-release.log": {
+    "proposed": [],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "062-build-target.log": {
+    "proposed": [],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "061-build-target.log": {
+    "proposed": [
+      "@types/semver",
+      "vite"
+    ],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "059-release.log": {
+    "proposed": [],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "057-build-fpk.log": {
+    "proposed": [],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "036-build-fpk.log": {
+    "proposed": [
+      "extract-zip",
+      "tar"
+    ],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "019-build-spk.log": {
+    "proposed": [
+      "@types/js-yaml",
+      "@types/jsdom",
+      "mdast",
+      "publint",
+      "spdx-expression-parse"
+    ],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "018-build-spk.log": {
+    "proposed": [
+      "@types/js-yaml",
+      "fast-check",
+      "mdast",
+      "mdast-util-from-markdown",
+      "mdast-util-gfm",
+      "micromark-extension-gfm"
+    ],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "017-build-spk.log": {
+    "proposed": [
+      "@types/js-yaml",
+      "fast-check",
+      "jsdom",
+      "mdast",
+      "mdast-util-from-markdown",
+      "mdast-util-gfm",
+      "mermaid",
+      "micromark-extension-gfm",
+      "publint",
+      "spdx-expression-parse"
+    ],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "016-build-spk.log": {
+    "proposed": [
+      "lefthook"
+    ],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "015-build-spk.log": {
+    "proposed": [],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "014-build-spk.log": {
+    "proposed": [],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "011-build-spk.log": {
+    "proposed": [],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  },
+  "004-build-fpk.log": {
+    "proposed": [],
+    "review": "TODO 人工按证据复核（尤其 TS7026/TS2339 这类无模块名的类型错）"
+  }
+}

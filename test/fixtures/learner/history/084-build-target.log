@@ -1,0 +1,12 @@
+# 历史失败夹具（自动采集，请勿手改；来源见 index.json）
+# run=#84 id=37935435622 date=2026-10-09T13:14:27 job=build-target
+# 采集: scripts/collect-failure-fixtures.py（只读远端 + 只写本目录）
+Could not find a declaration file for module 'papaparse'
+error TS7016: Could not find a declaration file for module 'papaparse'. '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/bu
+error TS7006: Parameter 'row' implicitly has an 'any' type.
+error TS7031: Binding element 'path' implicitly has an 'any' type.
+##[error]scripts/primary-runtime/prune-python-tests.ts(5,18): error TS7016: Could not find a declaration file for module 'papapar
+##[error]scripts/primary-runtime/prune-python-tests.ts(33,23): error TS7006: Parameter 'row' implicitly has an 'any' type.
+##[error]scripts/primary-runtime/prune-python-tests.ts(38,36): error TS7031: Binding element 'path' implicitly has an 'any' type.
+##[error]Process completed with exit code 1.
+✗ pnpm build 失败（退出码 1）完整日志: /home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build/master-bu

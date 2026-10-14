@@ -1,0 +1,12 @@
+# 历史失败夹具（自动采集，请勿手改；来源见 index.json）
+# run=#82 id=37921361555 date=2026-10-09T11:03:13 job=build-target
+# 采集: scripts/collect-failure-fixtures.py（只读远端 + 只写本目录）
+Cannot find module 'papaparse'
+error TS2307: Cannot find module 'papaparse' or its corresponding type declarations.
+error TS7006: Parameter 'row' implicitly has an 'any' type.
+error TS7031: Binding element 'path' implicitly has an 'any' type.
+##[error]scripts/primary-runtime/prune-python-tests.ts(5,18): error TS2307: Cannot find module 'papaparse' or its corresponding t
+##[error]scripts/primary-runtime/prune-python-tests.ts(33,23): error TS7006: Parameter 'row' implicitly has an 'any' type.
+##[error]scripts/primary-runtime/prune-python-tests.ts(38,36): error TS7031: Binding element 'path' implicitly has an 'any' type.
+##[error]Process completed with exit code 1.
+✗ pnpm build 失败（退出码 1）完整日志: /home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build/master-bu

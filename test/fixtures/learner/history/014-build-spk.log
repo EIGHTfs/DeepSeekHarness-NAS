@@ -1,0 +1,5 @@
+# 历史失败夹具（自动采集，请勿手改；来源见 index.json）
+# run=#14 id=34829239695 date=2026-09-14T09:40:43 job=build-spk
+# 采集: scripts/collect-failure-fixtures.py（只读远端 + 只写本目录）
+##[error]Process completed with exit code 1.
+✗ 无法从 api.github.com 获取 deepseek-ai/deepseek-harness 的 tags（网络或限速）。

@@ -1,0 +1,26 @@
+# 历史失败夹具（自动采集，请勿手改；来源见 index.json）
+# run=#61 id=37149348583 date=2026-10-03T19:50:30 job=build-target
+# 采集: scripts/collect-failure-fixtures.py（只读远端 + 只写本目录）
+Cannot find module 'vite'
+Could not find a declaration file for module 'semver'
+error TS2307: Cannot find module 'vite' or its corresponding type declarations.
+error TS7006: Parameter 'request' implicitly has an 'any' type.
+error TS7006: Parameter 'importer' implicitly has an 'any' type.
+error TS7006: Parameter 'id' implicitly has an 'any' type.
+error TS7006: Parameter 'code' implicitly has an 'any' type.
+error TS7006: Parameter 'file' implicitly has an 'any' type.
+error TS2339: Property 'emitFile' does not exist on type '{ name: string; generateBundle(): Promise<void>; }'.
+error TS7006: Parameter 'chunk' implicitly has an 'any' type.
+error TS7016: Could not find a declaration file for module 'semver'. '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build
+##[error]packages/experimental/inspector/scripts/devtools/vite.ts(5,55): error TS2307: Cannot find module 'vite' or its correspon
+##[error]packages/experimental/inspector/scripts/devtools/vite.ts(32,21): error TS7006: Parameter 'request' implicitly has an 'an
+##[error]packages/experimental/inspector/scripts/devtools/vite.ts(32,30): error TS7006: Parameter 'importer' implicitly has an 'a
+##[error]packages/experimental/inspector/scripts/devtools/vite.ts(48,16): error TS7006: Parameter 'id' implicitly has an 'any' ty
+##[error]packages/experimental/inspector/scripts/devtools/vite.ts(58,15): error TS7006: Parameter 'code' implicitly has an 'any'
+##[error]packages/experimental/inspector/scripts/devtools/vite.ts(58,21): error TS7006: Parameter 'id' implicitly has an 'any' ty
+##[error]packages/experimental/inspector/scripts/devtools/vite.ts(78,82): error TS7006: Parameter 'file' implicitly has an 'any'
+##[error]packages/experimental/inspector/scripts/devtools/vite.ts(88,84): error TS2339: Property 'emitFile' does not exist on typ
+##[error]packages/experimental/inspector/scripts/devtools/vite.ts(114,23): error TS7006: Parameter 'chunk' implicitly has an 'any
+##[error]scripts/release/publish.ts(20,35): error TS7016: Could not find a declaration file for module 'semver'. '/home/runner/wo
+##[error]Process completed with exit code 1.
+✗ pnpm build 失败（退出码 1）完整日志: /home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build/master-bu

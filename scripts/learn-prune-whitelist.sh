@@ -221,8 +221,8 @@ elif mode == 'log':
     # （node ERR_MODULE_NOT_FOUND 完整行形如
     #   Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'lefthook' imported from ...
     #   由上面第一条即可命中；不用宽松 pattern 避免误抓 Cannot/packageName 等词）
-    for pat in [r"Cannot find package '([^']+)'",
-                r"Cannot find module '([^']+)'",
+    for pat in [r"Cannot find package '([^'\n]+)'",
+                r"Cannot find module '([^'\n]+)'",
                 r"Cannot find module \"([^\"]+)\""]:
         for m in re.finditer(pat, text):
             mod = m.group(1)
@@ -236,7 +236,7 @@ elif mode == 'log':
     # ── TS7016：缺的是**类型声明**（@types/<pkg>），不是运行时包本身（2026-10-03）──
     #   实测 scripts/release/publish.ts: error TS7016: Could not find a declaration file
     #   for module 'semver' → 要补 @types/semver（semver 本身可能已在 lockfileDeps）。
-    for _pat in [r"Could not find a declaration file for module '([^']+)'",
+    for _pat in [r"Could not find a declaration file for module '([^'\n]+)'",
                  r"Could not find a declaration file for module \"([^\"]+)\""]:
         for _m in re.finditer(_pat, text):
             _mod = _m.group(1)
@@ -249,7 +249,7 @@ elif mode == 'log':
     # 运行时探测（fix-runtime-deps.sh）的缺包行：▶ 第 N 轮缺包: a b c
     #   按用户口径（只允许白名单自动学习），这些**正是白名单该包含**的运行期依赖，
     #   应学进白名单，而不是打包时临时补包（那会让出货超出白名单）。
-    for _m in re.finditer(r"第\s*\d+\s*轮缺包[:：]\s*(.+)", text):
+    for _m in re.finditer(r"第\s*\d+\s*轮缺包[:：]\s*([^\n]+)", text):
         for _tok in _m.group(1).split():
             _tok = _tok.strip()
             if not _tok or _tok.startswith(".") or _tok.startswith("node:"):

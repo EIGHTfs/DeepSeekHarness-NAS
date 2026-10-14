@@ -1,0 +1,62 @@
+# 历史失败夹具（自动采集，请勿手改；来源见 index.json）
+# run=#19 id=34842033863 date=2026-09-14T12:11:08 job=build-spk
+# 采集: scripts/collect-failure-fixtures.py（只读远端 + 只写本目录）
+Cannot find module 'spdx-expression-parse'
+Cannot find module 'mdast'
+Cannot find module 'publint'
+Cannot find module 'publint/utils'
+Could not find a declaration file for module 'js-yaml'
+Could not find a declaration file for module 'jsdom'
+error TS7016: Could not find a declaration file for module 'js-yaml'. '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/buil
+error TS7006: Parameter 'data' implicitly has an 'any' type.
+error TS2307: Cannot find module 'spdx-expression-parse' or its corresponding type declarations.
+error TS2307: Cannot find module 'mdast' or its corresponding type declarations.
+error TS7006: Parameter 'child' implicitly has an 'any' type.
+error TS2307: Cannot find module 'publint' or its corresponding type declarations.
+error TS2307: Cannot find module 'publint/utils' or its corresponding type declarations.
+error TS7006: Parameter 'message' implicitly has an 'any' type.
+error TS7006: Parameter 'node' implicitly has an 'any' type.
+error TS7016: Could not find a declaration file for module 'jsdom'. '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build/
+##[error]packages/preset/agent-presets/src/metadata.ts(22,18): error TS7016: Could not find a declaration file for module 'js-yam
+##[error]apps/web/tests/agent-team-panel.e2e.ts(9,23): error TS7016: Could not find a declaration file for module 'js-yaml'. '/ho
+##[error]packages/bundle/acp-app/tests/acp-app.spec.ts(6,23): error TS7016: Could not find a declaration file for module 'js-yaml
+##[error]packages/bundle/base/tests/base.spec.ts(10,23): error TS7016: Could not find a declaration file for module 'js-yaml'. '/
+##[error]packages/bundle/sdk-app/tests/sdk-app.spec.ts(6,23): error TS7016: Could not find a declaration file for module 'js-yaml
+##[error]packages/bundle/sdk-minimal/tests/sdk-minimal.spec.ts(6,23): error TS7016: Could not find a declaration file for module
+##[error]packages/experimental/agent-team-profile/tests/profile.spec.ts(7,23): error TS7016: Could not find a declaration file fo
+##[error]packages/experimental/agent-team-web-profile/tests/profile.spec.ts(7,23): error TS7016: Could not find a declaration fil
+##[error]packages/preset/agent-presets/tests/shipped-root.spec.ts(20,23): error TS7016: Could not find a declaration file for mod
+##[error]packages/subagent/subagent-claude-code/tests/subagent-claude-code.spec.ts(15,23): error TS7016: Could not find a declara
+##[error]packages/subagent/subagent-codex/tests/subagent-codex.spec.ts(7,23): error TS7016: Could not find a declaration file for
+##[error]scripts/ci-compatible-selfhosted.spec.ts(6,23): error TS7016: Could not find a declaration file for module 'js-yaml'. '/
+##[error]scripts/ci-workflow.spec.ts(3,23): error TS7016: Could not find a declaration file for module 'js-yaml'. '/home/runner/w
+##[error]scripts/cordis-yaml.ts(6,23): error TS7016: Could not find a declaration file for module 'js-yaml'. '/home/runner/work/D
+##[error]scripts/cordis-yaml.ts(15,12): error TS7006: Parameter 'data' implicitly has an 'any' type.
+##[error]scripts/doc-standard.spec.ts(13,35): error TS7016: Could not find a declaration file for module 'js-yaml'. '/home/runner
+##[error]scripts/gen-third-party-notices.ts(13,23): error TS7016: Could not find a declaration file for module 'js-yaml'. '/home/
+##[error]scripts/gen-third-party-notices.ts(15,23): error TS2307: Cannot find module 'spdx-expression-parse' or its corresponding
+##[error]scripts/markdown.ts(6,28): error TS2307: Cannot find module 'mdast' or its corresponding type declarations.
+##[error]scripts/markdown.ts(179,52): error TS7006: Parameter 'child' implicitly has an 'any' type.
+##[error]scripts/preview-workflow.spec.ts(3,23): error TS7016: Could not find a declaration file for module 'js-yaml'. '/home/run
+##[error]scripts/project-doc-site.spec.ts(10,28): error TS2307: Cannot find module 'mdast' or its corresponding type declarations
+##[error]scripts/project-doc-site.ts(18,28): error TS2307: Cannot find module 'mdast' or its corresponding type declarations.
+##[error]scripts/publint-all.ts(12,54): error TS2307: Cannot find module 'publint' or its corresponding type declarations.
+##[error]scripts/publint-all.ts(13,31): error TS2307: Cannot find module 'publint/utils' or its corresponding type declarations.
+##[error]scripts/publint-all.ts(205,45): error TS7006: Parameter 'message' implicitly has an 'any' type.
+##[error]scripts/publint-all.ts(206,26): error TS7006: Parameter 'message' implicitly has an 'any' type.
+##[error]scripts/tests/ci-master-platforms.spec.ts(5,22): error TS7016: Could not find a declaration file for module 'js-yaml'. '
+##[error]scripts/tests/ci-release-selfhosted.spec.ts(5,22): error TS7016: Could not find a declaration file for module 'js-yaml'.
+##[error]scripts/translation-brief.ts(13,28): error TS2307: Cannot find module 'mdast' or its corresponding type declarations.
+##[error]scripts/translation-links.ts(5,28): error TS2307: Cannot find module 'mdast' or its corresponding type declarations.
+##[error]scripts/translation-links.ts(71,48): error TS7006: Parameter 'node' implicitly has an 'any' type.
+##[error]scripts/translation-links.ts(81,41): error TS7006: Parameter 'child' implicitly has an 'any' type.
+##[error]scripts/translation-pairing.ts(14,28): error TS2307: Cannot find module 'mdast' or its corresponding type declarations.
+##[error]scripts/verify-doc-site-fragments.ts(13,23): error TS7016: Could not find a declaration file for module 'jsdom'. '/home/
+##[error]scripts/verify-md-links.ts(12,28): error TS2307: Cannot find module 'mdast' or its corresponding type declarations.
+##[error]scripts/verify-md-wrap.ts(11,28): error TS2307: Cannot find module 'mdast' or its corresponding type declarations.
+##[error]scripts/verify-mermaid.ts(12,23): error TS7016: Could not find a declaration file for module 'jsdom'. '/home/runner/work
+##[error]scripts/verify-mermaid.ts(13,28): error TS2307: Cannot find module 'mdast' or its corresponding type declarations.
+##[error]scripts/verify-skill-invocation-metadata.ts(8,22): error TS7016: Could not find a declaration file for module 'js-yaml'.
+##[error]scripts/verify-vendored-links.ts(10,23): error TS7016: Could not find a declaration file for module 'js-yaml'. '/home/ru
+##[error]Process completed with exit code 1.
+✗ pnpm build 失败（退出码 1）完整日志: /home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build/spk-build

@@ -1,0 +1,4 @@
+# 历史失败夹具（自动采集，请勿手改；来源见 index.json）
+# run=#4 id=34798232370 date=2026-09-14T02:09:09 job=build-fpk
+# 采集: scripts/collect-failure-fixtures.py（只读远端 + 只写本目录）
+##[error]Process completed with exit code 2.

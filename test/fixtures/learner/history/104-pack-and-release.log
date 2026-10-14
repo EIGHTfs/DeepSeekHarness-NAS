@@ -1,0 +1,4 @@
+# 历史失败夹具（自动采集，请勿手改；来源见 index.json）
+# run=#104 id=37965428613 date=2026-10-09T17:19:19 job=pack-and-release
+# 采集: scripts/collect-failure-fixtures.py（只读远端 + 只写本目录）
+##[error]Unable to download artifact(s): Artifact not found for name: build-target

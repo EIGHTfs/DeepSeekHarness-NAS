@@ -1,0 +1,63 @@
+# 历史失败夹具（自动采集，请勿手改；来源见 index.json）
+# run=#17 id=34835536225 date=2026-09-14T10:55:04 job=build-spk
+# 采集: scripts/collect-failure-fixtures.py（只读远端 + 只写本目录）
+Cannot find module 'fast-check'
+Cannot find module 'spdx-expression-parse'
+Cannot find module 'mdast-util-from-markdown'
+Cannot find module 'mdast-util-gfm'
+Cannot find module 'micromark-extension-gfm'
+Cannot find module 'mdast'
+Cannot find module 'publint'
+Cannot find module 'publint/utils'
+Cannot find module 'jsdom'
+Cannot find module 'mermaid'
+Could not find a declaration file for module 'js-yaml'
+error TS2307: Cannot find module 'fast-check' or its corresponding type declarations.
+error TS7006: Parameter 'everySeconds' implicitly has an 'any' type.
+error TS7006: Parameter 'skipped' implicitly has an 'any' type.
+error TS7006: Parameter 'rawOffset' implicitly has an 'any' type.
+error TS7016: Could not find a declaration file for module 'js-yaml'. '/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/buil
+error TS7006: Parameter 'data' implicitly has an 'any' type.
+error TS2307: Cannot find module 'spdx-expression-parse' or its corresponding type declarations.
+error TS2307: Cannot find module 'mdast-util-from-markdown' or its corresponding type declarations.
+error TS2307: Cannot find module 'mdast-util-gfm' or its corresponding type declarations.
+error TS2307: Cannot find module 'micromark-extension-gfm' or its corresponding type declarations.
+error TS2307: Cannot find module 'mdast' or its corresponding type declarations.
+error TS7006: Parameter 'child' implicitly has an 'any' type.
+error TS2307: Cannot find module 'publint' or its corresponding type declarations.
+error TS2307: Cannot find module 'publint/utils' or its corresponding type declarations.
+error TS7006: Parameter 'message' implicitly has an 'any' type.
+error TS7006: Parameter 'node' implicitly has an 'any' type.
+error TS2307: Cannot find module 'jsdom' or its corresponding type declarations.
+error TS2307: Cannot find module 'mermaid' or its corresponding type declarations.
+##[error]packages/schedule/schedule/tests/recurrence.spec.ts(2,16): error TS2307: Cannot find module 'fast-check' or its correspo
+##[error]packages/schedule/schedule/tests/recurrence.spec.ts(23,8): error TS7006: Parameter 'everySeconds' implicitly has an 'any
+##[error]packages/schedule/schedule/tests/recurrence.spec.ts(23,22): error TS7006: Parameter 'skipped' implicitly has an 'any' ty
+##[error]packages/schedule/schedule/tests/recurrence.spec.ts(23,31): error TS7006: Parameter 'rawOffset' implicitly has an 'any'
+##[error]packages/subagent/subagent-claude-code/tests/subagent-claude-code.spec.ts(15,23): error TS7016: Could not find a declara
+##[error]packages/subagent/subagent-codex/tests/subagent-codex.spec.ts(7,23): error TS7016: Could not find a declaration file for
+##[error]scripts/ci-compatible-selfhosted.spec.ts(6,23): error TS7016: Could not find a declaration file for module 'js-yaml'. '/
+##[error]scripts/ci-workflow.spec.ts(3,23): error TS7016: Could not find a declaration file for module 'js-yaml'. '/home/runner/w
+##[error]scripts/cordis-yaml.ts(6,23): error TS7016: Could not find a declaration file for module 'js-yaml'. '/home/runner/work/D
+##[error]scripts/cordis-yaml.ts(15,12): error TS7006: Parameter 'data' implicitly has an 'any' type.
+##[error]scripts/doc-standard.spec.ts(13,35): error TS7016: Could not find a declaration file for module 'js-yaml'. '/home/runner
+##[error]scripts/gen-third-party-notices.ts(13,23): error TS7016: Could not find a declaration file for module 'js-yaml'. '/home/
+##[error]scripts/gen-third-party-notices.ts(15,23): error TS2307: Cannot find module 'spdx-expression-parse' or its corresponding
+##[error]scripts/markdown.ts(3,30): error TS2307: Cannot find module 'mdast-util-from-markdown' or its corresponding type declara
+##[error]scripts/markdown.ts(4,33): error TS2307: Cannot find module 'mdast-util-gfm' or its corresponding type declarations.
+##[error]scripts/markdown.ts(5,21): error TS2307: Cannot find module 'micromark-extension-gfm' or its corresponding type declarat
+##[error]scripts/markdown.ts(6,28): error TS2307: Cannot find module 'mdast' or its corresponding type declarations.
+##[error]scripts/markdown.ts(179,52): error TS7006: Parameter 'child' implicitly has an 'any' type.
+##[error]scripts/preview-workflow.spec.ts(3,23): error TS7016: Could not find a declaration file for module 'js-yaml'. '/home/run
+##[error]scripts/project-doc-site.spec.ts(7,30): error TS2307: Cannot find module 'mdast-util-from-markdown' or its corresponding
+##[error]scripts/project-doc-site.spec.ts(8,33): error TS2307: Cannot find module 'mdast-util-gfm' or its corresponding type decl
+##[error]scripts/project-doc-site.spec.ts(9,21): error TS2307: Cannot find module 'micromark-extension-gfm' or its corresponding
+##[error]scripts/project-doc-site.spec.ts(10,28): error TS2307: Cannot find module 'mdast' or its corresponding type declarations
+##[error]scripts/project-doc-site.ts(15,30): error TS2307: Cannot find module 'mdast-util-from-markdown' or its corresponding typ
+##[error]scripts/project-doc-site.ts(16,33): error TS2307: Cannot find module 'mdast-util-gfm' or its corresponding type declarat
+##[error]scripts/project-doc-site.ts(17,21): error TS2307: Cannot find module 'micromark-extension-gfm' or its corresponding type
+##[error]scripts/project-doc-site.ts(18,28): error TS2307: Cannot find module 'mdast' or its corresponding type declarations.
+##[error]scripts/publint-all.ts(12,54): error TS2307: Cannot find module 'publint' or its corresponding type declarations.
+##[error]scripts/publint-all.ts(13,31): error TS2307: Cannot find module 'publint/utils' or its corresponding type declarations.
+##[error]scripts/publint-all.ts(205,45): error TS7006: Parameter 'message' implicitly has an 'any' type.
+##[error]scripts/publint-all.ts(206,26): error TS7006: Parameter 'message' implicitly has an 'any' type.

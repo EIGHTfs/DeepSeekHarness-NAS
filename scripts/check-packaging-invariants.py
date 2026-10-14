@@ -334,8 +334,10 @@ def main():
         _lr = ''
     chk(26, ('TS7026' in _lr) and ('--src' in _lr) and ('LEARN_PLAN_JSON' in _lr)
            and os.path.isfile(os.path.join(ROOT, 'test', 'learner-dryrun.test.sh'))
-           and os.path.isfile(os.path.join(ROOT, 'test', 'fixtures', 'learner', 'expected.json'))
-           and os.path.isfile(os.path.join(ROOT, 'test', 'fixtures', 'learner', 'ts7026-react-types.log')),
+           and os.path.isfile(os.path.join(ROOT, 'test', 'fixtures', 'learner', 'baseline.json'))
+           and os.path.isfile(os.path.join(ROOT, 'test', 'fixtures', 'learner', 'ts7026-react-types.log'))
+           and os.path.isfile(os.path.join(ROOT, 'scripts', 'collect-failure-fixtures.py'))
+           and os.path.isfile(os.path.join(ROOT, 'test', 'fixtures', 'learner', 'history', 'index.json')),
         "学习器增强（类型错信号 + 源码声明两条证据）且有回归夹具/测试",
         "老学习器对无模块名的类型错完全瞎 → 看门狗每 30 分钟重试再失败（alpha.3 实证）")
     # 输出

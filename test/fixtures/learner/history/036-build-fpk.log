@@ -1,0 +1,13 @@
+# 历史失败夹具（自动采集，请勿手改；来源见 index.json）
+# run=#36 id=35707474492 date=2026-09-22T08:55:35 job=build-fpk
+# 采集: scripts/collect-failure-fixtures.py（只读远端 + 只写本目录）
+Cannot find module 'extract-zip'
+Cannot find module 'tar'
+error TS2307: Cannot find module 'extract-zip' or its corresponding type declarations.
+error TS2307: Cannot find module 'tar' or its corresponding type declarations.
+error TS7006: Parameter 'entry' implicitly has an 'any' type.
+##[error]scripts/primary-runtime/prepare.ts(11,24): error TS2307: Cannot find module 'extract-zip' or its corresponding type decl
+##[error]scripts/primary-runtime/prepare.ts(12,33): error TS2307: Cannot find module 'tar' or its corresponding type declarations
+##[error]scripts/primary-runtime/prepare.ts(71,15): error TS7006: Parameter 'entry' implicitly has an 'any' type.
+##[error]Process completed with exit code 1.
+✗ pnpm build 失败（退出码 1）完整日志: /home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/build/master-bu

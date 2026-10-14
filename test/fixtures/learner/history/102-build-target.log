@@ -1,0 +1,6 @@
+# 历史失败夹具（自动采集，请勿手改；来源见 index.json）
+# run=#102 id=37965240525 date=2026-10-09T17:17:42 job=build-target
+# 采集: scripts/collect-failure-fixtures.py（只读远端 + 只写本目录）
+##[error]/home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/./.github/actions/build-target/action.yml: (Line: 115, Col: 7,
+##[error]System.ArgumentException: Unexpected type '' encountered while reading 'action manifest root'. The type 'MappingToken' w
+##[error]Failed to load /home/runner/work/DeepSeekHarness-NAS/DeepSeekHarness-NAS/./.github/actions/build-target/action.yml

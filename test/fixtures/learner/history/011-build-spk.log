@@ -1,0 +1,5 @@
+# 历史失败夹具（自动采集，请勿手改；来源见 index.json）
+# run=#11 id=34823174962 date=2026-09-14T08:31:41 job=build-spk
+# 采集: scripts/collect-failure-fixtures.py（只读远端 + 只写本目录）
+ERR_PNPM_OUTDATED_LOCKFILE] Cannot install with "frozen-lockfile" because pnpm-lock.yaml is not up to date w
+##[error]Process completed with exit code 1.

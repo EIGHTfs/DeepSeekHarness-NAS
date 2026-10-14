@@ -1,0 +1,165 @@
+{
+  "_note": "固定基线：测试断言【基线 must ⊆ 学习器检出】；标 empty:true 的夹具断言检出必须为空。人工据错误文本+源码声明审阅后固化；用 test/learner-dryrun.test.sh --update-baseline 可更新（改完请复核 diff）。",
+  "_provenance": "test/fixtures/learner/*.log（依真实教训构造 + 真实 #132 片段）与 test/fixtures/learner/history/*.log（由 scripts/collect-failure-fixtures.py 从历史 CI 失败自动采集）",
+  "files": {
+    "history/004-build-fpk.log": {
+      "empty": true,
+      "why": "只有退出码，无缺包证据"
+    },
+    "history/011-build-spk.log": {
+      "empty": true,
+      "why": "ERR_PNPM_OUTDATED_LOCKFILE（锁文件过期），不是缺包"
+    },
+    "history/014-build-spk.log": {
+      "empty": true,
+      "why": "取官方 tag 网络失败"
+    },
+    "history/015-build-spk.log": {
+      "empty": true,
+      "why": "ERR_PNPM_UNUSED_PATCH：该删补丁声明，不是补包"
+    },
+    "history/016-build-spk.log": {
+      "must": [
+        "lefthook"
+      ],
+      "why": "postinstall import 缺包"
+    },
+    "history/017-build-spk.log": {
+      "must": [
+        "@types/js-yaml",
+        "fast-check",
+        "jsdom",
+        "mdast",
+        "mdast-util-from-markdown",
+        "mdast-util-gfm",
+        "mermaid",
+        "micromark-extension-gfm",
+        "publint",
+        "spdx-expression-parse"
+      ],
+      "why": "多包 Cannot find module"
+    },
+    "history/018-build-spk.log": {
+      "must": [
+        "@types/js-yaml",
+        "fast-check",
+        "mdast",
+        "mdast-util-from-markdown",
+        "mdast-util-gfm",
+        "micromark-extension-gfm"
+      ],
+      "why": "同上（另一轮）"
+    },
+    "history/019-build-spk.log": {
+      "must": [
+        "@types/js-yaml",
+        "@types/jsdom",
+        "mdast",
+        "publint",
+        "spdx-expression-parse"
+      ],
+      "why": "多包 + TS7016 js-yaml"
+    },
+    "history/036-build-fpk.log": {
+      "must": [
+        "extract-zip",
+        "tar"
+      ],
+      "why": "TS2307 两包"
+    },
+    "history/057-build-fpk.log": {
+      "empty": true,
+      "why": "退出码类失败"
+    },
+    "history/059-release.log": {
+      "empty": true,
+      "why": "退出码 126 类失败"
+    },
+    "history/061-build-target.log": {
+      "must": [
+        "@types/semver",
+        "vite"
+      ],
+      "why": "TS2307 vite + TS7016 semver"
+    },
+    "history/062-build-target.log": {
+      "empty": true,
+      "why": "缺 target/build-meta（构建未完成）"
+    },
+    "history/067-pack-and-release.log": {
+      "empty": true,
+      "why": "artifact 缺失/解包失败"
+    },
+    "history/068-build-target.log": {
+      "empty": true,
+      "why": "命名守卫失败（非缺包）"
+    },
+    "history/082-build-target.log": {
+      "must": [
+        "papaparse"
+      ],
+      "why": "TS2307 papaparse（官方脚本 import）"
+    },
+    "history/084-build-target.log": {
+      "must": [
+        "@types/papaparse"
+      ],
+      "why": "TS7016 papaparse → @types"
+    },
+    "history/102-build-target.log": {
+      "empty": true,
+      "why": "action.yml 加载失败（YAML 缩进事故）"
+    },
+    "history/104-pack-and-release.log": {
+      "empty": true,
+      "why": "artifact not found"
+    },
+    "history/106-pack-and-release.log": {
+      "empty": true,
+      "why": "artifact/target 缺失"
+    },
+    "history/132-build-target.log": {
+      "must": [
+        "@types/node",
+        "@types/react",
+        "@types/react-dom",
+        "react",
+        "typescript"
+      ],
+      "why": "本次事故：TS2307 react/jsx-runtime + TS7016 react(-dom) + 纯类型错"
+    },
+    "negative-ts2339-only.log": {
+      "empty": true,
+      "why": "反例：只有 TS2339、无 JSX 信号 → 不许瞎学"
+    },
+    "pnpm-missing.log": {
+      "must": [
+        "lefthook"
+      ],
+      "why": "ERR_MODULE_NOT_FOUND"
+    },
+    "ts2307-vite.log": {
+      "must": [
+        "react",
+        "vite"
+      ],
+      "why": "TS2307 模块名 + 子路径归一"
+    },
+    "ts7016-semver.log": {
+      "must": [
+        "@types/semver"
+      ],
+      "why": "缺声明文件 → @types/<pkg>"
+    },
+    "ts7026-react-types.log": {
+      "must": [
+        "@types/node",
+        "@types/react",
+        "@types/react-dom",
+        "react",
+        "typescript"
+      ],
+      "why": "真实 #132：TS7026/TS2339/TS4112（无模块名）→ 靠'JSX 信号 + 源码声明的类型包'两条证据；同段还有 TS2307 react/jsx-runtime → react"
+    }
+  }
+}

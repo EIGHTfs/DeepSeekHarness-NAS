@@ -1,0 +1,5 @@
+# 历史失败夹具（自动采集，请勿手改；来源见 index.json）
+# run=#62 id=37149821702 date=2026-10-03T19:58:17 job=build-target
+# 采集: scripts/collect-failure-fixtures.py（只读远端 + 只写本目录）
+✗ 缺少 target 目录: $T/target"; exit 1; }
+✗ 缺少 build-meta.env（构建未完成）"; exit 1; }
