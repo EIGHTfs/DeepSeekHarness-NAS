@@ -1,0 +1,20 @@
+{
+  "ts7026-react-types.log": [
+    "@types/node",
+    "@types/react",
+    "@types/react-dom",
+    "react",
+    "typescript"
+  ],
+  "ts2307-vite.log": [
+    "vite",
+    "react"
+  ],
+  "ts7016-semver.log": [
+    "@types/semver"
+  ],
+  "pnpm-missing.log": [
+    "lefthook"
+  ],
+  "negative-ts2339-only.log": []
+}

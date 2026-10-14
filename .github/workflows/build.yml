@@ -66,6 +66,8 @@ jobs:
           python3 scripts/check-build-config.py
           python3 scripts/check-html-inline-js.py
           python3 scripts/check-packaging-invariants.py
+          # 学习器回归（dry-run，夹具见 test/fixtures/learner/）
+          bash test/learner-dryrun.test.sh
           bash test/safe-rm-rf.test.sh
 
       # 唯一构建：install + build + 裁剪一次做完，target 作为 artifact 传给各打包 job

@@ -1,0 +1,1 @@
+2026-10-03T10:00:00.0000000Z scripts/release/publish.ts(9,24): error TS7016: Could not find a declaration file for module 'semver'. '/x/node_modules/semver/index.js' implicitly has an 'any' type.

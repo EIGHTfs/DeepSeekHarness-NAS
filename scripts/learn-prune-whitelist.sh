@@ -36,6 +36,8 @@ WHITELIST_FILE="${WHITELIST_FILE:-$WS/build/build-prune-whitelist.json}"
 MODE=""
 APPLY=0
 TARGET=""
+SRC_DIR=""
+JSON_OUT=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -43,6 +45,8 @@ while [[ $# -gt 0 ]]; do
     --log)  MODE="log";  TARGET="${2:?--log 需要日志文件}"; shift 2 ;;
     --apply) APPLY=1; shift ;;
     --dry-run) APPLY=0; shift ;;
+    --src)  SRC_DIR="${2:?--src 需要源码目录}"; shift 2 ;;
+    --json) JSON_OUT=1; shift ;;
     *) echo "✗ 未知参数: $1" >&2; exit 1 ;;
   esac
 done
@@ -53,10 +57,13 @@ done
 echo "▶ 白名单: $WHITELIST_FILE（模式 $MODE）"
 
 # 用 python3 做全部解析与合并（正则提取 + 集合运算 + JSON 写盘）
-python3 - "$MODE" "$TARGET" "$WHITELIST_FILE" "$APPLY" <<'PYEOF'
+python3 - "$MODE" "$TARGET" "$WHITELIST_FILE" "$APPLY" <<'PYEOF' "$SRC_DIR" "$JSON_OUT"
 import json, os, re, sys
 
 mode, target, wfile, apply_ = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == '1'
+src_dir = sys.argv[5] if len(sys.argv) > 5 else ''
+json_out = (sys.argv[6] == '1') if len(sys.argv) > 6 else False
+_WS = os.path.dirname(os.path.dirname(os.path.abspath(wfile)))
 
 data = json.load(open(wfile, encoding='utf-8'))
 extra = set(data.get('extra', []))
@@ -258,9 +265,49 @@ elif mode == 'log':
         if _tok.startswith(".") or _tok.startswith("node:"):
             continue
         learned.add(_tok if (_tok.startswith("@") and _tok.count("/") == 1) else _tok.split("/")[0])
+    # ── 类型检查失败但【日志里没有模块名】→ 依"源码声明的类型包"补齐（2026-10-15 实证）──
+    #   实测（官方 dsh-v0.2.1-alpha.3，#131/#132）：tsc 报
+    #     TS7026: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists
+    #     TS2339: Property 'props' does not exist on type 'FactoryErrorBoundary'
+    #     TS4112: This member cannot have an 'override' modifier …
+    #   这些行【不含】任何模块名 → 老规则一条都抓不到 ✗ → 学习器输出"不是缺包导致" ✗
+    #   → 看门狗每 30 分钟重试、每 30 分钟再失败（真因是根 devDeps 的 @types/react(-dom) 被裁）。
+    #   证据两条【同时成立】才学（守住"不猜"边界 ✓）：
+    #     ① 日志明确指向 JSX/React 类型缺失（TS7026 / Cannot find namespace 'JSX' / TS2686）
+    #     ② 源码根 package.json 确实声明了类型层包（@types/*、typescript、@typescript-eslint/*）
+    #   学的范围严格限定为【已声明 + 属类型层】→ 与 prune-target.sh 的"类型包永不裁剪"规则同源。
+    _type_fail = re.search(r"TS7026|Cannot find namespace 'JSX'|TS2686|no interface 'JSX\.IntrinsicElements'", text)
+    if _type_fail:
+        _srcpkg = None
+        _cands = []
+        if src_dir:
+            _cands.append(os.path.join(src_dir, 'package.json'))
+        import glob as _glob4
+        _cands += sorted(_glob4.glob(os.path.join(_WS, 'src', 'deepseek-ai', '*', 'package.json')), reverse=True)
+        for _c in _cands:
+            try:
+                _srcpkg = json.load(open(_c, encoding='utf-8'))
+                print(f"  · 类型错信号命中（{_type_fail.group(0)}）→ 读源码声明: {os.path.relpath(_c, _WS)}")
+                break
+            except Exception:
+                _srcpkg = None
+        if _srcpkg:
+            _decl = {}
+            for _sec in ('dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'):
+                _decl.update((_srcpkg.get(_sec) or {}))
+            for _n in _decl:
+                if _n.startswith('@types/') or _n == 'typescript' or _n.startswith('@typescript-eslint/'):
+                    learned.add(_n)
+        else:
+            print("  · 类型错信号命中，但取不到源码 package.json → 不学（不猜）")
     source = f"日志反查 {target}"
 
 learned = {x for x in learned if x}  # 去空
+_json_plan = sorted(learned)
+if json_out:
+    print("LEARN_PLAN_JSON=" + json.dumps(
+        {"mode": mode, "target": target, "src": src_dir, "learned": _json_plan},
+        ensure_ascii=False))
 learned -= existing_white           # 已在白名单的跳过
 
 if not learned:
