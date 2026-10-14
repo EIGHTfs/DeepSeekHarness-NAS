@@ -307,6 +307,22 @@ def main():
            and ('DSH_UNINSTALLING=1' in _spkex) and ('.uninstalling' in _fpkex),
         "卸载流程按场景输出「已卸载」",
         "卸载时把「DSH 未运行」当弹窗弹给用户")
+
+    # 25. 构建期裁剪不得裁掉【类型层依赖】（2026-10-15 实证：官方 alpha.3 构建连续失败）
+    #     上游在 alpha.3 根 devDependencies 新增 @types/react(-dom)，白名单没有它们 →
+    #     mode A「非白名单一律删」把它们剥掉 → pnpm install 不装 React 类型 →
+    #     pnpm build 的 tsc 报 TS2339 Property 'props' does not exist /
+    #     TS7026 JSX element implicitly has type 'any' → 构建失败 → 看门狗每 30 分钟重试再失败。
+    #     原则：@types/* 与 typescript/@typescript-eslint/* 永不裁剪（体积小、tsc 必需）。
+    try:
+        _pt2 = _code_only(open(os.path.join(ROOT, 'build', 'prune-target.sh'), encoding='utf-8').read())
+        _wl2txt = open(os.path.join(ROOT, 'build', 'build-prune-whitelist.json'), encoding='utf-8').read()
+    except Exception:
+        _pt2, _wl2txt = '', ''
+    chk(25, ("def _keep_devdep" in _pt2) and ("startswith('@types/')" in _pt2)
+           and ('"@types/react"' in _wl2txt) and ('"@types/react-dom"' in _wl2txt),
+        "构建期裁剪保留类型层依赖（@types/* 永不裁）+ 白名单含 @types/react(-dom)",
+        "裁掉类型包 → tsc 报 TS2339/TS7026 → 官方新 tag 永远构建失败（alpha.3 实证）")
     # 输出
     for no, ok, msg, hint in checks:
         if ok:
