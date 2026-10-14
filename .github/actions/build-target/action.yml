@@ -26,6 +26,10 @@ inputs:
     description: 指定官方 tag（如 dsh-v0.1.5-rc.2）；留空 = 官方最新
     required: false
     default: ""
+arch:
+  description: '目标架构：x86_64（默认）| arm64（→ SPK arch=armv8 / FPK platform=arm）'
+  required: false
+  default: 'x86_64'
   artifact-name:
     description: target artifact 名称
     required: false
@@ -115,6 +119,8 @@ runs:
     - name: 命中则解包 target（随后 build-common.sh 会跳过编译）
       if: steps.cache-target.outputs.cache-hit == 'true'
       shell: bash
+      env:
+        ARCH: ${{ inputs.arch }}
       run: |
         set -e
         TAR="$RUNNER_TEMP/reuse-target.tar.gz"

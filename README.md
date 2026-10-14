@@ -12,6 +12,37 @@
 
 ## 🆕 最新更新（2026-10-10）
 
+### 🧪 测试状态（务必先读 · 2026-10-15）
+
+| 产物 | 真机实测状态 |
+|---|---|
+| **ARM 版（SPK `armv8` / FPK `arm`）** | ⚠️ **完全没有经过任何实际部署测试** —— 本次只完成了**构建与打包链路的架构参数化**（`defaults.arch`、`resolve_arch()`、CI `arch` 入参、ARM runner），**未在任何 ARM 设备上安装、启动或验收过**。请自行评估风险并优先在测试机验证。 |
+| **x86 版（SPK `x86_64` / FPK `x86`）** | ⚠️ **仅部分版本实测**：<br>· `dsh-v0.2.1-alpha.2`：飞牛 fnOS **全新安装**真机验收 ✓（八条判据全绿、零手工）＋ 群晖 DSM 7.4.1 **零手工安装**真机验收 ✓（连续 3 轮 200、插件 0 失败）<br>· `dsh-v0.2.1-alpha.3` 与 9 个历史重建包：**未做真机安装验证**（仅做了包结构 + 关键修复的静态核验 ✓） |
+| 已实测到的范围 | 全新安装、平台启动判定（`start app error 10330` 不再出现）、门户打开、三端口、插件加载、卸载提示语、链接自愈 |
+| **未实测** | ARM 全部；x86 的 `alpha.3` 与 9 个历史重建包；**升级/覆盖安装**路径；其他 DSM 版本与机型 |
+
+> 本项目是社区适配包，**不保证**未实测版本可用。请在测试机上先行验证后再上生产。
+
+### 🧩 目标架构（2026-10-15 参数化）
+
+```yaml
+# build/build-config.yaml
+defaults:
+  arch: x86_64        # x86_64（默认）| arm64；别名 x64/amd64、aarch64/armv8 亦可
+```
+
+| 取值 | SPK `arch=` | SPK 产物名 | FPK `platform=` | FPK 产物名 |
+|---|---|---|---|---|
+| `x86_64`（默认） | `x86_64` | `..._x86_64-<ver>.spk` | `x86` | `..._x86-<ver>.fpk` |
+| `arm64` | `armv8` | `..._armv8-<ver>.spk` | `arm` | `..._arm-<ver>.fpk` |
+
+- **覆盖优先级**：环境变量 `ARCH` / `BUILD_ARCH` > `build-config.yaml` > 默认 `x86_64`；解析统一在
+  `build/build-lib.sh` 的 `resolve_arch()`（脚本内不再写死架构 ✗）。
+- **CI**：`workflow_dispatch` 新增 `arch` 入参（`x86_64` / `arm64`）；ARM 跑在 `ubuntu-24.04-arm` runner。
+- ⚠️ **必须在目标架构的机器上构建**：原生模块（sharp / node-pty / koffi / node-addon-*）由
+  `pnpm install` 按**宿主架构**选择，x86 上交叉构建不可靠。
+
+
 > 逐条变更见 [`docs/CHANGELOG.md`](docs/CHANGELOG.md) ·
 > FPK 排障经验见 [`docs/skills/飞牛FPK打包与排障.md`](docs/skills/飞牛FPK打包与排障.md) ·
 > 开发与编辑规范见 [`docs/skills/通用开发规范.md`](docs/skills/通用开发规范.md)（**改代码前必读**）。

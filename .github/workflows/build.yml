@@ -12,6 +12,12 @@ on:
         description: '指定官方 tag（如 dsh-v0.1.5-rc.2）；留空 = 官方最新。用于补全历史版本的 FPK/SPK'
         required: false
         default: ''
+      arch:
+        description: '目标架构：x86_64（默认）或 arm64（→ SPK arch=armv8 / FPK platform=arm）'
+        required: false
+        type: choice
+        options: ['x86_64', 'arm64']
+        default: 'x86_64'
   push:
     tags: ['v*']              # 打 v* tag 自动触发（并发布 Release）
 
@@ -50,7 +56,7 @@ concurrency:
 jobs:
   # ── 群晖 SPK：源码链路（需完整 pnpm install + build + 裁剪）──
   build-target:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -75,6 +81,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           dsh_tag: ${{ inputs.dsh_tag }}
+          arch: ${{ inputs.arch }}
 
       # ── 方案 B：构建失败时自动学习缺失依赖并入库（用户 2026-10-09 定）──────────────
       # 为什么需要：官方新增构建期脚本可能 import 被裁剪剥掉的根 devDep（实测 alpha.2 的
@@ -138,8 +145,10 @@ jobs:
   # ── 打包：SPK · 源码链路（复用 build-target 的 artifact，不重复构建）──────────
   pack-and-release:
     needs: [build-target]
+    env:
+      ARCH: ${{ inputs.arch }}
     # 构建失败时不跑（口径：宁失败不发缺项；artifact 缺失时本就无法打包）
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     permissions:
       contents: write
 

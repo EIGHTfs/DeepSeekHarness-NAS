@@ -1,6 +1,6 @@
 #!/bin/bash
 #===============================================================================
-# DeepSeek Harness NAS — SPK 打包脚本（群晖 DSM x86_64）
+# DeepSeek Harness NAS — SPK 打包脚本（群晖 DSM；架构由 build-config.yaml defaults.arch 决定：x86_64 | arm64→armv8）
 #===============================================================================
 # 【三脚本分工】2026-09-13 从原 build.sh（spk+fpk 混合 1216 行）拆分：
 #   build-common.sh  公共：pnpm install + build + 黑白名单裁剪 → target 整树 + build-meta.env
@@ -13,7 +13,7 @@
 #     前置：先运行 ./build-common.sh 生成 target）
 #
 # 产物:
-#   build/staging/<APP_NAME>_x86_64-<SPK_VERSION>.spk
+#   build/staging/<APP_NAME>_<SPK_ARCH>-<SPK_VERSION>.spk（x86_64 | armv8）
 #
 # 关键设计（注释按本脚本职责重新整理）:
 #   - 端口: proxy/dsh/container 读 build-config.yaml spk: 段（默认 30800/30801/30802）
@@ -127,7 +127,7 @@ gen_start_sh "$TARGET/start.sh" "$SPK_PROXY_PORT" "$SPK_DSH_PORT" "$SPK_CONTAINE
 # 一、组装 SPK 外层（assemble）
 #===============================================================================
 echo ""
-echo "══════ SPK 打包（群晖 x86_64）══════"
+echo "══════ SPK 打包（群晖 $SPK_ARCH）══════"
 ASSEMBLE="$WORK/assemble"
 rm -rf "$ASSEMBLE"
 mkdir -p "$ASSEMBLE"
@@ -143,7 +143,8 @@ cat > "$ASSEMBLE/INFO" <<EOF
 package="${APP_NAME}"
 version="${SPK_VERSION}"
 description="${CFG_DESC:-$DESC}"
-arch="x86_64"
+resolve_arch "${SPKCFG_ARCH:-${ARCH:-x86_64}}"   # 架构参数化：x86_64 | arm64（→ DSM arch: x86_64 | armv8）
+arch="$SPK_ARCH"
 maintainer="${CFG_MAINTAINER}${CFG_DISTRIBUTOR:+ / $CFG_DISTRIBUTOR}"
 maintainer_url="${CFG_MAINTAINER_URL}"
 distributor="${CFG_DISTRIBUTOR}"
@@ -636,7 +637,7 @@ chmod 755 "$ASSEMBLE/scripts/start-stop-status" "$ASSEMBLE/scripts/installer" 2>
 # 文件名用【完整版本】FPK_VERSION，与 FPK 产物同格式（DeepSeekHarness-NAS_x86-<完整版本>.fpk）；
 # 而 INFO 里的内部 version（见上文 version= 那行）仍用 SPK_VERSION（前三段）——
 # 群晖套件版本号不接受 -alpha.1 这类后缀，但**文件名不受此限**，故两者刻意不同，勿统一。
-OUT_SPK="$D_STAGING/${APP_NAME}_x86_64-${FPK_VERSION}.spk"
+OUT_SPK="$D_STAGING/${APP_NAME}_${SPK_ARCH}-${FPK_VERSION}.spk"
 # ⚠ staging 是 gitignore 的产物目录，CI 全新 checkout 不存在 → tar 因写不进去失败
 #   （exit code 2）。本地长期有该目录，掩盖了此问题。
 mkdir -p "$D_STAGING"
