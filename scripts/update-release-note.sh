@@ -57,10 +57,15 @@ if [ "$DRY" = "1" ]; then
   exit 0
 fi
 
-python3 - "$TOKEN" "$API" "$RID" <<'PY'
-import json, sys, urllib.request
+# ★ 正文必须走【环境变量】而不是 stdin ✗：下面用 heredoc 传脚本，stdin 已被 heredoc 占用 ✗
+#   （2026-10-15 实测事故：用 sys.stdin.read() 读到空 → Release 正文被清成 0 字符 ✗）
+[ -n "$BODY" ] || { echo "✗ 渲染出的正文为空，拒绝写入（防把 Release 正文清空）" >&2; exit 1; }
+BODY="$BODY" python3 - "$TOKEN" "$API" "$RID" <<'PY'
+import json, os, sys, urllib.request
 tok, api, rid = sys.argv[1], sys.argv[2], sys.argv[3]
-body = sys.stdin.read()
+body = os.environ.get('BODY', '')
+if not body.strip():
+    sys.exit('✗ BODY 为空，拒绝写入')
 req = urllib.request.Request(api + '/releases/' + rid, method='PATCH',
         data=json.dumps({'body': body}).encode('utf-8'),
         headers={'Authorization': 'Bearer ' + tok, 'Accept': 'application/vnd.github+json',
