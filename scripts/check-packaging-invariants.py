@@ -340,6 +340,33 @@ def main():
            and os.path.isfile(os.path.join(ROOT, 'test', 'fixtures', 'learner', 'history', 'index.json')),
         "学习器增强（类型错信号 + 源码声明两条证据）且有回归夹具/测试",
         "老学习器对无模块名的类型错完全瞎 → 看门狗每 30 分钟重试再失败（alpha.3 实证）")
+
+    # 27. 架构解析必须在首次使用之前（2026-10-15 ARM 构建 #137 实证）
+    #     我在 pack-spk.sh 的横幅里用了 $SPK_ARCH，却把 resolve_arch 调用放在后面的旧 arch= 行
+    #     → 脚本是 set -euo pipefail → "line 130: SPK_ARCH: unbound variable" 直接中止 ✗
+    #     另：优先级必须是 环境变量 ARCH > YAML(SPKCFG_ARCH/FPKCFG_ARCH) > 默认（README 口径）
+    _arch_ok = True
+    for _f, _var, _cfg in (('SPK/pack-spk.sh', 'SPK_ARCH', 'SPKCFG_ARCH'),
+                           ('FPK/pack-fpk.sh', 'FPK_ARCH', 'FPKCFG_ARCH')):
+        try:
+            _t = open(os.path.join(ROOT, 'build', _f), encoding='utf-8').read()
+        except Exception:
+            _arch_ok = False
+            continue
+        # ★ 必须剔除注释行再找"首次使用"（2026-10-15 自查：我插的说明注释里也写了 $SPK_ARCH，
+        #   导致"首次使用"落在注释上 → 误报 ✗；与"守卫被注释骗过"同类，一律剥注释 ✓）
+        _t = '\n'.join(x for x in _t.split('\n') if not x.lstrip().startswith('#'))
+        _c = _t.find('resolve_arch ')
+        _u = _t.find('${' + _var + '}')
+        _u2 = _t.find('$' + _var)
+        _first = min([x for x in (_u, _u2) if x >= 0] or [10 ** 9])
+        if _c < 0 or _c > _first:
+            _arch_ok = False
+        if ('"${ARCH:-${' + _cfg + ':-x86_64}}"') not in _t:
+            _arch_ok = False
+    chk(27, _arch_ok,
+        "架构解析 resolve_arch 在首次使用 $SPK_ARCH/$FPK_ARCH 之前，且优先级 ARCH > YAML > 默认",
+        "顺序错 → set -u 下 unbound variable 直接中止（ARM 构建 #137 实证）；优先级错 → 传了 ARCH 却被 YAML 覆盖")
     # 输出
     for no, ok, msg, hint in checks:
         if ok:
