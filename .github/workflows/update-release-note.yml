@@ -1,0 +1,39 @@
+name: Update release note
+
+# 独立刷新某个 Release 的正文（用户 2026-10-15 定）：
+#   文案改动不必跑完整构建 ✓ —— 复用 build/release-note.sh 同一模板，保证与构建时逐字一致 ✓
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '目标 Release tag（留空 = 最新 Release）'
+        required: false
+        default: ''
+      trigger:
+        description: '正文里显示的触发方式（默认 workflow_dispatch）'
+        required: false
+        default: 'workflow_dispatch'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-release-note
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 刷新 Release 正文
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.tag }}" ]; then
+            ./scripts/update-release-note.sh --tag "${{ inputs.tag }}" --trigger "${{ inputs.trigger }}"
+          else
+            ./scripts/update-release-note.sh --trigger "${{ inputs.trigger }}"
+          fi
