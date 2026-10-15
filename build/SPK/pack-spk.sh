@@ -127,6 +127,9 @@ gen_start_sh "$TARGET/start.sh" "$SPK_PROXY_PORT" "$SPK_DSH_PORT" "$SPK_CONTAINE
 # 一、组装 SPK 外层（assemble）
 #===============================================================================
 echo ""
+# 架构解析（必须在任何 $SPK_ARCH 使用之前调用；set -u 下用未定义变量会直接中止 ✗）
+resolve_arch "${ARCH:-${SPKCFG_ARCH:-x86_64}}"
+
 echo "══════ SPK 打包（群晖 $SPK_ARCH）══════"
 ASSEMBLE="$WORK/assemble"
 rm -rf "$ASSEMBLE"
@@ -143,7 +146,6 @@ cat > "$ASSEMBLE/INFO" <<EOF
 package="${APP_NAME}"
 version="${SPK_VERSION}"
 description="${CFG_DESC:-$DESC}"
-resolve_arch "${SPKCFG_ARCH:-${ARCH:-x86_64}}"   # 架构参数化：x86_64 | arm64（→ DSM arch: x86_64 | armv8）
 arch="$SPK_ARCH"
 maintainer="${CFG_MAINTAINER}${CFG_DISTRIBUTOR:+ / $CFG_DISTRIBUTOR}"
 maintainer_url="${CFG_MAINTAINER_URL}"

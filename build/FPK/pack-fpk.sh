@@ -83,7 +83,7 @@ for k, v in {**defaults, **fpk}.items():
         continue
     print(f'{name}=\"{v}\"')
 " 2>/dev/null || true)"
-resolve_arch "${FPKCFG_ARCH:-${ARCH:-x86_64}}"   # 架构参数化：x86_64 | arm64（→ FPK platform: x86 | arm）
+resolve_arch "${ARCH:-${FPKCFG_ARCH:-x86_64}}"   # 架构参数化：ARCH 优先（与 README 一致）
 FPK_PROXY_PORT="${FPKCFG_PROXY_PORT:-3080}"
 FPK_DSH_PORT="${FPKCFG_DSH_PORT:-3081}"
 FPK_CONTAINER_PORT="${FPKCFG_CONTAINER_PORT:-3082}"
