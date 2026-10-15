@@ -29,8 +29,8 @@
 #                     —— spk/fpk 打包脚本 source 它获取元数据（单一真源）
 #
 # 之后:
-#   ./pack-spk.sh    → build/staging/<APP_NAME>_x86_64-<SPK_VERSION>.spk
-#   ./pack-fpk.sh    → build/staging/<APP_NAME>_x86-<FPK_VERSION>.fpk
+#   ./pack-spk.sh    → build/staging/<APP_NAME>_<SPK_ARCH>-<SPK_VERSION>.spk（x86_64 | armv8）
+#   ./pack-fpk.sh    → build/staging/<APP_NAME>_<FPK_ARCH>-<FPK_VERSION>.fpk（x86 | arm）
 #===============================================================================
 
 # ── 公共函数库（safe_rm_rf：强制 --one-file-system + 挂载点检测）──

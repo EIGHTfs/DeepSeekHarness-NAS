@@ -95,10 +95,10 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 # 公共预编译：拉官方最新源 → pnpm install + build + 裁剪 → target
 ./build/build-common.sh
 
-# 打 SPK（消费 target → build/staging/<APP_NAME>_x86_64-<版本>.spk）
+# 打 SPK（消费 target → build/staging/<APP_NAME>_<SPK_ARCH>-<版本>.spk；SPK_ARCH 由 defaults.arch 决定：x86_64 | armv8）
 ./build/SPK/pack-spk.sh
 
-# 打 FPK 源码链路（消费 target → build/staging/<APP_NAME>_x86-<版本>.fpk）
+# 打 FPK 源码链路（消费 target → build/staging/<APP_NAME>_<FPK_ARCH>-<版本>.fpk；FPK_ARCH：x86 | arm）
 ./build/FPK/pack-fpk.sh
 
 # 打 FPK npm 链路（可选：npm 装官方包，免源码编译，体积更小）
@@ -167,8 +167,8 @@ DeepSeek Harness (DSH) 是 DeepSeek AI 官方开源的 Agent 框架，提供 Web
 ./build/build-common.sh "" 1                   # 复用已有 target（跳过编译，秒级）
 
 # ② 打包（消费 ① 的 target；无参数，配置读 build-config.yaml）
-./build/SPK/pack-spk.sh                       # → build/staging/<APP_NAME>_x86_64-<SPK版本>.spk
-./build/FPK/pack-fpk.sh                       # → build/staging/<APP_NAME>_x86-<FPK版本>.fpk
+./build/SPK/pack-spk.sh                       # → build/staging/<APP_NAME>_<SPK_ARCH>-<SPK版本>.spk
+./build/FPK/pack-fpk.sh                       # → build/staging/<APP_NAME>_<FPK_ARCH>-<FPK版本>.fpk
 
 # ②' FPK npm 链路（可选）：npm 装官方包，无需源码编译
 ./build/build-npm-app.sh <版本>          # 下载 node + npm install 官方包（幂等）
