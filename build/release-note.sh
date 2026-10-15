@@ -104,26 +104,13 @@ title() {
 
 # ── 渲染完整正文（MODE=main 源码链 / npm 独立链，两链路不挤同一个 release）──
 render() {
+  # 文案口径（用户 2026-10-15 定：简单点）——只保留三项：
+  #   触发方式 / 官方版本 / 构建时间；且构建时间【每次重新构建都会刷新】
+  #   （BUILD_TIME 由 CI 在本步现取 date -u，不是缓存值 ✓）
+  #   产物与架构信息不写正文 —— 它们已在【资产名】里（..._x86_64- / _armv8- / _x86- / _arm- ✓）
   echo "自动构建产物（触发方式: ${TRIGGER:-?}）"
   echo "- 官方版本: ${RELEASE_TAG:-?}"
-  case "${MODE:-main}" in
-    npm)
-      echo "- **FPK（npm 链路）**: $(badge "${FPK_NPM_STATUS:-fail}" "${FPK_NPM_DESC:-}")"
-      ;;
-    *)
-      echo "- **SPK**: $(badge "${SPK_STATUS:-fail}" "${SPK_DESC:-}")"
-      if [ -n "${FPK_SOURCE_STATUS:-}" ]; then
-        echo "- **FPK（源码构建）**: $(badge "$FPK_SOURCE_STATUS" "${FPK_SOURCE_DESC:-}")"
-      fi
-      ;;
-  esac
   echo "- 构建时间: ${BUILD_TIME:-?}"
-  if [ -n "${SHA256:-}" ]; then
-    echo "- SHA256 校验:"
-    echo '```'
-    echo "$SHA256"
-    echo '```'
-  fi
   echo
   echo "---"
   echo
