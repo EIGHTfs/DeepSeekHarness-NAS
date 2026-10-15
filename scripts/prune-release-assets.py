@@ -153,7 +153,7 @@ def main(argv=None):
             continue
         if cls not in present:
             # 本次没产出这个类别 → 一律不动（防误删另一条链的产物）
-            skipped.append((name, '类别 %s 本次未产出，按安全规则不删' % cls))
+            skipped.append((name, '类别 %s 本次未产出，按安全规则不删' % (cls,)))
             continue
         if args.dry_run:
             print('  [dry-run] 将删除 %s（类别 %s，已被本次同类产物取代）' % (name, cls))
