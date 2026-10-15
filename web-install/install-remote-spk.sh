@@ -135,7 +135,10 @@ detect_remote() {
 }
 
 # --- 参数解析（兼容旧用法：参数1为 .spk 文件即视为 install） ---
-DEFAULT_SPK="$WS/release/DeepSeekHarness-x86_64-0.1.5.spk"
+# 架构参数化（2026-10-15）：不再写死 x86_64 的具体版本文件 ✗
+#   优先取 release/ 下最新的 .spk（任意架构后缀：_x86_64- / _armv8- … ✓）
+DEFAULT_SPK="$(ls -t "$WS"/release/*.spk "$WS"/release/*/*.spk 2>/dev/null | head -1 || true)"
+[ -n "${DEFAULT_SPK:-}" ] || DEFAULT_SPK="$WS/release/DeepSeekHarness-NAS_x86_64-0.1.5.spk"
 DEFAULT_APP="$(read_cfg appname)"
 [ -n "$DEFAULT_APP" ] || DEFAULT_APP="DeepSeekHarness-NAS"
 CMD="install"; SPK="$DEFAULT_SPK"

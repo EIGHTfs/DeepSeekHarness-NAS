@@ -26,8 +26,8 @@
 #   MODE=main|npm    main=源码链路 Release（SPK + FPK 源码版）；npm=独立 npm 链路 Release
 #   TRIGGER=<触发方式> RELEASE_TAG=<官方tag> \
 #   SPK_STATUS=<success|skipped|fail> SPK_DESC=<源码链路> \
-#   FPK_SOURCE_STATUS=<...> FPK_SOURCE_DESC=<源码构建,x86> \
-#   FPK_NPM_STATUS=<...> FPK_NPM_DESC=<npm链路,x86> \
+#   FPK_SOURCE_STATUS=<...> FPK_SOURCE_DESC=<源码构建,x86|arm>（由 CI 按 arch 入参注入） \
+#   FPK_NPM_STATUS=<...> FPK_NPM_DESC=<npm链路,x86|arm>（同上） \
 #   BUILD_TIME=<ISO时间> SHA256=<多行sha256> GH_TOKEN=<可选> \
 #   ./build/release-note.sh          # 正文（默认）→ workflow 重定向到 body_path
 #   ./build/release-note.sh title    # Release 标题
