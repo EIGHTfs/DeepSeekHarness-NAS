@@ -79,21 +79,27 @@ def _api(method, path, token, body=None):
 
 
 def classify(name, prefix):
-    """把资产名归到「类别」：同类别才允许互相替换。
+    """把资产名归成「类别」= (格式/链路, 架构)。
 
-    类别只由**后缀 + 链路**决定，刻意**不含版本号** —— 因为要清理的正是「同一份产物、
-    改了版本写法」的旧名字（例如 0.2.1 与 0.2.1-alpha.1）。
-    返回 None 表示不是我们关心的产物类型。
+    ★ 2026-10-15 真机事故（架构参数化引入）：原实现只按 `.spk` / `.fpk` / `-npm.fpk` 分类，
+      **不含架构** ✗ → 构建 ARM 时，dist-main 里只有 ARM 产物，脚本就把【同版本同格式的
+      x86 产物】当成"改名后残留"删掉了 ✗（实测 Release 里 x86 的两个资产被清空 ✗）。
+      类别必须含架构：spk/fpk/fpk-npm 各自 × {x86_64, armv8, x86, arm, …}。
+    架构从文件名前缀后第一段取：`<prefix><ARCH>-<version>…`。
     """
     if not name.startswith(prefix):
         return None
+    rest = name[len(prefix):]
+    arch = rest.split('-', 1)[0] if '-' in rest else ''
     if name.endswith('.spk'):
-        return 'spk'
-    if name.endswith('-npm.fpk'):
-        return 'fpk-npm'
-    if name.endswith('.fpk'):
-        return 'fpk'
-    return None
+        kind = 'spk'
+    elif name.endswith('-npm.fpk'):
+        kind = 'fpk-npm'
+    elif name.endswith('.fpk'):
+        kind = 'fpk'
+    else:
+        return None
+    return (kind, arch)
 
 
 def main(argv=None):

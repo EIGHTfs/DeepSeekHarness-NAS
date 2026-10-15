@@ -367,6 +367,19 @@ def main():
     chk(27, _arch_ok,
         "架构解析 resolve_arch 在首次使用 $SPK_ARCH/$FPK_ARCH 之前，且优先级 ARCH > YAML > 默认",
         "顺序错 → set -u 下 unbound variable 直接中止（ARM 构建 #137 实证）；优先级错 → 传了 ARCH 却被 YAML 覆盖")
+
+    # 28. Release 资产清理的"类别"必须含【架构】（2026-10-15 真机事故）
+    #     事故：构建 ARM 后，Release 里的 x86 两个资产被删 ✗ —— classify() 类别只有 后缀+链路、
+    #     不含架构 → ARM .spk 与 x86 .spk 同类 → 本次 dist-main 只有 ARM 产物 → x86 被当残留清掉 ✗
+    #     现要求：classify 返回 (kind, arch)，且有回归测试 test/prune-release-assets.test.sh。
+    try:
+        _pra = _code_only(open(os.path.join(ROOT, 'scripts', 'prune-release-assets.py'), encoding='utf-8').read())
+    except Exception:
+        _pra = ''
+    chk(28, ('return (kind, arch)' in _pra) and ("rest.split('-', 1)[0]" in _pra)
+           and os.path.isfile(os.path.join(ROOT, 'test', 'prune-release-assets.test.sh')),
+        "Release 资产清理类别含架构（kind, arch）+ 有跨架构回归测试",
+        "类别不含架构 → 构建 ARM 会把同版本 x86 资产删掉（静默丢产物，实测）")
     # 输出
     for no, ok, msg, hint in checks:
         if ok:
