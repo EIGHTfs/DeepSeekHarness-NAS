@@ -243,11 +243,13 @@ jobs:
           SPK_DESC: ${{ env.SPK_DESC }}
           FPK_SOURCE_STATUS: ${{ env.FPK_SOURCE_STATUS }}
           FPK_SOURCE_DESC: ${{ env.FPK_SOURCE_DESC }}
-          BUILD_TIME: ${{ github.event.repository.updated_at }}
           SHA256: ${{ env.dist_main_SHA }}
           # 更新日志抓取（api.github.com）带上 token，避免匿名限流
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # ★ 构建时间必须【每次运行现取】✗ 原来用 github.event.repository.updated_at
+          #   —— 那是"仓库最后更新时间"，只有 push 才会变 ✗；workflow_dispatch 重跑不会刷新 ✗
+          echo "BUILD_TIME=$(date -u +%FT%TZ)" >> "$GITHUB_ENV"
           ./build/release-note.sh > /tmp/release-body-main.md
           echo "TITLE=$(./build/release-note.sh title)" >> "$GITHUB_OUTPUT"
 
