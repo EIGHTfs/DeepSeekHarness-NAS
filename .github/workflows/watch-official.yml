@@ -83,20 +83,16 @@ jobs:
         if: steps.decide.outputs.need == 'yes'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
+          run: |
           set -e
-          curl -sS -o /dev/null -w '  触发构建 HTTP %{http_code}\n' -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            # ★ 必须【两种架构都派发】（2026-10-18 真机 bug ✗）
-            #   原来只发 {"ref":"main"} ✗ → arch 用默认 x86_64 ✗ → 自动构建永远只出 x86 ✗，
-            #   新版本 Release 里没有 ARM 包 ✗（实测 dsh-v0.2.1-rc.1 / rc.2 只有 2 个 x86 资产 ✗）
-            #   build.yml 并发组已改为按架构隔离（group: <workflow>-<arch>）✓
-            #   → x86_64 与 arm64 两次派发【不会互相取消】✓
-            for ARCH in x86_64 arm64; do
-              curl -sS -o /dev/null -w "  触发构建($ARCH) HTTP %{http_code}\n" -X POST \
-                -H "Authorization: Bearer $GH_TOKEN" \
-                -H "Accept: application/vnd.github+json" \
-                "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/dispatches" \
-                -d "{\"ref\":\"main\",\"inputs\":{\"arch\":\"$ARCH\"}}"
-            done
+          # ★ 必须【两种架构都派发】（2026-10-18 真机 bug ✗）
+          #   原来只发 {"ref":"main"} ✗ → arch 用默认 x86_64 ✗ → 自动构建永远只出 x86 ✗，
+          #   新版本 Release 里没有 ARM 包 ✗（实测 dsh-v0.2.1-rc.1 / rc.2 只有 2 个 x86 资产 ✗）
+          #   build.yml 并发组已按架构隔离（group: <workflow>-<arch>）✓ → 两次派发不互相取消 ✓
+          for ARCH in x86_64 arm64; do
+            curl -sS -o /dev/null -w "  触发构建($ARCH) HTTP %{http_code}\n" -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/dispatches" \
+              -d "{\"ref\":\"main\",\"inputs\":{\"arch\":\"$ARCH\"}}"
+          done
