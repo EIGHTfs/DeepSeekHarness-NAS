@@ -46,7 +46,7 @@ RID="$(curl -sS --max-time 20 -H "Authorization: Bearer $TOKEN" "$API/releases/t
 [ -n "$RID" ] || { echo "✗ 找不到 Release: $TAG" >&2; exit 1; }
 
 # 正文一律由同一个模板渲染（构建时与单独更新时结果一致 ✓）
-BODY="$(MODE=main TRIGGER="$TRIGGER" RELEASE_TAG="$TAG" BUILD_TIME="$(date -u +%FT%TZ)" \
+BODY="$(MODE=main TRIGGER="$TRIGGER" RELEASE_TAG="$TAG" BUILD_TIME="$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S +08:00')"   # 北京时间 ✓（与 build.yml 一致） \
         GH_TOKEN="$TOKEN" ./build/release-note.sh)"
 echo "▶ 已按 build/release-note.sh 渲染正文（$(printf '%s' "$BODY" | wc -c) 字符）"
 echo "── 正文前 6 行 ──"
