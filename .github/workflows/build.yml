@@ -32,7 +32,7 @@ permissions:
 # 注：曾用 cancel-in-progress: false 试过"排队"，实测会取消正在跑的运行且不排队，故按用户口径
 # 明确改为 true（新运行主动停掉旧的）。
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ inputs.arch }}
   cancel-in-progress: true
 
 
@@ -247,10 +247,12 @@ jobs:
           # 更新日志抓取（api.github.com）带上 token，避免匿名限流
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # ★ 构建时间必须【每次运行现取】✗ 原来用 github.event.repository.updated_at
-          #   —— 那是"仓库最后更新时间"，只有 push 才会变 ✗；workflow_dispatch 重跑不会刷新 ✗
-          echo "BUILD_TIME=$(date -u +%FT%TZ)" >> "$GITHUB_ENV"
-          ./build/release-note.sh > /tmp/release-body-main.md
+          # ★ 构建时间必须【每次运行现取】+ 必须【内联】传给本条命令 ✗
+          #   2026-10-18 真机 bug：写成 `echo BUILD_TIME=… >> $GITHUB_ENV` 却与 release-note.sh
+          #   在【同一个 step】→ $GITHUB_ENV 只对后续 step 生效 ✗ → 正文里打印成 "构建时间: ?" ✗
+          #   另：原用 UTC（date -u）→ 北京时间凌晨的构建会显示成【前一天】✗ → 改用北京时间 ✓
+          BUILD_TIME="$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S +08:00')" \
+            ./build/release-note.sh > /tmp/release-body-main.md
           echo "TITLE=$(./build/release-note.sh title)" >> "$GITHUB_OUTPUT"
 
       - name: 发布源码链路 Release（tag=官方 tag）
