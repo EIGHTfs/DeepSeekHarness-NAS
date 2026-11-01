@@ -42,9 +42,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: 随包 node / pnpm 环境
-      uses: ./.github/actions/setup-node-env
-
+    # ── 先解析官方 tag：它不依赖 node（纯 bash+curl），且 engines 推导要用它 ──
     - name: 解析官方 tag（指定则用指定值，否则取最新；作为 target 复用缓存的 key）
       id: tag
       shell: bash
@@ -52,8 +50,13 @@ runs:
         if [ -n "${{ inputs.dsh_tag }}" ]; then
           echo "tag=${{ inputs.dsh_tag }}" >> "$GITHUB_OUTPUT"
         else
-          echo "tag=$(./scripts/fetch-dsh-latest.sh --print-tag)" >> "$GITHUB_OUTPUT"
+          echo "tag=$(bash ./scripts/fetch-dsh-latest.sh --print-tag)" >> "$GITHUB_OUTPUT"
         fi
+
+    - name: 随包 node / pnpm 环境（Node 大版本自动跟随官方 engines.node）
+      uses: ./.github/actions/setup-node-env
+      with:
+        dsh-tag: ${{ steps.tag.outputs.tag }}
 
 
     # ── 缓存：官方源码 git 镜像（fetch-dsh-latest.sh 增量拉取的基础）──

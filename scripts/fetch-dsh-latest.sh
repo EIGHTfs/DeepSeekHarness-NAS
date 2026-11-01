@@ -9,6 +9,8 @@
 #   ./fetch-dsh-latest.sh --src-dir DIR          # 指定存放目录（默认 <脚本目录>/src/deepseek-ai）
 #   ./fetch-dsh-latest.sh --token '<ghp>'       # 显式传入 GitHub token（脚本不自找凭据文件）
 #                                               #   ⚠ 建议配合环境变量 DS_FETCH_TOKEN（避免进 history）
+#   ./fetch-dsh-latest.sh --print-engines-node  # 只打印官方 engines.node 推导的 Node 大版本
+#                                               #   （CI 安装 Node 用；不下载；stdout 仅一个数字）
 #
 # 策略:
 #   版本: 从 GitHub 拉取全部 tags，用严格 semantic version(含 pre-release)比较，自动选最高 tag。
@@ -33,10 +35,11 @@ DEFAULT_SRC="$WS/src/deepseek-ai"
 TMP_PREFIX=".dsh-fetch-$$"
 TARGET_TAG=""          # 空 = 自动判定最新
 PRINT_TAG=0            # --print-tag: 只打印 tag 不下载（CI 发布用）
+PRINT_ENGINES_NODE=0   # --print-engines-node: 只打印官方 engines.node 推导的 Node 大版本（CI 装 Node 用）
 FETCH_TOKEN=""         # GitHub token：只接受显式传入（--token 或环境变量 DS_FETCH_TOKEN），不自找凭据文件
 
 usage() {
-  sed -n '2,14p' "$0"
+  sed -n '2,16p' "$0"
 }
 
 # ---------- 解析参数 ----------
@@ -46,6 +49,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --tag)      TARGET_TAG="${2:?--tag 需要一个值}"; shift 2 ;;
     --print-tag) PRINT_TAG=1; shift ;;   # 只解析并打印官方 tag（不下载；CI 发布用）
+    --print-engines-node) PRINT_ENGINES_NODE=1; shift ;;  # 只打印官方 engines.node 推导的 Node 大版本
     --repo)     REPO="${2:?--repo 需要一个值}"; shift 2 ;;
     --src-dir)  SRC_DIR="${2:?--src-dir 需要一个值}"; shift 2 ;;
     --token)    FETCH_TOKEN="${2:?--token 需要一个值}"; shift 2 ;;
@@ -155,6 +159,50 @@ fi
 if [[ "${PRINT_TAG:-0}" == "1" ]]; then
   echo "$TARGET_TAG"
   exit 0
+fi
+
+# --print-engines-node: 读取官方该 tag 的 package.json，把 engines.node 解析成
+# 「应安装的 Node 大版本」输出到 stdout（诊断走 stderr）。CI 安装 Node 用，不下载源码。
+# 为什么不写死版本：官方已在 0.2.2 系把最低 Node 提到 24.9，而 CI 曾写死 22 ——
+# 构建期不校验 engines 时照样绿，风险被推到运行期。读官方声明 = 官方升版 CI 自动跟上。
+# 解析规则：engines.node 按 || 分段取备选，每段取首个版本号的大版本，取所有备选中
+# 【最小的】作为结果 —— 该大版本必然满足至少一个备选（如 ">=24.9.0"→24；
+# "^22.19.0 || >=24.0.0"→22，与官方仓库自身用 22 构建通过的史实一致）。
+# 解析失败退出非 0：宁可构建失败显眼暴露，也不静默用旧运行时打出一个暗雷包。
+if [[ "${PRINT_ENGINES_NODE:-0}" == "1" ]]; then
+  _hdr=()
+  [[ -n "$FETCH_TOKEN" ]] && _hdr=(-H "Authorization: token $FETCH_TOKEN")
+  _PJ="$(curl -s --connect-timeout 8 --max-time 20 --retry 5 --retry-delay 3 "${_hdr[@]}" \
+    "https://api.github.com/repos/$REPO/contents/package.json?ref=$TARGET_TAG" || true)"
+  if [[ -z "$_PJ" || -z "$(echo "$_PJ" | grep -o '"content"')" ]]; then
+    echo "✗ 无法从 api.github.com 读取 $REPO@${TARGET_TAG} 的 package.json（网络/限流/tag 不存在）。" >&2
+    exit 1
+  fi
+  echo "$_PJ" | python3 -c '
+import sys, json, base64, re
+try:
+    d = json.load(sys.stdin)
+    pkg = json.loads(base64.b64decode(d["content"]).decode("utf-8", "replace"))
+except Exception as e:
+    sys.stderr.write("✗ package.json 拉取或解析失败: %s\n" % e)
+    sys.exit(1)
+eng = (pkg.get("engines") or {}).get("node") or ""
+if not eng:
+    sys.stderr.write("✗ package.json 未声明 engines.node（无法推导 Node 版本）。\n")
+    sys.exit(1)
+majors = []
+for alt in eng.split("||"):
+    m = re.search(r"(\d+)(?:\.\d+)?", alt)
+    if not m:
+        sys.stderr.write("✗ engines.node 备选无法解析: %r\n" % alt.strip())
+        sys.exit(1)
+    majors.append(int(m.group(1)))
+    sys.stderr.write("  engines.node=%r 备选 %r → 下限大版本 %d\n" % (eng, alt.strip(), majors[-1]))
+major = min(majors)
+sys.stderr.write("  → 应安装 Node %d.x（setup-node 会装该系列最新版，≥官方下限）\n" % major)
+print(major)
+'
+  exit $?
 fi
 echo "目标 tag: $TARGET_TAG"
 
