@@ -37,20 +37,55 @@ PYEOF
 #   输出: "PROXY DSH CONTAINER" 空格分隔；配置缺失/解析失败输出空串
 read_ports() {
   python3 - "$WS" <<'PYEOF'
-import sys, os
+import sys, os, re
 script_dir = sys.argv[1]
 base = script_dir
 cands = [os.path.join(base, '..', 'build', 'build-config.yaml'),
          os.path.join(base, '..', 'build-config.yaml'),
          os.path.join(base, 'build-config.yaml')]
-try:
-    import yaml
-except ImportError:
-    sys.exit(0)
+def _minimal_parse(text):
+    """无 PyYAML 时的回退解析：只认本项目 build-config.yaml 的扁平结构
+    （顶层段名 + 缩进的 proxy_port/dsh_port/container_port 值）。
+
+    做什么：把 YAML 中「顶层段 → 段内标量键值」的两层结构解析成 dict。
+    为什么需要：目标机（DSM / 飞牛 fnOS）的系统 python3 通常没有 yaml 模块。
+    缺依赖时若直接 sys.exit(0) 静默退出，上层只能看到「没读到端口」，
+    于是把「缺 Python 依赖」误报成「配置文件写错」—— 冤枉配置文件，
+    并把排查方向引偏。加回退后，端口读取不再依赖 PyYAML。
+    """
+    cfg, cur = {}, None
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        m = re.match(r'^([A-Za-z_][\w-]*):\s*$', line)
+        if m:
+            cur = m.group(1)
+            cfg.setdefault(cur, {})
+            continue
+        m = re.match(r'^\s+([A-Za-z_][\w-]*):\s*([^#\s]+)', line)
+        if m and cur:
+            cfg[cur][m.group(1)] = m.group(2).strip().strip('\'"')
+    return cfg
+
+
+def _load_cfg(path):
+    """优先用 PyYAML 精确解析；缺模块时回退 _minimal_parse；其它异常一律返回空。"""
+    try:
+        import yaml
+        return yaml.safe_load(open(path, encoding='utf-8')) or {}
+    except ImportError:
+        try:
+            return _minimal_parse(open(path, encoding='utf-8').read())
+        except Exception:
+            return {}
+    except Exception:
+        return {}
+
+
 for cand in cands:
     if os.path.exists(cand):
         try:
-            cfg = yaml.safe_load(open(cand, encoding='utf-8'))
+            cfg = _load_cfg(cand)
             d = cfg.get('defaults', {}) or {}
             sec = cfg.get('fpk') or {}
             proxy = sec.get('proxy_port') or d.get('proxy_port') or ''
