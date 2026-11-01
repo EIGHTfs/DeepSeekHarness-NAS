@@ -96,6 +96,9 @@ jobs:
         if: failure()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 本步会 git commit：显式关掉 lefthook 提交钩子（构建期不需要跑钩子；
+          # 钩子找不到可执行文件时会继续向上兜底扫描，失效路径下可能拖住整步）
+          LEFTHOOK: '0'
         run: |
           set -uo pipefail
           LOGS=$(ls -1t build/master-build/*.log assets/pnpm-install.log 2>/dev/null | head -3 || true)
