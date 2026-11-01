@@ -6,13 +6,13 @@ DeepSeek Harness（dsh）的 NAS 适配包：群晖 DSM `.spk` / 飞牛 fnOS `.f
 
 | 功能 | 做什么 | 入口 |
 |---|---|---|
-| 套件安装 | 群晖装 spk、飞牛装 fpk，装完即用 | 套件中心 / `install-remote-spk.sh` |
+| 套件安装 | 群晖装 spk、飞牛装 fpk，装完即用 | 套件中心 |
 | Web UI | 多模型配置、自定义 OpenAI 兼容端点 | `http://<NAS-IP>:30800`（spk）/ `:3080`（fpk） |
 | 反向代理 | 反代端口对外，dsh 原生端口仅本机 | `http://<NAS-IP>:<反代端口>` |
 | 门户免密 | 套件图标打开带 token，认证后免密 | DSM/fnOS 桌面图标 |
 | 局域网限制 | 公网 IP 一律 403 提示页 | 内置，无需配置 |
 | 命令行 `dsh` / `pnpm` | 装完 SSH 直接敲，无需进套件目录 | `/usr/bin/dsh`、`/usr/bin/pnpm` |
-| 网页安装工具 | 远程探测系统并装/卸/检/修，带历史 | `http://<NAS-IP>:8765` |
+| 网页安装工具 | 已独立为单独仓库（远程装/卸/检/修，带历史） | `nas-pkg-installer` |
 | 自动构建发布 | 官方更新自动对齐构建，发 Release 双产物 | GitHub Actions |
 | 架构参数化 | 同一脚本出 x86_64 / arm64 包 | `build/build-config.yaml` 的 `defaults.arch` |
 

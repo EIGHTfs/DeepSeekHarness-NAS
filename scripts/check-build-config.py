@@ -4,11 +4,11 @@
 【为什么需要】（2026-10-05 发现，属真实隐患）
 端口段的读取方全部按【对象】取值，例如：
 
-    sec = cfg.get('spk') or {}          # install-remote-spk.sh / install-remote-fpk.sh
+    sec = cfg.get('spk') or {}          # 端口段读取方（打包脚本、远端安装脚本）
     proxy = sec.get('proxy_port') or …  # pack-spk.sh:60 / pack-fpk.sh:75 / build-npm-app.sh:47
 
 若有人把段名写成标量（如 `spk: "30800"`），`sec` 就成了字符串，`sec.get(...)` 抛 AttributeError：
-  · 在 `read_ports()`（install-remote-spk.sh:47）里那处 python 是"解析失败就不输出"的设计，
+  · 在端口读取函数里那处 python 是"解析失败就不输出"的设计，
     于是上层只会看到「没读到端口段」—— **静默失效，极难定位**；
   · 在打包脚本里则可能直接失败。
 故用本守卫把这种写法挡在 CI，而不是等运行时静默失效。
