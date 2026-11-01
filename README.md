@@ -132,15 +132,14 @@ API_KEYS:
 | `scripts/clean-build-artifacts.sh` | 清理失败/中间构建；`--caches` / `--dry-run` / `--force` |
 | `scripts/lib/common.sh` | 全仓唯一公共函数库（日志、安全删除、端口读取、`running_dsh` 等） |
 
-### 网页安装工具（`web-install/`）
+### 网页安装工具（已独立）
 
-| 名称 | 作用 |
-|---|---|
-| `web-install/install-server.py` | 服务端（端口 8765）：配置保存、系统探测、远程执行、安装历史 |
-| `web-install/install-server-ctl.sh` | 服务端启停；`start` / `stop` / `restart` / `status` |
-| `web-install/install.html` | 网页前端：探测 → 匹配包 → 安装/卸载/检查/修复 |
-| `web-install/install-remote-spk.sh` | 群晖远程装；`install` / `uninstall` / `check` / `repair`，`--keep-data`（缺省）/ `--delete-data` |
-| `web-install/install-remote-fpk.sh` | 飞牛远程装；`install` / `uninstall` / `check` |
+远程安装/卸载/检查 SPK/FPK 的网页工具已拆分为独立仓库，本仓不再包含其代码与配置：
+
+- 仓库：https://github.com/EIGHTfs/nas-pkg-installer
+- 用法见该仓库 README
+
+本仓只负责打包与发布。
 
 ### 守卫与测试
 
@@ -151,8 +150,7 @@ API_KEYS:
 | `scripts/check-build-config.py` | `build/build-config.yaml` 的 `defaults`/`spk`/`fpk` 必须是映射；`--file <path>` / `--list` |
 | `scripts/check-build-naming.py` | 命名规范 + 全部 `.sh`/`.py` 语法与可执行位 |
 | `scripts/check-common-functions.py` | 公共函数不得在其它脚本重复定义 |
-| `scripts/check-destructive-ops.py` | 敏感路径 `rm -rf` 必须 `--one-file-system`；`web-install/` 不得分叉实现 |
-| `scripts/check-html-inline-js.py` | HTML 内联 JS 用 `node --check` 真解析；`--glob '<pattern>'` / `--list` |
+| `scripts/check-destructive-ops.py` | 敏感路径 `rm -rf` 必须 `--one-file-system` |
 | `scripts/check-packaging-invariants.py` | 打包不变量（含生成函数自包含、按声明范围选版本、出货裁剪并入 `_autoLearned`）；`--verbose` 列出每条检查 |
 | `scripts/check-package-parity.py` | 两包结构比对（软链/悬空/manifest）；`<基准包> <候选包> [--verbose] [--baseline-self]` |
 | `scripts/check-fpk-payload.py` | FPK 载荷（`app.tgz` 不含软链、权限）；`<包路径> [--expect-pkg <名>]` |
