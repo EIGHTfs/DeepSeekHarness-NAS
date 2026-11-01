@@ -39,6 +39,17 @@ _DSH_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/lib/common.sh
 
 set -euo pipefail
 
+# ── lefthook 钩子防线（2026-11-01）──────────────────────────────────────────
+# 官方源码树带 lefthook（devDependencies + postinstall 装钩子），上游 lefthook.yml
+# 定义了 pre-commit / pre-merge-commit / pre-push。本仓不跑官方钩子体系，但两类场景
+# 仍会触发：① 仓库连同 .git/ 从别的环境迁来，.git/hooks 里留着旧钩子（旧钩子常写死
+# 上一台机器的绝对路径，找不到可执行文件时继续向上兜底扫描，在 CIFS/SMB 上可能长时间
+# 无响应 ✗）；② 有人把官方源码就地 install，钩子被装进当前 git 目录。
+# 钩子文件自带跳过开关（if [ "$LEFTHOOK" = "0" ]; then exit 0; fi），这里显式导出，
+# 保证构建期间的任何 git commit 不被失效钩子拖住。${VAR:-默认} 写法保留控制权：
+# 外部显式给 LEFTHOOK=1 仍可强制启用钩子。
+export LEFTHOOK="${LEFTHOOK:-0}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="$(cd "$SCRIPT_DIR/.." && pwd)"              # 工作区根（脚本在 build/ 子目录）
 CONFIG_FILE="$SCRIPT_DIR/build-config.yaml"     # 配置文件在 build 目录内
