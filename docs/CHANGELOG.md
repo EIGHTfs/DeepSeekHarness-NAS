@@ -1,15 +1,20 @@
 # 更新记录（CHANGELOG）
 
 > 本文件承载**历史更新**。README 只保留"现在是什么样、怎么用"，不再逐条记录演变过程。
-> 每条一行；同一日期内按"改动面"归类。**解释性内容（为什么这么做、踩过什么坑）见 `docs/skills/`。**
+> 每条一行；同一日期内按"改动面"归类。**解释性内容见 `使用指南.md` / `构建与发布指南.md` / `打包规范.md` / `故障排查指南.md`。**
+
+## 2026-11-01
+- README 重写为使用手册（1046 行 → 精简版），机制与排障内容全部移出。
+- docs 重组为四份指南：`使用指南.md`、`构建与发布指南.md`、`打包规范.md`、`故障排查指南.md`（症状 → 判据 → 处置）。
+- 吸收并删除 `docs/skills/` 四份与两份设计稿；删除 `docs/.trash/` 四份旧稿（均可从 git 历史恢复）。
 
 ## 2026-10-09（下半场：FPK 安装/启动/门户全链路打通）
 
 **FPK 安装「设置目录权限失败」**
 - 根因：npm/pnpm 软链打包后成自引用/损坏链接，fnOS 解压逐条目设 ACL 时 `acl_get_file failed`。
 - 修法：app.tgz 后处理 —— 删全部软链、条目 uid/gid 归 root、目录 755 / 文件 644；软链清单存 `links.tar`，
-  安装期由 `cmd/install_callback` 原样解回（逐行 ln -s 的文本清单实测会错 542 条，已弃用）。
-- 实测：`appcenter-cli check` 由 Not Installed → **Installed**。
+  安装期由 `cmd/install_callback` 原样解回（逐行 ln -s 的文本清单会错 542 条，已弃用）。
+- 验证：`appcenter-cli check` 由 Not Installed → **Installed**。
 
 **FPK 装完启动不了 / 插件全挂**
 - 根因一：`pack-fpk.sh` 钩子循环漏了 `install_callback`（fnOS 安装钩子不执行）。
@@ -21,7 +26,7 @@
 - `sync_portal_token` 只认 DSM 的 `/var/packages/…`，飞牛上不命中 → 补上飞牛路径。
 - 反代的「自动带 token」分支排在 403 之后，而 fnOS 套件打开与地址栏直连**都发 `sec-fetch-site=none`**
   无法区分 → 从套件图标打开必吃 403。改为自动跳转前置、403 仅在拿不到 token 时兜底。
-- 实测：模拟套件打开（不带 token）→ 302 带 token → 最终 **HTTP 200**。
+- 验证：模拟套件打开（不带 token）→ 302 带 token → 最终 **HTTP 200**。
 
 **临时目录**
 - `TMPDIR` 不再落在应用数据目录（`<PKG_VAR>/<version>/tmp`），改用平台自带的按应用临时目录
@@ -39,7 +44,7 @@
 - 新增官方更新看门狗 `watch-official.yml`：每 30 分钟比对官方最新 tag ↔ 本仓最新 Release tag；未对齐、且无构建在跑、且距上次成功构建 ≥6 小时 → 自动触发构建。判定无状态。
 - 取消每日 04:00 UTC 定时构建：它与看门狗的"成功后暂停 6 小时"口径冲突（cron 是无条件构建）。
 - 新增**失败自愈（方案 B）**：`build-target` 失败时从真实失败日志反查缺失依赖（含 `Could not find a declaration file for module 'X'` → `@types/X` 映射），学进裁剪白名单后 commit + push 入库，并自动重建一次；白名单无变化则不提交（无死循环）。
-- 修复方案 B 两个缺陷（#84 实测暴露）：`changed` 输出必须写在 `push` **之前**；重建步条件必须用 `always()` 而非 `failure()`。
+- 修复方案 B 两个缺陷（#84 真机暴露）：`changed` 输出必须写在 `push` **之前**；重建步条件必须用 `always()` 而非 `failure()`。
 
 **依赖安装**
 - `build-common.sh` 装依赖前**并发探测** npm 候选源，取【HTTP 2xx/3xx 且耗时最短】者（`NPM_REGISTRY_CANDIDATES`，加镜像只加一行）。
@@ -61,7 +66,7 @@
 - 新增守卫 `check-html-inline-js.py`（用 `node --check` 真解析内联 JS）。
 
 **文档**
-- README 精简为"现状 + 用法"；历史更新移入本文件；解释性内容移入 `docs/skills/`。
+- README 精简为"现状 + 用法"；历史更新移入本文件；解释性内容移入 `docs/` 指南。
 - 删除 README「已知待办」节（CSP 一项的说明改由 `install.html` 的豁免注释承载）。
 
 ## 2026-10-08
@@ -76,7 +81,7 @@
 - SPK 产物文件名改用完整版本（与 FPK 统一）。
 
 ## 2026-10-06
-- 新增 `docs/反代媒体请求内部直通设计-20261006.md`（设计文档）。
+- 记录反代媒体请求内部直通方案（后并入 `docs/故障排查指南.md` §3.2）。
 
 ## 2026-10-05
 - `start.sh` 支持 `gen-portal --token`；门户配置与 token 轮换对齐。
