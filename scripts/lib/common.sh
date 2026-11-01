@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #===============================================================================
-# scripts/lib/common.sh — **唯一公共函数库**（build / scripts / web-install 三方共用）
+# scripts/lib/common.sh — **唯一公共函数库**（build / scripts 两方共用）
 #
 # 设计口径（用户明确）：
 #   「此次一鼓作气把所有能公共的都公共」——审计出的重复实现一律收进本文件，
@@ -17,7 +17,7 @@
 #
 # 【硬性约束】
 #   1. 本文件 **无副作用**：不 set -e/-u、不 cd、不写文件、不打印任何东西。
-#      原因：它被 build/scripts/web-install 三方在不同 cwd、不同 set -e 状态下 source；
+#      原因：它被 build/scripts 两方在不同 cwd、不同 set -e 状态下 source；
 #      任何副作用都会改变调用方的行为，进而让"本地能过、CI 不过"这类问题重新出现。
 #   2. 只依赖 bash + coreutils + /proc；可选依赖（sshpass/curl/tar/python3）
 #      一律**运行时探测**，缺失时给出明确报错，绝不静默降级。
@@ -54,23 +54,20 @@
 #       已实测安全并收口的只有构建期临时目录类（build-common.sh 5 处、fetch-*、diff-report）。
 #
 #     · **sshpass / synopkg / base64 的剩余出现不要盲目收口**（审计结论）：
-#       - `synopkg` 多出现在**远端执行**的脚本里（web-install/install-remote-*.sh、
-#         scripts/clean-dsm-residue.sh 的 REMOTE_EOF 段）——目标机上**没有** scripts/lib/
-#         common.sh，收口成 pkg_*() 会直接坏掉；它们必须自包含。
+#       - `synopkg` 多出现在**远端执行**的脚本里（scripts/clean-dsm-residue.sh 的
+#         REMOTE_EOF 段）——目标机上**没有** scripts/lib/common.sh，
+#         收口成 pkg_*() 会直接坏掉；它们必须自包含。
 #       - `base64` 一半是 **python 语言级**用法（scripts/gh-commit.py、migrate-session/lib/
 #         wsclient.py 的 import base64），与 shell 的 b64_encode 无关。
-#       - 真正**尚未收口的分叉**只有一个：`web-install/install-remote-fpk.sh` 仍内联
-#         `timeout N sshpass ... ssh ...`（约 15 处），而其兄弟 `install-remote-spk.sh`
-#         已改用 rssh()。合并需目标机验证（安装器无法在 CI 自测），列为待办而非本轮改动。
 #
 #   → 因此 scripts/check-common-functions.sh（第 7 步守卫）必须**先剔除 heredoc 生成区段**
 #     再做"唯一性"判定，否则会误伤上述代码。
 #
 # 【本文件收口的重复项（原散落位置）】
 #   日志/文案 info ok warn miss err die log_msg …… prepare-build-env.sh、
-#        fix-login-shell.sh、sync-github-release.sh、web-install/* 等 6+ 处
-#   safe_rm_rf / has_mount_under …… web-install/clean-dsm-residue.sh
-#   rssh（远程执行：sshpass→密钥→候选路径回退）…… web-install/install-remote-*.sh
+#        fix-login-shell.sh、sync-github-release.sh 等 5+ 处
+#   safe_rm_rf / has_mount_under …… 各处清理脚本
+#   rssh（远程执行：sshpass→密钥→候选路径回退）…… 远端执行脚本
 #   resolve_node（优先 /usr/bin/node，不可执行则自探测）…… 多处
 #   fetch_url / extract_tar / md5_of / b64_encode / json_get / json_set ……
 #        fetch-dsh-latest.sh、fetch-release-mt.sh、install-remote-*.sh 等
