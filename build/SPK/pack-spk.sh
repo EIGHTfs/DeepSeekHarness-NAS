@@ -76,6 +76,27 @@ SPK_PROXY_PORT="${SPKCFG_PROXY_PORT:-30800}"
 SPK_DSH_PORT="${SPKCFG_DSH_PORT:-30801}"
 SPK_CONTAINER_PORT="${SPKCFG_CONTAINER_PORT:-30802}"
 
+# ── 无 PyYAML 时的标量兜底（只覆盖少量键，不替代完整解析）──
+#   为什么需要：本机 DSM 与 CI runner 都没有装 PyYAML（scripts/check-build-config.py 的注释也写明
+#   这点），上面的 `import yaml` 会失败并走 `|| true` → 所有 SPKCFG_* 静默落空、退回脚本默认值。
+#   对现有键恰好默认值相同所以看不出来，但新增键（如 helpurl/support_url）就会永远拿不到配置值。
+#   取值范围限定 defaults 与 spk 两段（后者覆盖前者），不读 fpk 段。
+cfg_scalar() {
+  awk -v key="$1" '
+    /^[A-Za-z_][A-Za-z0-9_]*:/ { section = $0; sub(/:.*/, "", section) }
+    (section == "defaults" || section == "spk") {
+      line = $0
+      if (line ~ "^[[:space:]]+" key ":[[:space:]]*") {
+        sub("^[[:space:]]+" key ":[[:space:]]*", "", line)
+        sub(/[[:space:]]+#.*$/, "", line)
+        sub(/[[:space:]]+$/, "", line)
+        value = line
+      }
+    }
+    END { if (value != "") print value }
+  ' "$CONFIG_FILE"
+}
+
 # ── 品牌 / 元数据（配置驱动；缺省值仅作最后兜底，正常一律命中配置） ──
 CFG_APPNAME="${SPKCFG_APPNAME:-DeepSeekHarness-NAS}"
 CFG_BRAND_NAME="${SPKCFG_BRAND_NAME:-$CFG_APPNAME}"
@@ -87,6 +108,9 @@ CFG_MAINTAINER="${SPKCFG_MAINTAINER:-DeepSeek AI}"
 CFG_MAINTAINER_URL="${SPKCFG_MAINTAINER_URL:-}"
 CFG_DISTRIBUTOR="${SPKCFG_DISTRIBUTOR:-}"
 CFG_DISTRIBUTOR_URL="${SPKCFG_DISTRIBUTOR_URL:-}"
+# 套件中心「帮助 / 支持」链接（可空；官方字段见 docs/官方文档/spk/synology_package__INFO_optional_fields.md）
+CFG_HELPURL="${SPKCFG_HELPURL:-}"
+CFG_SUPPORT_URL="${SPKCFG_SUPPORT_URL:-}"
 CFG_OS_MIN_VER="${SPKCFG_OS_MIN_VER:-7.0-40851}"
 CFG_BRAND_VERSION_ORDER="${SPKCFG_BRAND_VERSION_ORDER:-dsh,npm}"
 
@@ -159,6 +183,18 @@ dsmappname="SYNO.SDS.${APP_ID}.Application"
 checksum=""
 changelog="[独立包名 ${APP_NAME}] dsh ${PKG_VER} 全源码编译; 品牌 ${CFG_BRAND_NAME}; 版本号自动取官方前三位"
 EOF
+
+# 套件中心「帮助 / 支持」链接：只在配置给了值时才写（留空则整行不出现，避免详情页挂空链接）
+#   官方语义（docs/官方文档/spk/synology_package__INFO_optional_fields.md）：
+#     helpurl     安装后套件详情页显示的「帮助」网页超链接
+#     support_url 套件中心显示的支持链接，便于用户寻求技术支持
+#   用 if 而不是 `[ -n ] &&`：本脚本 set -e，测试为假时链式语句返回非 0 会让脚本直接退出
+if [ -n "${CFG_HELPURL:-}" ]; then
+  printf 'helpurl="%s"\n' "$CFG_HELPURL" >> "$ASSEMBLE/INFO"
+fi
+if [ -n "${CFG_SUPPORT_URL:-}" ]; then
+  printf 'support_url="%s"\n' "$CFG_SUPPORT_URL" >> "$ASSEMBLE/INFO"
+fi
 
 # conf: privilege（应用用户名按 APP_NAME 替换）+ resource（脚本管理时必须 {}，
 #   DSM 7 postinst worker 无法为 port-config/data-share 建系统资源 → 276 失败）

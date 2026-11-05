@@ -30,6 +30,12 @@ defaults:
   maintainer_url: https://github.com/deepseek-ai/deepseek-harness
   distributor: EIGHTfs
   distributor_url: https://github.com/EIGHTfs/DeepSeekHarness-NAS
+  # 套件中心「帮助 / 支持」超链接（SPK INFO 的 helpurl / support_url；留空 = 详情页不出现该链接）
+  #   官方字段语义（docs/官方文档/spk/synology_package__INFO_optional_fields.md）：
+  #     helpurl     = 安装后套件详情页显示的「帮助」网页超链接
+  #     support_url = 套件中心显示的支持链接，便于用户寻求技术支持
+  helpurl: https://github.com/EIGHTfs/DeepSeekHarness-NAS
+  support_url: https://github.com/EIGHTfs/DeepSeekHarness-NAS
   source: thirdparty
   # 平台最低版本（各平台段可覆盖；SPK 用 os_min_ver 格式，FPK 用 os_min_version）
   os_min_version: 1.1.0
