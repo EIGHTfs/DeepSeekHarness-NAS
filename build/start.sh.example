@@ -531,6 +531,38 @@ function killOldProcesses() {
       } catch {}
     }
   } catch {}
+  // 按【端口】清理残留（2026-11-06 新增）：
+  //   旧实例父进程是 `node -e '<内联脚本>'`，按名字（start.sh / bin.js）都匹配不到 ✗，
+  //   残留进程继续占着 dsh/容器端口 → 下次启动 dsh 的 webserver 插件报
+  //   `listen EADDRINUSE 127.0.0.1:<dshPort>`，连带 web-runtime(required) 激活失败，
+  //   对外表现为「2 required plugins did not activate」——会被误判成插件或打包问题 ✗
+  //   按监听端口找 PID 是唯一可靠判据（进程名/参数都不可靠）。
+  try {
+    const guardPorts = [
+      process.env.DSH_REPAIR_PROXY_PORT,
+      process.env.DSH_REPAIR_DSH_PORT,
+      process.env.DSH_REPAIR_CONTAINER_PORT,
+    ].filter(Boolean);
+    if (guardPorts.length) {
+      const listing = execSync('netstat -lntp 2>/dev/null || ss -lntp 2>/dev/null', { encoding: 'utf8' });
+      const selfPid = String(process.pid);
+      const victims = new Set();
+      for (const line of listing.split('\n')) {
+        const cols = line.trim().split(/\s+/);
+        if (cols.length < 4) continue;
+        const localAddr = cols[3] || '';
+        if (!guardPorts.some((port) => localAddr.endsWith(':' + port))) continue;
+        const owner = cols[cols.length - 1] || '';
+        const ownerPid = owner.split('/')[0];
+        if (/^\d+$/.test(ownerPid) && ownerPid !== selfPid) victims.add(ownerPid);
+      }
+      for (const ownerPid of victims) {
+        console.log(`[√] 清理占用端口的残留进程 (PID ${ownerPid})`);
+        try { process.kill(parseInt(ownerPid, 10), 'SIGTERM'); } catch {}
+        try { process.kill(parseInt(ownerPid, 10), 'SIGKILL'); } catch {}
+      }
+    }
+  } catch {}
   return new Promise(resolve => setTimeout(resolve, 2000));
 }
 
@@ -1230,6 +1262,18 @@ code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
     console.log(`[√] 反代: http://0.0.0.0:${proxyPort} -> http://127.0.0.1:${dshPort}`);
   });
 
+  // 反代端口绑定失败必须显式报错退出（2026-11-06 新增）：
+  //   不接 'error' 事件时 node 抛未捕获异常 → 整个父进程崩溃 →
+  //   已经绑好的其它端口一起消失，对外表现为「套件显示 running，但一个端口都没监听」✗
+  //   反代是唯一门户入口，绑不上就没有可用形态，故这里明确失败（而不是静默半死）。
+  proxyServer.on('error', (err) => {
+    console.error(`[!] 反代端口 ${proxyPort} 绑定失败：${err.code || err.message}`);
+    if (err.code === 'EADDRINUSE') {
+      console.error('    端口被占用：先执行 ./start.sh stop 清理残留实例，或改用其它端口');
+    }
+    process.exit(1);
+  });
+
   const containerHtml = buildContainerHtml();
   const containerServer = http.createServer((req, res) => {
     // 局域网硬闸：容器页与反代同一策略（公网来源拒绝，防容器页成为无鉴权入口）
@@ -1251,6 +1295,14 @@ code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
   });
   containerServer.listen(containerPort, '0.0.0.0', () => {
     console.log(`[√] 容器: http://0.0.0.0:${containerPort}/`);
+  });
+
+  // 容器页是【可选入口】：绑定失败只告警，绝不让它拖垮整个实例（2026-11-06 新增）
+  //   实测踩过：30802 被残留实例占住 → 未捕获 error → 父进程崩溃 →
+  //   明明反代已绑好 30800，用户却完全打不开 ✗
+  containerServer.on('error', (err) => {
+    console.error(`[!] 容器页端口 ${containerPort} 绑定失败：${err.code || err.message}`);
+    console.error('    容器页不可用（主入口不受影响）；如需该页请释放端口后重启：./start.sh stop && ./start.sh start');
   });
 
   let tokenWait = 0;

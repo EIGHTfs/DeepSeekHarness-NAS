@@ -440,14 +440,25 @@ PACKAGE_NAME="${SYNOPKG_PKGNAME}"
 PACKAGE_BASE="/var/packages/${PACKAGE_NAME}/target"
 START_SCRIPT="${PACKAGE_BASE}/start.sh"
 
-# 端口读取优先级（2026-10-02）：
-#   ① 数据目录 <var>/<版本>/ports（安装向导 wizard_*_port 写入，跨升级保留）→ 最高
-#   ② 打包默认 target/var/ports（pack-spk.sh 依 build-config.yaml 生成）→ 回退
+# 端口读取优先级（2026-11-06 修正）：
+#   ① 数据目录 <var>/<当前安装版本>/ports（安装向导 wizard_*_port 写入，跨升级保留）→ 最高
+#   ② 数据目录里【版本号最大】的 <var>/<版本>/ports —— 历史版本残留不能盖过新版
+#      原来用 "${SYNOPKG_PKGVAR}"/*/ports 通配取第一个 ✗，会取到旧版目录：
+#      实测旧版 0.2.0-rc.2/ports 的 PROXY_PORT=3080 盖掉了新版的 30800 →
+#      门户开在 3080、ui/config 却指向 30800，套件图标点了直接连不上 ✗
+#   ③ 打包默认 target/var/ports → 回退
 PORT_FILE="${PACKAGE_BASE}/var/ports"
-# 数据目录版本隔离（与 installer pkg_version_resolved 同源：dsh → npm → top）
-for _pf in "${SYNOPKG_PKGVAR}"/*/ports "${SYNOPKG_PKGVAR}/ports"; do
-  [ -f "$_pf" ] && { PORT_FILE="$_pf"; break; }
-done
+_CUR_VER="$(sed -n 's/^version="\([^"]*\)".*/\1/p' "/var/packages/${PACKAGE_NAME}/INFO" 2>/dev/null | head -1)"
+if [ -n "${_CUR_VER}" ]; then
+  # INFO 的 version 是前三位（如 0.2.2），数据目录是完整串（如 0.2.2-rc.1）→ 用前缀匹配
+  for _pf in "${SYNOPKG_PKGVAR}/${_CUR_VER}"*/ports; do
+    [ -f "$_pf" ] && { PORT_FILE="$_pf"; break; }
+  done
+fi
+if [ "${PORT_FILE}" = "${PACKAGE_BASE}/var/ports" ]; then
+  _NEWEST="$(ls -1d "${SYNOPKG_PKGVAR}"/*/ 2>/dev/null | sort -V | tail -1)"
+  [ -n "${_NEWEST}" ] && [ -f "${_NEWEST}ports" ] && PORT_FILE="${_NEWEST}ports"
+fi
 if [ -f "$PORT_FILE" ]; then
   . "$PORT_FILE"
 fi
@@ -461,6 +472,19 @@ fi
 stop() {
   "${START_SCRIPT}" stop --proxy-port "$PROXY_PORT" --dsh-port "$DSH_PORT" --container-port "$CONTAINER_PORT" 2>/dev/null || true
   sleep 2
+  # 按【端口】清理残留实例（2026-11-06 新增）：
+  #   旧实例父进程是 `node -e '<内联脚本>'`，按名字 pkill "start.sh" 匹配不到 ✗ →
+  #   残留进程继续占 dsh/容器端口 → 下次启动 dsh 报 webserver EADDRINUSE，
+  #   连带 web-runtime(required) 失败（对外显示「2 required plugins did not activate」）
+  for _port in "$PROXY_PORT" "$DSH_PORT" "$CONTAINER_PORT"; do
+    for _owner in $(netstat -lntp 2>/dev/null | awk -v P=":${_port} " '$4 ~ P {print $7}' | cut -d/ -f1 | sort -u); do
+      case "$_owner" in ''|0|1) continue ;; esac
+      kill "$_owner" 2>/dev/null || true
+      sleep 0.3
+      kill -9 "$_owner" 2>/dev/null || true
+    done
+  done
+  sleep 1
   pkill -f "bin.js web" 2>/dev/null || true
   sleep 1
   pkill -9 -f "start.sh" 2>/dev/null || true
