@@ -38,6 +38,23 @@ BUILD_COMMON_SCRIPT="$BUILD_ROOT/build-common.sh"            # 公共预编译�
 EXCLUDES_FILE="$BUILD_ROOT/build-excludes.json"              # tar 排除规则（通用，build/ 根）
 BUILD_LIB="$BUILD_ROOT/build-lib.sh"                         # 公共函数库（构建级共用）
 
+# ── 参数：--work-dir 指定 build-common.sh 的产物根 ──
+#   缺省仍是 build/master-build（旧行为不变）；命令行优先于 D_WORK_ROOT 环境变量。
+_WORK_DIR_ARG=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --work-dir|--workdir) _WORK_DIR_ARG="${2:?--work-dir 需要一个目录}"; shift 2 ;;
+    --work-dir=*)         _WORK_DIR_ARG="${1#*=}"; shift ;;
+    -h|--help)            sed -n '10,16p' "$0"; exit 0 ;;
+    *) echo "用法: $0 [--work-dir DIR]" >&2; exit 1 ;;
+  esac
+done
+if [ -n "$_WORK_DIR_ARG" ]; then
+  BUILD_META_DIR="$_WORK_DIR_ARG"
+elif [ -n "${D_WORK_ROOT:-}" ]; then
+  BUILD_META_DIR="$D_WORK_ROOT"
+fi
+
 # 公共函数库：gen_start_sh 等（SPK/FPK 共用，改一处生效；库头有完整梳理口径）
 [ -f "$BUILD_LIB" ] || { echo "✗ 缺少公共函数库: $BUILD_LIB" >&2; exit 1; }
 . "$BUILD_LIB"
@@ -56,6 +73,9 @@ D_SCRIPTS="${D_SCRIPTS:-$WS/scripts}"
 #     → 外部（网页「构建参数」面板 / 命令行）预先给同名 SPKCFG_* 环境变量即可覆盖，
 #       优先级 = 环境变量 > YAML section > YAML defaults（与本文件头部声明一致）。
 # ----------------------------------------------------------------------------
+# 公共函数库提前 source：下面的「无 PyYAML 兜底」要用 yaml_section_env。
+# 本文件后面还会再 source 一次——该库自身无副作用、可重复 source。
+. "$SCRIPT_DIR/../../scripts/lib/common.sh"
 eval "$(python3 -c "
 import yaml, sys, os
 with open('$CONFIG_FILE') as f:
@@ -71,7 +91,16 @@ for k, v in {**defaults, **spk}.items():
     if name in os.environ:
         continue
     print(f'{name}=\"{v}\"')
+print('SPKCFG_YAML_OK=1')
 " 2>/dev/null || true)"
+# ── 无 PyYAML 兜底（本机 DSM 与 CI runner 都没装）──
+#   上面那段 import yaml 失败时会走 `|| true` 静默落空 → 所有键退回脚本默认值。
+#   既有键的默认值恰好与配置相同所以看不出来，但改配置就会「改了不生效且不报错」。
+if [ "${SPKCFG_YAML_OK:-0}" != "1" ]; then
+  echo "  ⚠ 未检测到 PyYAML：改用内置最小解析器读 build-config.yaml（仅两层映射与标量）" >&2
+  eval "$(yaml_section_env "$CONFIG_FILE" defaults SPKCFG_)"
+  eval "$(yaml_section_env "$CONFIG_FILE" spk SPKCFG_)"
+fi
 SPK_PROXY_PORT="${SPKCFG_PROXY_PORT:-30800}"
 SPK_DSH_PORT="${SPKCFG_DSH_PORT:-30801}"
 SPK_CONTAINER_PORT="${SPKCFG_CONTAINER_PORT:-30802}"
@@ -117,7 +146,8 @@ CFG_BRAND_VERSION_ORDER="${SPKCFG_BRAND_VERSION_ORDER:-dsh,npm}"
 # ----------------------------------------------------------------------------
 # target 与元数据（build-common.sh 产物）
 # ----------------------------------------------------------------------------
-_META="$(ls -1t "$BUILD_META_DIR"/build*/build-meta.env 2>/dev/null | head -1)"
+# `|| true`：目录不存在时 ls 返回非 0，set -e 会让脚本在下面那条清晰报错之前就静默退出
+_META="$(ls -1t "$BUILD_META_DIR"/build*/build-meta.env 2>/dev/null | head -1 || true)"
 if [ -z "$_META" ] || [ ! -f "$_META" ]; then
   echo "✗ 未找到 build-meta.env（请先运行 ./build-common.sh 生成 target）" >&2
   exit 1

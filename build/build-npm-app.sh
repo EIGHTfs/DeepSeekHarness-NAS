@@ -39,6 +39,8 @@ D_BUILD="${D_BUILD:-$WS/build}"
 D_STAGING="${D_STAGING:-$D_BUILD/staging}"
 
 # ── 从 build-config.yaml 读 ports 段（FPK 用 defaults/fpk: 通用 3080 段） ──
+# 公共函数库：无 PyYAML 兜底要用 yaml_section_env（该库无副作用、可重复 source）
+. "$WS/scripts/lib/common.sh"
 eval "$(python3 -c "
 import yaml, sys
 with open('$CONFIG_FILE') as f:
@@ -47,7 +49,14 @@ defaults = cfg.get('defaults') or {}
 fpk = cfg.get('fpk') or {}
 for k, v in {**defaults, **fpk}.items():
     print(f'CFG_{k.upper()}=\"{v}\"')
+print('CFG_YAML_OK=1')
 " 2>/dev/null || true)"
+# 无 PyYAML 兜底（本机 DSM 与 CI runner 都没装）：见 scripts/lib/common.sh 的 yaml_section_env
+if [ "${CFG_YAML_OK:-0}" != "1" ]; then
+  warn "未检测到 PyYAML：改用内置最小解析器读 build-config.yaml（defaults + fpk 段）"
+  eval "$(yaml_section_env "$CONFIG_FILE" defaults CFG_)"
+  eval "$(yaml_section_env "$CONFIG_FILE" fpk CFG_)"
+fi
 APP_NAME="${CFG_APPNAME:-DeepSeekHarness-NAS}"
 APP_ID="$(echo "$APP_NAME" | tr -d -- '-_')"
 APP_NAME_LOWER="$(echo "$APP_NAME" | tr 'A-Z' 'a-z')"

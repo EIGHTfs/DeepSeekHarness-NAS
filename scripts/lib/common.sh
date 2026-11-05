@@ -341,3 +341,58 @@ gen_start_sh() {
   fi
   return 0
 }
+
+#===============================================================================
+# yaml_section_env — 读 build-config.yaml 指定段，输出 shell 赋值行（供 eval）
+#
+# 为什么需要：本机 DSM 与 CI runner 都没有装 PyYAML，各脚本原先用
+#   `python3 -c "import yaml ..." 2>/dev/null || true` 读配置 → 解析失败时【静默落空】，
+#   全部键退回脚本内默认值。既有键的默认值恰好与配置相同所以长期看不出来，
+#   但配置一旦被改（端口、品牌名、helpurl 等）就会「改了不生效且不报错」。
+#
+# 支持范围（只此子集，够本项目用）：顶层 `段:`、缩进 `键: 值`、值两端引号、行内 `# 注释`；
+#   嵌套映射与列表不处理（遇到跳过，不产出错误值）。
+# 环境变量优先：目标变量已存在则跳过（与原先 PyYAML 路径同规则）。
+#
+# 用法：eval "$(yaml_section_env <yaml文件> <段名> <变量前缀>)"
+# 退出码：0 正常（含「文件里没有该段」）；1 文件读不到
+#===============================================================================
+yaml_section_env() {
+  python3 - "$1" "$2" "$3" <<'YAML_SECTION_PY'
+import os
+import shlex
+import sys
+
+yaml_path, section_name, var_prefix = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(yaml_path, encoding='utf-8') as handle:
+        yaml_lines = handle.read().splitlines()
+except OSError:
+    sys.exit(1)
+
+current_section = None
+for raw_line in yaml_lines:
+    if not raw_line.strip() or raw_line.lstrip().startswith('#'):
+        continue
+    if not raw_line[0].isspace():                      # 顶层行 = 段名
+        current_section = raw_line.split(':', 1)[0].strip()
+        continue
+    if current_section != section_name:
+        continue
+    text = raw_line.strip()
+    if ':' not in text:
+        continue
+    key, value = text.split(':', 1)
+    key, value = key.strip(), value.strip()
+    if not key or not value or value.startswith(('{', '[')):   # 只取标量
+        continue
+    if len(value) >= 2 and value[0] in '"\'' and value[-1] == value[0]:
+        value = value[1:-1]                            # 去两端引号
+    else:
+        value = value.split(' #', 1)[0].strip()        # 未加引号时去行内注释
+    env_name = var_prefix + key.upper()
+    if env_name in os.environ:                         # 外部显式指定优先
+        continue
+    print('%s=%s' % (env_name, shlex.quote(value)))
+YAML_SECTION_PY
+}

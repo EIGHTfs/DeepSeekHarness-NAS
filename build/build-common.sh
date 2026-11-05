@@ -9,11 +9,15 @@
 #
 # 用法:
 #   ./build-common.sh [SRC] [SKIP_BUILD]
+#   ./build-common.sh --work-dir /path/to/work [--src SRC] [SKIP_BUILD]
 #
 # 参数（均可省略）:
 #   1. SRC         源码目录（缺省=自动扫描 src/deepseek-ai/deepseek-harness-master
 #                  或 master-build/master-build）
 #   2. SKIP_BUILD  1=复用已有完整 target（不重新构建；缺省=1 跳过已存在，=0 强制全量构建）
+#   --work-dir DIR 构建中间产物根（缺省 build/master-build，旧行为不变；亦可 D_WORK_ROOT 环境变量）
+#   --src DIR      等价于第一个位置参数（便于与 --work-dir 混用）
+#   --dry-run      只预演不构建
 #
 # 打包模式：唯一模式 = 预构建产物包（装完即用）
 #   - 本地 pnpm install + pnpm build 生成全部构建产物（apps/cli/lib、apps/web/dist 等）
@@ -164,7 +168,13 @@ with open('$CONFIG_FILE') as f:
 defaults = cfg.get('defaults') or {}
 for k, v in defaults.items():
     print(f'_CFG_{k.upper()}=\"{v}\"')
+print('_CFG_YAML_OK=1')
 " 2>/dev/null || true)"
+  # 无 PyYAML 兜底（本机 DSM 与 CI runner 都没装）：见 scripts/lib/common.sh 的 yaml_section_env
+  if [ "${_CFG_YAML_OK:-0}" != "1" ]; then
+    warn "未检测到 PyYAML：改用内置最小解析器读 build-config.yaml 的 defaults 段"
+    eval "$(yaml_section_env "$CONFIG_FILE" defaults _CFG_)"
+  fi
 fi
 
 # --- 参数（精简：SRC / SKIP_BUILD）-----------------------------------------
@@ -176,16 +186,58 @@ GEN_WHITELIST_SCRIPT="$BUILD_ROOT/gen-prune-whitelist.sh"    # 白名单生成�
 SPK_BUILD_SCRIPT="$BUILD_ROOT/SPK/pack-spk.sh"              # SPK 打包（build/SPK/）
 FPK_BUILD_SCRIPT="$BUILD_ROOT/FPK/pack-fpk.sh"              # FPK 打包（build/FPK/）
 NPM_FPK_SCRIPT="$BUILD_ROOT/build-npm-app.sh"        # FPK npm 链路（build/FPK/）
-# 参数：--dry-run 可出现在任意位置（亦可用环境变量 DRY_RUN=1）；其余按位置 = SRC SKIP_BUILD
+# 参数（可任意顺序）：
+#   --dry-run            只预演，不实际构建
+#   --work-dir DIR       构建中间产物根（缺省 = build/master-build，即旧行为）
+#   --src DIR            源码目录（等价于第一个位置参数）
+#   SRC SKIP_BUILD       位置参数：源码目录；1=复用已有 target（缺省=0 全量构建）
 DRY_RUN="${DRY_RUN:-0}"
 _POS=()
-for _a in "$@"; do
-  case "$_a" in
-    --dry-run|--dryrun) DRY_RUN=1 ;;
-    -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
-    *) _POS+=("$_a") ;;
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dry-run|--dryrun)   DRY_RUN=1; shift ;;
+    -h|--help)            sed -n '2,42p' "$0"; exit 0 ;;
+    --work-dir|--workdir) D_WORK_ROOT="${2:?--work-dir 需要一个目录}"; shift 2 ;;
+    --work-dir=*)         D_WORK_ROOT="${1#*=}"; shift ;;
+    --src)                _POS+=("${2:?--src 需要一个目录}"); shift 2 ;;
+    --src=*)              _POS+=("${1#*=}"); shift ;;
+    *)                    _POS+=("$1"); shift ;;
   esac
 done
+# 命令行覆盖优先于环境变量（WORK_ROOT 在上面已按 D_WORK_ROOT 求过一次值，这里重算）
+if [ -n "${D_WORK_ROOT:-}" ]; then
+  WORK_ROOT="$D_WORK_ROOT"
+  mkdir -p "$WORK_ROOT" 2>/dev/null || warn "无法创建构建目录: $WORK_ROOT"
+fi
+
+# ── copy_tree_tar：用 tar 管道复制目录树（规避 deep-hardlink 与 CIFS 限制）──
+# 为什么不用 cp -a：pnpm 的 node_modules/.pnpm 是深硬链目录，在 CIFS/NFS 上
+#   cp -a 递归复制会报「Directory not empty」中断（实测），tar 管道更稳。
+# 为什么需要容错：CIFS/SMB 拒绝改 mtime/权限，tar 解包时会对每个条目报
+#   「Cannot utime / Cannot change mode」并以退出码 2 结束 —— 内容其实完整，
+#   但退出码会让构建误判失败。故：过滤这两类已知无害报错，其余报错照常失败；
+#   再用「文件数比对」做完整性兜底（内容不全会立刻暴露，不会静默半成品）。
+copy_tree_tar() {
+  local src_dir="$1" dst_dir="$2" _tar_err _real_err _src_n _dst_n
+  _tar_err="$(mktemp)"
+  ( cd "$src_dir" && tar -cf - --hard-dereference . ) 2>/dev/null \
+    | ( cd "$dst_dir" && tar -xf - --no-same-owner --no-same-permissions --touch ) 2>"$_tar_err"
+  _real_err="$(grep -vE 'Cannot (utime|change mode|chmod|chown)|Exiting with failure status' "$_tar_err" 2>/dev/null || true)"
+  if [ -n "$_real_err" ]; then
+    err "复制源码出现非权限类错误："
+    printf '%s\n' "$_real_err" | head -5 >&2
+    rm -f "$_tar_err"
+    return 1
+  fi
+  rm -f "$_tar_err"
+  _src_n="$(find "$src_dir" -type f 2>/dev/null | wc -l)"
+  _dst_n="$(find "$dst_dir" -type f 2>/dev/null | wc -l)"
+  if [ "$_src_n" != "$_dst_n" ]; then
+    err "复制不完整：源 $_src_n 个文件，目标 $_dst_n 个"
+    return 1
+  fi
+  return 0
+}
 SRC="${_POS[0]:-}"
 if [ -z "$SRC" ]; then
   # 通配扫描 src/deepseek-ai/*（不硬编码版本目录名），其次 master-build；
@@ -478,9 +530,15 @@ else
   #   且留下半成品 BUILD_SRC 让下次重跑继续踩。
   #   改用 **tar 管道 + --hard-dereference**（硬链展开为真实文件、软链保留），与
   #   build/FPK/pack-fpk.sh 的 app.tgz 段同一套实现（那里也是为规避深目录复制失败）。
-  safe_rm_rf "$BUILD_SRC"
+  # CIFS/SMB 上 safe_rm_rf 删深层旧副本常报「Directory not empty」（服务端语义，不是权限问题），
+  # 改名让出路径即可（同卷 mv 秒级），避免整轮构建卡在清理。
+  safe_rm_rf "$BUILD_SRC" 2>/dev/null || true
+  if [ -e "$BUILD_SRC" ]; then
+    _bak="$(dirname "$BUILD_SRC")/.$(basename "$BUILD_SRC").bak-$(date +%Y%m%d-%H%M%S)"
+    mv "$BUILD_SRC" "$_bak" 2>/dev/null && warn "旧构建副本删不掉，已改名保留：$_bak"
+  fi
   mkdir -p "$BUILD_SRC"
-  ( cd "$SRC" && tar -cf - --hard-dereference . ) | ( cd "$BUILD_SRC" && tar -xf - )
+  copy_tree_tar "$SRC" "$BUILD_SRC" || die "复制源码到构建副本失败：$SRC → $BUILD_SRC"
 fi
 
 # 品牌: locale 源码（后续 build 会编译进产物）

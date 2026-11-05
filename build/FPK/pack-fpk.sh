@@ -50,12 +50,26 @@ BUILD_LIB="$BUILD_ROOT/build-lib.sh"                         # 公共函数库�
 . "$BUILD_LIB"
 
 # ── 参数：--npm 走 npm 装包链路（默认源码 target 链路不变） ──
+#   --work-dir DIR 指定 build-common.sh / build-npm-app.sh 的产物根
+#     （缺省仍是 build/master-build，旧行为不变；命令行优先于 D_WORK_ROOT 环境变量）
 NPM_MODE=0
-case "${1:-}" in
-  --npm) NPM_MODE=1 ;;
-  "") ;;
-  *) echo "用法: $0 [--npm]" >&2; exit 1 ;;
-esac
+_WORK_DIR_ARG=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --npm)                NPM_MODE=1; shift ;;
+    --work-dir|--workdir) _WORK_DIR_ARG="${2:?--work-dir 需要一个目录}"; shift 2 ;;
+    --work-dir=*)         _WORK_DIR_ARG="${1#*=}"; shift ;;
+    -h|--help)            sed -n '17,20p' "$0"; exit 0 ;;
+    *) echo "用法: $0 [--npm] [--work-dir DIR]" >&2; exit 1 ;;
+  esac
+done
+if [ -n "$_WORK_DIR_ARG" ]; then
+  BUILD_META_DIR="$_WORK_DIR_ARG"
+  NPM_META_DIR="$_WORK_DIR_ARG"
+elif [ -n "${D_WORK_ROOT:-}" ]; then
+  BUILD_META_DIR="$D_WORK_ROOT"
+  NPM_META_DIR="$D_WORK_ROOT"
+fi
 
 # ── 工作区分类目录（环境变量可覆盖，与 build-common.sh 一致） ──
 D_ASSETS="${D_ASSETS:-$WS/build}"
@@ -67,6 +81,8 @@ D_SCRIPTS="${D_SCRIPTS:-$WS/scripts}"
 # build-config.yaml 解析（FPK 段覆盖 defaults：端口 + appname + 品牌元数据）
 #   全部字段一律来自配置，脚本内不写死任何可变值（no-hardcode-config）
 # ----------------------------------------------------------------------------
+# 公共函数库提前 source：下面「无 PyYAML 兜底」要用 yaml_section_env（本文件后面还会再 source 一次）
+. "$SCRIPT_DIR/../../scripts/lib/common.sh"
 eval "$(python3 -c "
 import yaml, sys, os
 with open('$CONFIG_FILE') as f:
@@ -82,7 +98,14 @@ for k, v in {**defaults, **fpk}.items():
     if name in os.environ:
         continue
     print(f'{name}=\"{v}\"')
+print('FPKCFG_YAML_OK=1')
 " 2>/dev/null || true)"
+# ── 无 PyYAML 兜底（本机 DSM 与 CI runner 都没装）──
+if [ "${FPKCFG_YAML_OK:-0}" != "1" ]; then
+  echo "  ⚠ 未检测到 PyYAML：改用内置最小解析器读 build-config.yaml（仅两层映射与标量）" >&2
+  eval "$(yaml_section_env "$CONFIG_FILE" defaults FPKCFG_)"
+  eval "$(yaml_section_env "$CONFIG_FILE" fpk FPKCFG_)"
+fi
 resolve_arch "${ARCH:-${FPKCFG_ARCH:-x86_64}}"   # 架构参数化：ARCH 优先（与 README 一致）
 FPK_PROXY_PORT="${FPKCFG_PROXY_PORT:-3080}"
 FPK_DSH_PORT="${FPKCFG_DSH_PORT:-3081}"
@@ -113,7 +136,8 @@ CFG_SHARE_DATA_DIR="${FPKCFG_SHARE_DATA_DIR-}"
 # 元数据（双链路：--npm 读 npm-meta.env，默认读 build-meta.env）
 # ----------------------------------------------------------------------------
 if [ "$NPM_MODE" = "1" ]; then
-  _NPM_META="$(ls -1t "$NPM_META_DIR"/npm-app-*/npm-meta.env 2>/dev/null | head -1)"
+  # `|| true`：目录不存在时 ls 返回非 0，set -e 会让脚本在下面清晰报错之前就静默退出
+  _NPM_META="$(ls -1t "$NPM_META_DIR"/npm-app-*/npm-meta.env 2>/dev/null | head -1 || true)"
   if [ -z "$_NPM_META" ] || [ ! -f "$_NPM_META" ]; then
     echo "✗ 未找到 npm-meta.env（请先运行 ./build/build-npm-app.sh [VERSION] 生成 npm 应用体）" >&2
     exit 1
@@ -124,7 +148,7 @@ if [ "$NPM_MODE" = "1" ]; then
   WORK="$(dirname "$_NPM_META")"
   echo "使用 npm 应用体: $APP_ROOT（dsh $PKG_VER | FPK $FPK_VERSION | APP_NAME $APP_NAME）"
 else
-  _META="$(ls -1t "$BUILD_META_DIR"/build*/build-meta.env 2>/dev/null | head -1)"
+  _META="$(ls -1t "$BUILD_META_DIR"/build*/build-meta.env 2>/dev/null | head -1 || true)"
   if [ -z "$_META" ] || [ ! -f "$_META" ]; then
     echo "✗ 未找到 build-meta.env（请先运行 ./build-common.sh 生成 target）" >&2
     exit 1
