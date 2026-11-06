@@ -64,7 +64,7 @@ runs:
     #   命中即可只拉增量，未命中则首建镜像）。
     - name: 缓存官方源码 git 镜像
       id: cache-src-mirror
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: src/deepseek-ai/.cache
         key: dsh-src-mirror-${{ github.repository }}-${{ hashFiles('build/build-config.yaml') }}
@@ -90,7 +90,7 @@ runs:
     #   restore-keys 兜底到最近一次 store，仍能显著减少下载。
     - name: 缓存 pnpm store
       id: cache-pnpm-store
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: assets/pnpm-store
         key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -110,7 +110,7 @@ runs:
     #   仍用 tar 单文件：目录太大/文件太多会让 cache action 同样吃内存。
     - name: 复用已构建的 target（按官方 tag 命中）
       id: cache-target
-      uses: actions/cache@v4
+      uses: actions/cache@v6
       with:
         path: ${{ runner.temp }}/reuse-target.tar.gz
         # v2：修正了 tar 漏 .build-done 的问题；版本前缀保证旧缓存（可能不完整）不再被命中。
@@ -170,7 +170,7 @@ runs:
         echo "✓ 已写入复用缓存文件: $RUNNER_TEMP/reuse-target.tar.gz"
 
     - name: 上传 target（单文件，供 pack-* job 复用，避免重复构建）
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ inputs.artifact-name }}
         path: ${{ env.ARTIFACT_TAR }}

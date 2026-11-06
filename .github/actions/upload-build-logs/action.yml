@@ -9,7 +9,7 @@ runs:
   steps:
     - name: 失败时上传构建日志（诊断）
       if: failure()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ inputs.artifact-name }}
         path: |

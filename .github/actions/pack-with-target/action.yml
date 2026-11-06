@@ -26,7 +26,7 @@ runs:
   using: composite
   steps:
     - name: 下载 target artifact（单文件）
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v8
       with:
         name: ${{ inputs.artifact-name }}
         path: ${{ runner.temp }}
