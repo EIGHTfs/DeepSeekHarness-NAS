@@ -56,10 +56,10 @@ concurrency:
 jobs:
   # ── 群晖 SPK：源码链路（需完整 pnpm install + build + 裁剪）──
   build-target:
-    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 守卫套件（README 覆盖度 / 公共函数唯一性 / 破坏性操作 / 命名 / 构建配置 / 打包不变量）
         run: |
@@ -152,12 +152,12 @@ jobs:
     env:
       ARCH: ${{ inputs.arch }}
     # 构建失败时不跑（口径：宁失败不发缺项；artifact 缺失时本就无法打包）
-    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     permissions:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # ── 打包（复用 build-target 的 artifact，不重复构建）──
       - uses: ./.github/actions/pack-with-target
