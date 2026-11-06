@@ -312,6 +312,12 @@ APP_NAME="__APP_NAME__"
 PID_DIR="${DSH_HOME_PARENT:-$DSH_HOME_DIR}"
 PID_FILE="${PID_DIR}/${APP_NAME}.pid"
 LOG_FILE="${PID_DIR}/${APP_NAME}.log"
+# 崩溃记录（【追加】写、跨启动保留）：任何一次非正常退出都留一条带时间戳的记录 + 日志尾部。
+#   为什么需要：服务日志按运行轮转/覆盖，下一次启动就把现场抹掉 ——
+#   实测踩过：虚拟化 CPU 兼容模式让原生产物触发 trap invalid opcode（SIGILL）并产生 110MB core，
+#   但重启一次后日志只剩新内容，崩溃现场丢失，只能靠 core 反推 ✗
+CRASH_FILE="${PID_DIR}/${APP_NAME}-crash.log"
+LOG_MAX_BYTES=$((5 * 1024 * 1024))   # 单次运行日志上限 5MB，超出先轮转到 .1 再追加
 # node 的临时文件走 TMPDIR；fnOS /tmp 不可写会让 mkdtemp EACCES → 启动崩溃
 # 【2026-10-09 用户口径】临时目录**不再落在应用数据目录里**（<PKG_VAR>/<version>/tmp ✗）：
 #   优先用平台自带的按应用临时目录 ——
@@ -403,6 +409,34 @@ const dshPort = parseInt(process.env.DSH_REPAIR_DSH_PORT || '__DSH_PORT__', 10);
 const proxyPort = parseInt(process.env.DSH_REPAIR_PROXY_PORT || '__PROXY_PORT__', 10);
 const containerPort = parseInt(process.env.DSH_REPAIR_CONTAINER_PORT || '__CONTAINER_PORT__', 10);
 const PID_FILE = process.env.DSH_REPAIR_PID_FILE;
+// 崩溃记录（追加写，跨启动保留）——见 shell 侧 CRASH_FILE 注释：
+//   服务日志按运行轮转/追加，但现场（code/signal/日志尾部）单独留一份，
+//   任何一次非正常退出都能事后追溯，不会被下一次启动覆盖 ✗
+const CRASH_FILE = process.env.DSH_REPAIR_CRASH_FILE;
+const LOG_FILE_PATH = process.env.DSH_REPAIR_LOG_FILE;
+function appendCrash(kind, detail) {
+  if (!CRASH_FILE) return;
+  try {
+    let tail = '(日志不可读)';
+    if (LOG_FILE_PATH) {
+      try {
+        const lines = fs.readFileSync(LOG_FILE_PATH, 'utf-8').split('\n');
+        tail = lines.slice(-25).join('\n');
+      } catch {}
+    }
+    const nodeVer = process.version || '';
+    const block = [
+      '',
+      `===== ${kind} @ ${new Date().toISOString()} =====`,
+      `node=${nodeVer} pid=${process.pid}`,
+      detail,
+      '--- 日志尾部(25 行) ---',
+      tail,
+      '',
+    ].join('\n');
+    fs.appendFileSync(CRASH_FILE, block, 'utf-8');
+  } catch {}
+}
 
 function writeTmpFile(file, content) {
   try {
@@ -967,6 +1001,18 @@ async function main() {
 
   dshProcess.on('exit', (code, sig) => {
     console.log(`[!] DSH 退出 code=${code} signal=${sig}`);
+    // 非正常退出 → 单独落一条崩溃记录（含 code/signal/日志尾部），跨启动保留 ✓
+    if (code !== 0 || sig) {
+      let hint = '';
+      if (sig === 'SIGILL') {
+        hint = 'SIGILL：CPU 指令集不匹配（原生产物用了当前 CPU 不支持的指令，如缺 AVX）'
+          + '\n  → 若在虚拟机里：关闭 CPU 兼容模式（改用 host-passthrough / 明确 baseline），'
+          + '或把虚拟机 CPU 型号设到含该指令集的型号后重启';
+      } else if (code === 137 || sig === 'SIGKILL') {
+        hint = 'SIGKILL/137：多为 OOM killer 或外部强杀（查 dmesg 是否有 oom-kill）';
+      }
+      appendCrash('DSH 异常退出', `exit code=${code} signal=${sig}${hint ? '\n' + hint : ''}`);
+    }
     // 清理 PID 文件：否则异常退出会留下陈旧 pid（status/排障会误导）
     try { fs.unlinkSync(PID_FILE); } catch {}
     setTimeout(() => process.exit(code || 0), 1000);
@@ -1102,6 +1148,13 @@ code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
   // DSM 门户（桌面套件图标）承担登录墙：只有登录 DSM 的用户才进得了门户、点得到套件。
   // 门户打开＝携带 token 的唯一入口：请求无 dsh 会话时 302 到 ?token=...，
   // dsh 收到 token 会自行 303 到干净 URL 并种下 dsh-auth cookie，地址栏 token 随即自动隐藏。
+  // 静态资源判定（2026-11-06 新增）：反代的「未认证 → 302 补 token」只应对【文档导航】生效。
+  //   原来对所有 GET 生效 ✗ → /favicon.svg、/favicon-dark.svg、/apple-touch-icon.png 等
+  //   也被 302 成 HTML 页（实测 HTTP 302 + 0 字节）→ 浏览器把 HTML 当图标 →
+  //   标签页显示成默认白底 ✗（首次访问、清 cookie、隐私窗口时最明显）
+  const isAssetRequest = (rawUrl) =>
+    /\.(svg|png|ico|jpe?g|gif|webp|avif|bmp|css|js|mjs|json|map|woff2?|ttf|otf|eot|txt|xml|webmanifest)$/i
+      .test((rawUrl || '').split('?')[0]);
   const autoAuthRedirect = (clientReq, clientRes) => {
     const sep = clientReq.url.includes('?') ? '&' : '?';
     clientRes.writeHead(302, {
@@ -1138,7 +1191,8 @@ code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
     if (dshToken && clientReq.method === 'GET' &&
         !clientReq.url.includes('token=') &&
         !hasAuth &&
-        !clientReq.headers.upgrade) {
+        !clientReq.headers.upgrade &&
+        !isAssetRequest(clientReq.url)) {
       autoAuthRedirect(clientReq, clientRes);
       return;
     }
@@ -1198,7 +1252,8 @@ code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
       // ===== 认证失效兜底：dsh 返回 401 authentication required =====
       // 覆盖「浏览器残留旧/过期 cookie」场景。改用 302 自动带 token 重新认证。
       if (dshToken && proxyRes.statusCode === 401 && clientReq.method === 'GET' &&
-          !clientReq.url.includes('token=') && !clientReq.headers.upgrade) {
+          !clientReq.url.includes('token=') && !clientReq.headers.upgrade &&
+          !isAssetRequest(clientReq.url)) {
         proxyRes.resume();
         autoAuthRedirect(clientReq, clientRes);
         return;
@@ -1338,8 +1393,26 @@ code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
 
 main().catch(err => {
   console.error('[!] 修复失败:', err.message);
+  // 启动失败也留一条崩溃记录（含堆栈）——否则日志被下次启动轮转后就查不到原因 ✗
+  appendCrash('启动失败（main 抛出）', String((err && err.stack) || err));
   try { fs.unlinkSync(PID_FILE); } catch {}
   process.exit(1);
+});
+
+// 守护进程级兜底（2026-11-06 新增）：
+//   之前没有任何 uncaughtException/unhandledRejection 处理 ✗ →
+//   父进程（反代/容器页宿主）一旦抛出未捕获异常就直接崩栈，日志被截断、
+//   用户只看到"页面打不开"，且下一次启动把现场覆盖掉 ✗
+//   这里统一落崩溃记录后退出，让 DSM 的 status 判定能看到失败，也留得下证据 ✓
+process.on('uncaughtException', (err) => {
+  console.error('[!] 守护进程未捕获异常:', (err && err.stack) || err);
+  appendCrash('守护进程未捕获异常', String((err && err.stack) || err));
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  const text = String((reason && reason.stack) || reason);
+  console.error('[!] 未处理的 Promise 拒绝:', text);
+  appendCrash('未处理的 Promise 拒绝', text);
 });
 DSH_REPAIR_EOF
 )
@@ -1653,6 +1726,12 @@ DSH_WRAPPER_EOF
   ensure_pid_dirs
   ensure_tmpfile_writable "$LOG_FILE" || return 1
   DSH_REPAIR_DIR="$DSH_DIR" \
+  # 日志：超过上限先轮转一次（只留 .1），然后【追加】写 —— 保留上一次运行现场，崩溃排查用
+  if [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE" 2>/dev/null || echo 0)" -gt "$LOG_MAX_BYTES" ]; then
+    mv -f "$LOG_FILE" "${LOG_FILE}.1" 2>/dev/null || true
+  fi
+  printf '\n===== 启动 %s（proxy=%s dsh=%s container=%s）=====\n' \
+    "$(date '+%F %T')" "$PROXY_PORT" "$DSH_PORT" "$CONTAINER_PORT" >> "$LOG_FILE"
   DSH_REPAIR_HOME="$DSH_HOME_DIR" \
   DSH_REPAIR_HOME_PARENT="$DSH_HOME_PARENT" \
   DSH_REPAIR_NODE="$NODE_BIN" \
@@ -1663,7 +1742,9 @@ DSH_WRAPPER_EOF
   DSH_REPAIR_CONTAINER_PORT="$CONTAINER_PORT" \
   DSH_REPAIR_PID_FILE="$PID_FILE" \
   DSH_REPAIR_TMPDIR="$PID_DIR" \
-  nohup "$NODE_BIN" --input-type=commonjs -e "$REPAIR_CODE" > "$LOG_FILE" 2>&1 &
+  DSH_REPAIR_LOG_FILE="$LOG_FILE" \
+  DSH_REPAIR_CRASH_FILE="$CRASH_FILE" \
+  nohup "$NODE_BIN" --input-type=commonjs -e "$REPAIR_CODE" >> "$LOG_FILE" 2>&1 &
   echo "后台启动中，日志: $LOG_FILE"
   # 等端口就绪（首次 tsx 编译较慢，最多 90 秒）
   for i in $(seq 1 45); do
