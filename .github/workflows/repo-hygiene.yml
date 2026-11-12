@@ -1,0 +1,35 @@
+name: Repo hygiene
+
+# 仓库卫生检查：与「构建产物是否正确」无关的那些门卫集中在这里。
+#
+# 为什么不塞进 build.yml：build.yml 的守卫套件（README 覆盖度 / 公共函数唯一性 /
+# 破坏性操作 / 命名 / 构建配置 / 打包不变量）都是「这次构建出来的包对不对」的前置条件，
+# 跟着构建走；而凭据扫描这类检查与产物无关、也不该因为一次纯文档提交就拖住构建。
+# 两者触发条件与失败含义都不同，放一起会让「构建失败」这个信号变得含糊。
+#
+# 当前检查项：
+#   · 凭据扫描（scripts/check-no-secrets.py）：防止把本机填入的 GitHub token 误提交。
+#     背景：scripts/watch-official-local.sh 按部署口径把 token 写成脚本内常量，入库版本留空，
+#     本机部署时手动填入 —— 一旦 git add -A 就会把真实 token 带进公开仓库。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:            # 手动触发，便于随时复核
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repo-hygiene-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 凭据扫描（不得出现令牌或非空 GITHUB_TOKEN）
+        run: python3 scripts/check-no-secrets.py
