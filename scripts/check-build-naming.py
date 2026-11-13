@@ -19,6 +19,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WF = os.path.join(ROOT, ".github", "workflows", "build.yml")
 VERBS = ("build", "pack", "release")
 KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+# yml 里出现的脚本引用：scripts/xxx.sh、./build/xxx.sh、test/xxx.py 等
+SCRIPT_REFERENCE = re.compile(r'(?:^|[\s"\'(`])((?:\./)?(?:scripts|build|test)/[A-Za-z0-9._/-]+\.(?:sh|py))')
 JOB = re.compile(r"^  ([a-z0-9-]+):\s*$", re.M)
 
 
@@ -86,6 +89,54 @@ def _check_build_scripts(v, listing):
                 listing.append("script: build/%s/%s" % (fmt, f))
 
 
+def _tracked_paths():
+    """当前 git 索引里的全部路径（取不到就返回空列表）。"""
+    import subprocess as sp
+    try:
+        out = sp.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, timeout=60)
+    except Exception:
+        return []
+    if out.returncode != 0:
+        return []
+    return [line for line in out.stdout.split("\n") if line]
+
+
+def _build_chain_scripts():
+    """构建链路真正会执行到的脚本集合。
+
+    为什么需要这个边界：本守卫原来对「全仓所有 .sh/.py」要求可执行位与语法，于是
+    scripts/ 下的运维、诊断、探活类脚本（与构建毫无关系）只要缺一个 +x，整条构建就被拦下 ——
+    构建连 build-target 都没进。构建门卫只该管「构建会跑到的东西」。
+
+    集合来源只有两类事实，不含白名单：
+      ① build/ 与 test/ 下的脚本本身就是构建/测试链路；
+      ② workflow 与复合 action 的 yml 里显式出现的 scripts/ 路径（守卫脚本自己被
+         build.yml 调用，所以仍会被检查）。
+    """
+    import glob
+    import subprocess as sp  # noqa: F401  （与其它子检查保持同样的导入风格）
+
+    chain = set()
+    for path in _tracked_paths():
+        if path.startswith(("build/", "test/")) and path.endswith((".sh", ".py")):
+            chain.add(path)
+
+    yaml_patterns = (".github/workflows/*.yml", ".github/actions/*/action.yml")
+    for pattern in yaml_patterns:
+        for yml_path in glob.glob(os.path.join(ROOT, pattern)):
+            try:
+                with open(yml_path, encoding="utf-8") as handle:
+                    content = handle.read()
+            except OSError:
+                continue
+            for match in SCRIPT_REFERENCE.finditer(content):
+                candidate = match.group(1)
+                if candidate.startswith("./"):
+                    candidate = candidate[2:]
+                chain.add(candidate)
+    return chain
+
+
 def _check_exec_bits(v):
     """④ .sh / .py 必须带可执行位。
 
@@ -94,16 +145,22 @@ def _check_exec_bits(v):
     文案时整条流水线失败。故在此断言；vendored 的 tools/ 不参与（第三方脚本不要求）。
     """
     import subprocess as sp
+    build_chain = _build_chain_scripts()
     try:
-        out = sp.run(["git", "ls-files", "-s", "*.sh", "*.py"], cwd=ROOT,
-                     capture_output=True, text=True, timeout=30)
+        out = sp.run(["git", "ls-files", "-s"], cwd=ROOT,
+                     capture_output=True, text=True, timeout=60)
     except Exception:
         return
     if out.returncode != 0:
         return
     for ln in out.stdout.splitlines():
-        mode, path = ln.split(None, 1)[0], ln.split(None, 3)[-1]
+        parts = ln.split(None, 3)
+        if len(parts) < 4:
+            continue
+        mode, path = parts[0], parts[3]
         if path.startswith("tools/"):
+            continue
+        if path not in build_chain:
             continue
         if mode != "100755":
             v.append("%s 缺少可执行位（%s）—— CI 里以 ./ 调用会 Permission denied" % (path, mode))
@@ -116,16 +173,17 @@ def _check_syntax(v):
     而 `bash -n` 失败，但当时的守卫套件不做语法检查，导致这个坏脚本长期留在仓库里没人发现。
     """
     import subprocess as sp
-    sh = sp.run(["git", "ls-files", "*.sh"], cwd=ROOT, capture_output=True, text=True, timeout=30)
-    if sh.returncode == 0:
-        for f in [x for x in sh.stdout.split() if not x.startswith("tools/")]:
+    build_chain = _build_chain_scripts()
+    sh_targets = [f for f in build_chain if f.endswith(".sh") and f.startswith(("scripts/", "build/", "test/"))]
+    py_targets = [f for f in build_chain if f.endswith(".py") and f.startswith(("scripts/", "build/", "test/"))]
+    if True:
+        for f in sh_targets:
             r = sp.run(["bash", "-n", f], cwd=ROOT, capture_output=True, text=True, timeout=30)
             if r.returncode != 0:
                 first = (r.stderr or "").strip().splitlines()
                 v.append("%s 语法错误（bash -n）：%s" % (f, first[0][:90] if first else "?"))
-    py = sp.run(["git", "ls-files", "*.py"], cwd=ROOT, capture_output=True, text=True, timeout=30)
-    if py.returncode == 0:
-        for f in [x for x in py.stdout.split() if not x.startswith("tools/")]:
+    if True:
+        for f in py_targets:
             r = sp.run(["python3", "-c", "import ast,sys;ast.parse(open(sys.argv[1],encoding='utf-8').read())", f],
                        cwd=ROOT, capture_output=True, text=True, timeout=30)
             if r.returncode != 0:
