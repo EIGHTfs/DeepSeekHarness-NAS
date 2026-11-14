@@ -157,6 +157,7 @@ API_KEYS:
 | `scripts/check-destructive-ops.py` | 敏感路径 `rm -rf` 必须 `--one-file-system` |
 | `scripts/check-packaging-invariants.py` | 打包不变量（含生成函数自包含、按声明范围选版本、出货裁剪并入 `_autoLearned`）；`--verbose` 列出每条检查 |
 | `scripts/check-package-parity.py` | 两包结构比对（软链/悬空/manifest）；`<基准包> <候选包> [--verbose] [--baseline-self]` |
+| `scripts/migrate-dsh-home.sh` | 跨版本迁移实例数据（默认含会话）：`list` / `migrate --from <旧版本> --dry-run` / `--confirm` / `prune --version <旧版本> --confirm`；`--config-only` 只迁配置，`--target` 指定目标版本，`--package`/`--group` 指向其它套件；环境变量 `DSH_PACKAGE_NAME` / `DSH_PACKAGE_GROUP` 同义 |
 | `scripts/check-fpk-payload.py` | FPK 载荷（`app.tgz` 不含软链、权限）；`<包路径> [--expect-pkg <名>]` |
 | `test/learner-dryrun.test.sh` | 白名单学习器 dry-run 回归；`bash test/learner-dryrun.test.sh` |
 | `test/prune-release-assets.test.sh` | Release 资产清理回归；`bash test/prune-release-assets.test.sh` |
