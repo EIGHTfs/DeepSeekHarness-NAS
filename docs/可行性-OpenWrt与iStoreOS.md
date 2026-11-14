@@ -49,13 +49,34 @@ https://unofficial-builds.nodejs.org/download/release/v24.22.2/
 
 ## 5. 三条路线与工作量
 
-| 路线 | 需要产出 | 工作量 | 主要风险 |
-|---|---|---|---|
-| **A. Docker 镜像** | `Dockerfile`（多阶段：构建用 + 运行期 slim）+ CI 出镜像 + 文档 | 小（1~2 个文件 + 一个 CI job） | 软路由 Docker 非标配；内存建议 ≥2 GB；镜像体积要控制 |
-| **B. ipk + musl node** | `build/IPK/pack-ipk.sh`、procd init 脚本、musl node 获取、依赖声明、CI job | 中（3~4 个文件，签名/依赖要试） | 体积与 `/overlay` 容量；依赖声明（libc、libstdc++ 等）需实测；iStore 上架规范另需核对 |
-| **C. tar.gz + 安装脚本** | 打包脚本 + 安装/卸载脚本 + procd init | 中小（2 个文件） | 没有包管理器集成，升级靠用户重跑脚本 |
+| 路线 | 需要产出 | 工作量 | 我们的增量价值 | 结论 |
+|---|---|---|---|---|
+| **A. Docker 镜像** | `Dockerfile` + CI 出镜像 + 文档 | 小 | **很低**：容器里「内置 Node / 自启守护 / 套件中心 / 版本隔离 / 产物自检」全部不再需要，只剩「反代那一层 + 几个启动参数」，而这两样第三方镜像已做成 | **不做** |
+| **B. ipk + musl node** | `pack-ipk.sh`、procd init、musl node 获取、依赖声明、CI job | 中 | 中：只有「装成系统服务、要包管理器集成」时才需要 | 需要时再做 |
+| **C. tar.gz + 安装脚本** | 打包脚本 + 安装卸载脚本 + procd init | 中小 | 中：无包管理器也不想要 Docker 的设备 | 需要时再做 |
 
-**建议顺序：A（最快落地，iStoreOS 自带 Docker）→ C（无 Docker 的设备也能用）→ B（要做 iStore 商店才必需）。**
+**结论：Docker 不做。** 容器里直接用官方镜像 `npx @deepseek-ai/dsh` 就能跑，我们那层「内置运行时 + 平台集成 + 数据隔离 + 产物自检」在容器场景里全部失去意义；真正剩下的只有反代与启动参数，而这两样第三方镜像已经实现得够用（下节对比）。同时要注意：**「npx 就够」只对本地或 host 网络成立** —— DSH 默认只绑回环、配置平面 loopback-only，对外暴露仍会撞信任校验（Host/Origin、`crypto.randomUUID`），所以容器用户迟早要补一层反代。
+
+### 5.1 第三方 Docker 镜像的对外访问方案对比（实测源码）
+
+同一件事（让容器外的人安全地用上 DSH），三种做法差异很大。下表取自各自仓库的实际实现，不是宣传口径：
+
+| 维度 | 本项目（套件） | runzhliu（★172，MIT） | solidlime（★0） | gehennawu（★4，MIT） |
+|---|---|---|---|---|
+| DSH 监听 | 127.0.0.1 | 127.0.0.1（patch 里写死） | **0.0.0.0** | 127.0.0.1 |
+| 对外暴露方式 | 自研反代（门户端口） | 入口脚本做薄中继；默认只发布到宿主回环，LAN 走可选的 `compose.lan.yaml` 网关 | 容器端口直接映射 | 反代/网关 + authelia 认证 |
+| 认证 | 启动 token 换签名 cookie + 局域网硬闸 | launch token + 签名 cookie；LAN 网关再叠 Basic Auth | 无（依赖端口映射边界） | authelia 托管 |
+| Host/Origin | 反代改写 Origin 为回环 origin 后转发 | **不改写**：网关保留 Host，由 DSH 自己的 Host/Origin 校验把关 | 未见处理 | `trusted-host` 白名单 |
+| HTTPS | 无（明文 HTTP） | 有（Caddy 终止 TLS，仅 LAN 覆盖层） | 无 | 有（authelia 侧） |
+| 静态资源放行 | 有（否则 favicon 被 302 成 HTML） | 不涉及（无这层） | 不涉及 | 不涉及 |
+| 容器页 | 有（iframe 外壳端口） | 有 noVNC 桌面（另一用途：浏览器接管） | 无 | 无 |
+| 实现体量 | 反代逻辑内嵌在 2000+ 行的启动脚本里 | 一个 `.cjs` 中继 + 一份 Caddy 配置 | Dockerfile + entrypoint 极简 | 完整 authelia 栈 |
+
+三点值得吸收：
+
+1. **「默认只绑宿主回环、LAN 访问作为显式 opt-in」** 是更安全的默认。我们的反代默认监听全网，靠内部硬闸兜底——功能等价，但默认姿态偏激进。
+2. **用现成组件做认证与 TLS**（Caddy / authelia）比自己写反代认证薄得多；我们自研的好处是功能面全（token 门户、静态资源放行、容器页），代价是维护成本与「没有 HTTPS」这个短板。
+3. **把「不要直接把端口暴露到 LAN」写成明文警告**放进 README。我们的等价约束目前在文档里是靠行为说明的，没有这么醒目。
 
 ## 6. 尚未验证的项（诚实标注）
 
