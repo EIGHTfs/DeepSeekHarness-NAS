@@ -193,6 +193,7 @@ API_KEYS:
 - [构建与发布指南](docs/构建与发布指南.md) — 三脚本流程、CI、看门狗、架构参数
 - [打包规范](docs/打包规范.md) — SPK/FPK 结构与打包不变量
 - [群晖资源限制](docs/群晖资源限制.md) — DSM 下 taskset 绑核 / MemoryLimit / cgroup 归属
+- [可行性-OpenWrt与iStoreOS](docs/可行性-OpenWrt与iStoreOS.md) — 换平台打包的实测事实与路线
 - [故障排查指南](docs/故障排查指南.md) — 症状 → 判据 → 处置
 - [CHANGELOG](docs/CHANGELOG.md) — 版本记录
 

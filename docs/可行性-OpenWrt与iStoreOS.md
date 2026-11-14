@@ -1,0 +1,94 @@
+# 可行性：OpenWrt / iStoreOS 打包支持
+
+> 结论先行：**能做，但不是 spk/fpk 那套体系**。OpenWrt 系用 opkg（`ipk`），且 iStoreOS 当前基线正是 OpenWrt 24.10 —— 恰好是仍用 `ipk` 的那一代。技术上最大的障碍（musl libc）有官方现成解，真正的成本在「体积」和「init/UI 体系差异」。
+
+## 1. 平台基线（实测，2026-11-14）
+
+| 事实 | 证据 |
+|---|---|
+| OpenWrt 24.10.x 用 **ipk** | `downloads.openwrt.org/releases/24.10.8/targets/x86/64/packages/` 下是 `Packages` + `*_x86_64.ipk` |
+| OpenWrt 25.12.x 已切 **apk** | 同路径 `25.12.6/` 下全是 `*.apk`（Alpine 格式），无 `Packages` 索引 |
+| **iStoreOS 基线 = OpenWrt 24.10** | 官方仓库 `https://github.com/istoreos/istoreos` 自述「目前活跃的分支是 istoreos-24.10」 |
+| iStore 软件中心 = 标准 OpenWrt 包机制 | 官方仓库 `https://github.com/istoreos/istore` 自述「OpenWrt 标准的软件中心，纯脚本实现，只依赖 OpenWrt 标准组件」 |
+
+含义：**先按 `ipk` 做**（iStoreOS 与 24.10 系 OpenWrt 通吃）；等 iStoreOS 升级到 25.12 基线再补 `apk`。
+
+## 2. 我们这个包的现状（实测）
+
+| 项 | 实测值 | 对移植的含义 |
+|---|---|---|
+| node 二进制 | 含 `ld-linux-` 与 `GLIBC_2.x` 符号（glibc 版） | OpenWrt 默认 musl → **直接跑不了** |
+| 除 node 外的 ELF 二进制 | **0 个**（全树扫过，只有 JS/sh/md） | 关键有利事实：**只要换掉 node 就能跑**，不涉及其他原生依赖 |
+| 原生模块（`*.node`） | **0 个** | 同上，无 ABI 雷区 |
+| 未压缩体积 | ≈740 MB（node_modules 355 + packages 227 + bin 122 + pnpm 21 + apps 14） | 软路由 `/overlay` 常 1~4 GB → 需裁剪或外置；spk 压缩后仅 165 MB，说明压缩比很高但**安装后仍要占满这份体积** |
+
+## 3. musl 版 Node 有官方现成构建（最大的技术障碍已被消除）
+
+Node 官方在 `unofficial-builds` 提供 musl 构建，实测存在：
+
+```
+https://unofficial-builds.nodejs.org/download/release/v24.22.2/
+  node-v24.22.2-linux-x64-musl.tar.xz      33.4 MB
+  node-v24.22.2-linux-arm64-musl.tar.xz    32.9 MB
+（另有 glibc-217 变体，供老 glibc 系统用）
+```
+
+所以不需要自己交叉编译 Node，也不需要 Alpine 的 Node 包 —— 用官方 musl 构建替换 `target/bin/node` 即可。
+
+## 4. 平台差异清单（需要动的代码）
+
+| 项 | 群晖/飞牛现状 | OpenWrt / iStoreOS | 处理 |
+|---|---|---|---|
+| 包格式 | spk / fpk | **ipk**（24.10 系）；25.12 起 apk | 新增打包脚本；`ipk` 可用 `ipkg-build` 或手工 `tar` 组装 |
+| 服务管理 | systemd unit（`pkg-<包>.service`） | **procd**（`/etc/init.d/<name>` + `procd_open_instance`） | 新写 init 脚本；`start.sh` 里的启停逻辑可复用，替换外层 |
+| 入口 | 套件中心图标 + `ui/config` | 无套件中心；LuCI 页面或直接端口 | 最省事：只提供端口 + 文档；要做体验则写 LuCI 页面 |
+| 运行用户 | `run-as: package` 套件用户 | 基本 root 单用户 | 需重审 `start.sh` 里所有 chown/属主假设 |
+| libc | glibc | musl | 换 musl 版 node（见上） |
+| 存储 | 卷（容量大） | `/overlay` 常 1~4 GB | 依赖现有裁剪（`build/prune-target.sh`）把体积压下来 |
+| 端口/防火墙 | 平台已放行反代端口 | 需 `uci` 放行或提示用户在 LuCI 开端口 | init 脚本里加 `uci` 规则或文档说明 |
+
+## 5. 三条路线与工作量
+
+| 路线 | 需要产出 | 工作量 | 主要风险 |
+|---|---|---|---|
+| **A. Docker 镜像** | `Dockerfile`（多阶段：构建用 + 运行期 slim）+ CI 出镜像 + 文档 | 小（1~2 个文件 + 一个 CI job） | 软路由 Docker 非标配；内存建议 ≥2 GB；镜像体积要控制 |
+| **B. ipk + musl node** | `build/IPK/pack-ipk.sh`、procd init 脚本、musl node 获取、依赖声明、CI job | 中（3~4 个文件，签名/依赖要试） | 体积与 `/overlay` 容量；依赖声明（libc、libstdc++ 等）需实测；iStore 上架规范另需核对 |
+| **C. tar.gz + 安装脚本** | 打包脚本 + 安装/卸载脚本 + procd init | 中小（2 个文件） | 没有包管理器集成，升级靠用户重跑脚本 |
+
+**建议顺序：A（最快落地，iStoreOS 自带 Docker）→ C（无 Docker 的设备也能用）→ B（要做 iStore 商店才必需）。**
+
+## 6. 尚未验证的项（诚实标注）
+
+1. musl 版 node 在真实 OpenWrt/iStoreOS 上的运行情况 —— 未实测，只在文件层面确认了「无原生模块」这个有利前提。
+2. iStoreOS 是否默认内置 Docker、以及 Docker 的存储驱动/可用空间 —— 未核实（官方仓库只确认基线版本）。
+3. iStore 应用上架的具体规范（元数据格式、审核流程）—— 未细看 `istoreos/istore` 的实现。
+4. `ipk` 的依赖声明需要哪些（musl、libstdc++、zlib 等）—— 需在目标固件上 `ldd` 实测。
+5. OpenWrt 的 `procd` 与现有 `start.sh` 的进程模型能否直接对接（尤其「父进程守护 + 子进程」结构）—— 需实机验证。
+
+## 7. 建议的最小验证（成本最低、信息量最大）
+
+在任意一台 x86_64 的 OpenWrt 24.10 / iStoreOS 上做四步，就能把上面 5 个未验证项砍掉大半：
+
+```bash
+# 1) 换 musl node
+curl -LO https://unofficial-builds.nodejs.org/download/release/v24.22.2/node-v24.22.2-linux-x64-musl.tar.xz
+tar -xJf node-v24.22.2-linux-x64-musl.tar.xz
+./node-v24.22.2-linux-x64-musl/bin/node -v      # 期望 v24.22.2
+
+# 2) 把现有 target 解到 /opt 试跑（不带 systemd，直接前台）
+#    重点看：能否加载模块、能否绑端口、日志与权限是否报错
+cd <解开的 target> && ./bin/node --version && ./bin/dsh --version
+
+# 3) 用 musl node 起真服务（等价 CI 里 start.sh 的核心动作）
+<musl-node> apps/cli/lib/bin.js web --host 127.0.0.1 --port 3080 --no-open
+
+# 4) 记录三件事：内存峰值、/overlay 占用、缺哪些共享库
+```
+
+这四步跑通，路线 B/C 才值得投入；跑不通就要先解决共享库或裁剪问题，再谈打包。
+
+## 8. 相关
+
+- 现有打包规范：[打包规范](打包规范.md)
+- 构建与发布流程：[构建与发布指南](构建与发布指南.md)
+- 群晖侧资源限制（换平台后不再适用，供参考）：[群晖资源限制](群晖资源限制.md)
