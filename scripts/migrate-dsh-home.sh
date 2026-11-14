@@ -38,8 +38,8 @@ readonly CONFIG_ENTRIES=(
 )
 readonly SESSIONS_ENTRY="sessions"
 
-# 0.2.1 起会话存储格式由 v3 改为 v4：跨这道线迁 sessions 有读不出来的风险
-readonly SESSIONS_FORMAT_BREAK_VERSION="0.2.1"
+# 会话格式无需本脚本关心：DSH 自带 v0→v4 的迁移链，读取旧格式时自动转换
+#   （catalog 里 recovery=recoverable / validation=transformed），搬文件即可
 
 ACTION="${1:-}"
 shift || true
@@ -274,14 +274,8 @@ cmd_migrate() {
   source_links="$(count_symlinks "$source_dsh")"
   echo "  源规模: $source_files 个文件 / $source_size / $source_links 条软链"
 
-  # 跨会话格式分界线提醒：只提醒，不阻止
-  local source_minor target_minor
-  source_minor="${FROM_VERSION%%.*}."
-  source_minor="${FROM_VERSION#*.}"; source_minor="${source_minor%%.*}"
-  target_minor="${CURRENT_VERSION#*.}"; target_minor="${target_minor%%.*}"
-  local break_minor="${SESSIONS_FORMAT_BREAK_VERSION#*.}"; break_minor="${break_minor%%.*}"
-  if [ "$WITH_SESSIONS" = "1" ] && [ "${source_minor:-0}" -lt "${break_minor:-0}" ] 2>/dev/null; then
-    echo "  ⚠ 源版本早于 ${SESSIONS_FORMAT_BREAK_VERSION}（会话格式 v3），目标可能是 v4 —— 旧会话可能读不出来"
+  if [ "$WITH_SESSIONS" = "1" ] && [ -d "$source_dsh/$SESSIONS_ENTRY" ]; then
+    echo "  会话旧格式无需转换：DSH 读取时自动迁移（v0→v4 全链路）"
   fi
 
   # 目标现状
