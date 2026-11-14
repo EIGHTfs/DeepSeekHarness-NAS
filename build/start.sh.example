@@ -1758,13 +1758,16 @@ DSH_WRAPPER_EOF
   export PATH="$HOME/.local/bin:$PATH"
   ensure_pid_dirs
   ensure_tmpfile_writable "$LOG_FILE" || return 1
-  DSH_REPAIR_DIR="$DSH_DIR" \
   # 日志：超过上限先轮转一次（只留 .1），然后【追加】写 —— 保留上一次运行现场，崩溃排查用
+  #   ⚠ 这段必须放在下面那段 env 续行块**之前**：续行块中间不能插注释或其它语句，
+  #   否则 `\` 续行会在注释处中断，导致 DSH_REPAIR_* 大部分变量根本没传给 node
+  #   （症状：node 里 dshDir=undefined → 启动期软链自愈失效 → ERR_MODULE_NOT_FOUND）。
   if [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE" 2>/dev/null || echo 0)" -gt "$LOG_MAX_BYTES" ]; then
     mv -f "$LOG_FILE" "${LOG_FILE}.1" 2>/dev/null || true
   fi
   printf '\n===== 启动 %s（proxy=%s dsh=%s container=%s）=====\n' \
     "$(date '+%F %T')" "$PROXY_PORT" "$DSH_PORT" "$CONTAINER_PORT" >> "$LOG_FILE"
+  DSH_REPAIR_DIR="$DSH_DIR" \
   DSH_REPAIR_HOME="$DSH_HOME_DIR" \
   DSH_REPAIR_HOME_PARENT="$DSH_HOME_PARENT" \
   DSH_REPAIR_NODE="$NODE_BIN" \
