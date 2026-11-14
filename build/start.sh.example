@@ -1614,6 +1614,39 @@ cmd_check() {
     echo "   （加 --deep 可逐个入口做 import 探测，较慢）"
   fi
   echo
+
+  # ⑥ @deepseek-ai 软链完整性（这一层整批丢失 → 运行时逐个 ERR_MODULE_NOT_FOUND）
+  #   与 ⑤ 的分工：⑤ 扫 .pnpm 里被裁剪留下的悬空软链；⑥ 扫「运行时真正 import 的那一层」。
+  #   预期断链：libreoffice-kit 的 win32/darwin/wasm 变体（Linux 不加载，打包时裁掉属正常）。
+  echo "⑥ @deepseek-ai 软链完整性"
+  local link_dir="$DSH_DIR/node_modules/@deepseek-ai"
+  # 实测基线：0.2.1-alpha.2 为 356 条、0.2.2 系列 398~400 条；低于下限即视为整批丢失
+  local link_floor=350
+  local kit_expected_pattern='/libreoffice-kit-(wasm|win32-[a-z0-9]+|darwin-[a-z0-9]+)$'
+  if [ -d "$link_dir" ]; then
+    local link_total link_broken link_expected link_unexpected
+    link_total=$(find "$link_dir" -maxdepth 1 -type l 2>/dev/null | wc -l | tr -d ' ')
+    link_broken=$(find "$link_dir" -maxdepth 1 -type l -xtype l 2>/dev/null | wc -l | tr -d ' ')
+    link_expected=$(find "$link_dir" -maxdepth 1 -type l -xtype l 2>/dev/null | grep -cE "$kit_expected_pattern" || true)
+    link_unexpected=$((link_broken - link_expected))
+    echo "   软链 $link_total 条；断链 $link_broken 条（其中预期 $link_expected 条）"
+    if [ "$link_total" -lt "$link_floor" ]; then
+      echo "   ✗ 软链数异常偏低（$link_total < 下限 $link_floor）：疑似整批丢失，运行时会报 ERR_MODULE_NOT_FOUND"
+      echo "       修复：重装套件（软链由安装包提供）；并核对安装包 sha256 与 Release 公布值一致"
+      rc=1
+    elif [ "$link_unexpected" -gt 0 ]; then
+      echo "   ✗ 意外断链 $link_unexpected 条（已排除预期的 $link_expected 条）"
+      find "$link_dir" -maxdepth 1 -type l -xtype l 2>/dev/null |
+        grep -vE "$kit_expected_pattern" | head -8 | sed "s/^/       /"
+      echo "       修复：重装套件；若持续出现请附本段输出提 issue"
+      rc=1
+    else
+      echo "   ✓ 软链齐全，无意外断链（$link_expected 条 libreoffice-kit 非 Linux 变体属预期裁剪）"
+    fi
+  else
+    echo "   ⚠ 未找到 $link_dir（依赖尚未安装？）"
+  fi
+  echo
   echo "═══════════════════════════════════════"
   if [ "$rc" = 0 ]; then echo "自检结果: 无致命项"; else echo "自检结果: 存在致命项（见上方 ✗）"; fi
   return "$rc"
