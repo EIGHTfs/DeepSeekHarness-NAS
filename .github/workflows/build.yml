@@ -259,7 +259,7 @@ jobs:
 
       - name: 发布源码链路 Release（tag=官方 tag）
         if: steps.check.outputs.HAS_FILES == 'yes'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.reltag.outputs.TAG }}
           # 标题文案由 build/release-note.sh 的 title() 统一控制，workflow 不写字面文案
