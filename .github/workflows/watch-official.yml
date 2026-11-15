@@ -34,11 +34,24 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
-          API="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY"
+          # 内置变量偶发为空时会因为 set -u 立刻退出（现象：步骤 0.04 秒失败、无任何输出）。
+          # 这里先把它们的形态打出来，下次再看日志就能直接分辨「环境变量缺失」还是「真逻辑错」。
+          echo "上下文: api=${GITHUB_API_URL:-<空>} repo=${GITHUB_REPOSITORY:-<空>} event=${GITHUB_EVENT_NAME:-<空>}"
+          API="${GITHUB_API_URL:?GITHUB_API_URL 未定义}/repos/${GITHUB_REPOSITORY:?GITHUB_REPOSITORY 未定义}"
           AUTH=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json")
 
           # ① 官方最新 tag（api.github.com，匿名亦可；脚本自身不读凭据文件）
-          OFFICIAL="$(bash scripts/fetch-dsh-latest.sh --print-tag 2>/dev/null | tail -1)"
+          # 诊断诊断：脚本约定「提示走 stderr」，所以不能 2>/dev/null —— 否则失败原因全被吞掉，
+          # 只能看到 "Process completed with exit code 1"（实测踩过：间歇失败但无从定位）。
+          # 同时用 || true 兜住：脚本以退出码表达「取不到 tag」，那是可跳过状态，不该让整步变红。
+          _FETCH_ERR="$(mktemp)"
+          _FETCH_OUT="$(bash scripts/fetch-dsh-latest.sh --print-tag 2>"$_FETCH_ERR" || true)"
+          OFFICIAL="$(printf '%s\n' "$_FETCH_OUT" | tail -1)"
+          if [ -s "$_FETCH_ERR" ]; then
+            echo "— 取 tag 的诊断输出（脚本约定提示走 stderr）:"
+            tail -3 "$_FETCH_ERR" | sed 's/^/    /'
+          fi
+          rm -f "$_FETCH_ERR"
           echo "官方最新 tag: ${OFFICIAL:-（取不到）}"
           if [ -z "$OFFICIAL" ]; then
             echo "… 取不到官方 tag（网络/限流）→ 本次跳过，等下一轮"
