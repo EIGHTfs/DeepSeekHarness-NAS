@@ -1,0 +1,139 @@
+name: Rebuild many (batch)
+
+# 批量重建多个官方 tag 的安装包（每个 tag × 每个架构各一个 job）。
+#
+# 为什么要单独一个工作流：
+#   1. build.yml 一次只处理一个 tag/架构，手工点 N 次既慢又容易漏；
+#   2. 需要「多个 tag 并行、但同一 tag 不开两次」的并发语义 —— 这靠 build.yml 的
+#      concurrency（已按 tag 隔离）+ 本工作流的 matrix 一起实现；
+#   3. 批量任务要能一眼看出「哪些 tag 成功、哪些失败」，所以这里带一个汇总 job。
+#
+# 典型用法（Actions 页 → Rebuild many (batch) → Run workflow）：
+#   tags:  dsh-v0.2.2-rc.3,dsh-v0.2.2-rc.2      ← 逗号或换行分隔
+#   arches: both                                  ← both / x86_64 / arm64
+#
+# 执行顺序：严格串行（max-parallel: 1）。按「tag 优先」排列：
+#   tag1/x86_64 → tag1/arm64 → tag2/x86_64 → tag2/arm64 …
+# 每个组合约十几分钟，中途失败不会影响后续组合（fail-fast: false），
+# 但失败会停在该组合，不会自动跳过。
+#
+# 注意：同一 tag 的同一架构重复跑会取消前一次（build.yml 的 concurrency 语义），
+#   所以不要把同一个 tag 重复写进 tags 里。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: '要重建的官方 tag 列表（逗号或换行分隔，如 dsh-v0.2.2-rc.3,dsh-v0.2.2-rc.2）'
+        required: true
+        type: string
+      arches:
+        description: '架构范围'
+        required: false
+        type: choice
+        options: ['both', 'x86_64', 'arm64']
+        default: 'both'
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  # 批量工作流自身也串行：避免两次批量同时压满 runner 配额
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: 生成重建矩阵
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.make.outputs.matrix }}
+      count: ${{ steps.make.outputs.count }}
+    steps:
+      - name: 解析 tag 与架构，生成 matrix
+        id: make
+        shell: bash
+        env:
+          RAW_TAGS: ${{ inputs.tags }}
+          ARCHES: ${{ inputs.arches }}
+        run: |
+          set -euo pipefail
+          # 逗号或换行都当作分隔符；去空白、去空项、去重（保持首次出现顺序）
+          cleaned="$(printf '%s' "$RAW_TAGS" | tr ',' '\n' | tr -d '\r' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | awk 'NF' | awk '!seen[$0]++')"
+          if [ -z "$cleaned" ]; then
+            echo "✗ tags 为空，无法批量重建" >&2
+            exit 1
+          fi
+
+          case "$ARCHES" in
+            both) arch_list="x86_64 arm64" ;;
+            x86_64) arch_list="x86_64" ;;
+            arm64) arch_list="arm64" ;;
+            *) echo "✗ 未知 arches: $ARCHES" >&2; exit 1 ;;
+          esac
+
+          # 生成 {"include":[{"tag":...,"arch":...}, ...]}
+          payload_file="$(mktemp)"
+          printf '{"include":[' > "$payload_file"
+          first=1
+          count=0
+          for tag in $cleaned; do
+            for arch in $arch_list; do
+              [ "$first" = "1" ] || printf ',' >> "$payload_file"
+              printf '{"tag":"%s","arch":"%s"}' "$tag" "$arch" >> "$payload_file"
+              first=0
+              count=$((count + 1))
+            done
+          done
+          printf ']}' >> "$payload_file"
+          matrix="$(cat "$payload_file")"
+          rm -f "$payload_file"
+
+          echo "矩阵条目数: $count"
+          printf '%s\n' "$cleaned" | sed 's/^/  tag: /'
+          echo "架构: $arch_list"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+  rebuild:
+    name: 重建 ${{ matrix.tag }} / ${{ matrix.arch }}
+    needs: plan
+    strategy:
+      fail-fast: false
+      # 严格串行：一次只跑一个组合，跑完再跑下一个。
+      #   为什么不用并行（这条是硬要求，别改成 >1）：
+      #     ① 架构并行曾出过真实事故 —— 两个架构共用同一份不含架构的 target 缓存，
+      #        先跑完的把对方产物写了进去，最终发布出去的包里 node 架构是错的；
+      #        缓存键虽然已修，但这类缺陷「装得上、能启动、哈希正常」，暴露代价太大，不再并行冒险。
+      #     ② 并行会抢 runner 配额与缓存锁，失败时日志交错，排查成本高。
+      #     ③ 串行慢但可预测：一个组合约十几分钟，失败即停在该组合，位置清楚。
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    # 复用主构建工作流（它已支持 workflow_call）
+    uses: ./.github/workflows/build.yml
+    with:
+      dsh_tag: ${{ matrix.tag }}
+      arch: ${{ matrix.arch }}
+    secrets: inherit
+
+  summary:
+    name: 批量重建结果
+    needs: [plan, rebuild]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 汇总
+        shell: bash
+        env:
+          PLAN_COUNT: ${{ needs.plan.outputs.count }}
+          RESULT: ${{ needs.rebuild.result }}
+        run: |
+          echo "计划重建组合数: ${PLAN_COUNT:-未知}"
+          echo "rebuild job 整体结论: ${RESULT:-未知}"
+          if [ "${RESULT}" = "success" ]; then
+            echo "✓ 全部组合构建成功"
+          else
+            echo "⚠ 有组合未成功（${RESULT}）—— 到 Actions 页面按 job 名逐个看是哪一组失败"
+            # 不在这里 exit 1：失败信息已在各 job 里，这里只做汇总提示，避免重复红
+          fi

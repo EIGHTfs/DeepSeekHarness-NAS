@@ -21,18 +21,35 @@ on:
   push:
     tags: ['v*']              # 打 v* tag 自动触发（并发布 Release）
 
+  # 供批量工作流（rebuild-many.yml）以 matrix 逐组合调用。
+  #   为什么需要：批量重建多个官方 tag 时，一个 tag 一个 job 最省事；
+  #   若改成「一个 job 内循环多个 tag」，每轮都要重置工作区，既慢又容易残留。
+  #   注意：workflow_call 的 inputs 只能声明为 string/boolean/number（无 choice）。
+  workflow_call:
+    inputs:
+      dsh_tag:
+        description: '官方 tag（如 dsh-v0.2.2-rc.3）；留空 = 官方最新'
+        required: false
+        type: string
+        default: ''
+      arch:
+        description: '目标架构：x86_64 或 arm64'
+        required: false
+        type: string
+        default: 'x86_64'
+
 # 创建/更新 Release 需要写权限
 permissions:
   contents: write
   # 方案 B（2026-10-09 用户定）：构建失败时自动学习缺失依赖并【入库】，随后 dispatch 一次重建。
   # dispatch workflow 需要 actions: write。
   actions: write
-# 用户口径（2026-10-04）：**每次新构建开始前，把上一个正在跑的停掉** ——
-# 保证同一时刻只有一个构建（禁并发），也省 runner 分钟（比两个并行更省）。
-# 注：曾用 cancel-in-progress: false 试过"排队"，实测会取消正在跑的运行且不排队，故按用户口径
-# 明确改为 true（新运行主动停掉旧的）。
+# 用户口径（2026-10-04）：同一份构建不重复跑 —— 新运行主动停掉还在跑的同一个。
+# 但「同一个」的粒度必须含 tag：不同官方 tag 是不同产物，曾经因为 group 只有 arch，
+#   批量重建多个 tag 时后来的直接把前面的取消掉（实测：连发两个 tag，只剩最后一个）。
+# 故 group 里加入 tag（dispatch 用 inputs.dsh_tag；push/tag 触发用 ref_name 兜底）。
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.arch }}
+  group: ${{ github.workflow }}-${{ inputs.arch || 'x86_64' }}-${{ inputs.dsh_tag || github.ref_name }}
   cancel-in-progress: true
 
 
