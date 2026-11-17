@@ -5,6 +5,10 @@
 #  用法：bash scripts/test-sandbox-fix.sh
 # ============================================================
 
+
+# 平台路径与 pnpm 入口统一从共享库取
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/platform-paths.sh"
+PNPM_ENTRY="$(resolve_pnpm_entry)" || { echo "✗ 未找到 pnpm 入口" >&2; exit 1; }
 set -u
 
 STORE="/vol2/1000/DeepSeek Harness/.pnpm-store/v11"
@@ -57,14 +61,14 @@ echo ""
 
 # 尝试使用不同 HOME 目录
 echo "测试 1: 默认 HOME..."
-node /root/.cache/node/corepack/v1/pnpm/11.7.0/dist/pnpm.mjs store path 2>&1 | head -5
+node "${PNPM_ENTRY:?pnpm 入口未解析}" store path 2>&1 | head -5
 
 echo ""
 echo "测试 2: 使用 /tmp 作为 HOME..."
-TEMP_HOME="/tmp/dsh-test-home"
+TEMP_HOME="$(platform_tmp_dir dsh)" || { echo "✗ 无法创建临时目录" >&2; exit 1; }
 mkdir -p "$TEMP_HOME"
-echo "store.path=/tmp/pnpm-store-test" > "$TEMP_HOME/.npmrc"
-HOME="$TEMP_HOME" node /root/.cache/node/corepack/v1/pnpm/11.7.0/dist/pnpm.mjs store path 2>&1
+echo "store.path=${PLATFORM_TMP_ROOT}/pnpm-store-test" > "$TEMP_HOME/.npmrc"
+HOME="$TEMP_HOME" node "${PNPM_ENTRY:?pnpm 入口未解析}" store path 2>&1
 
 # 4. 解决方案建议
 echo ""
@@ -76,9 +80,9 @@ echo "  位置: DSH 配置文件或启动参数"
 echo ""
 echo "方案 B: 使用替代 pnpm store 路径"
 echo "  1. 创建临时 store:"
-echo "     mkdir -p /tmp/pnpm-store"
+echo "     mkdir -p ${PLATFORM_TMP_ROOT}/pnpm-store"
 echo "  2. 配置 .npmrc:"
-echo "     echo 'store.path=/tmp/pnpm-store' > ~/.npmrc"
+echo "     echo 'store.path=${PLATFORM_TMP_ROOT}/pnpm-store' > ~/.npmrc"
 echo "  3. 运行安装命令"
 echo ""
 echo "方案 C: 使用 workspace-write 沙盒模式"

@@ -5,6 +5,10 @@
 #  用法：bash scripts/setup-pnpm-store.sh [--apply]
 # ============================================================
 
+
+# 平台路径与 pnpm 入口统一从共享库取
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/platform-paths.sh"
+PNPM_ENTRY="$(resolve_pnpm_entry)" || { echo "✗ 未找到 pnpm 入口" >&2; exit 1; }
 set -u
 
 NEW_STORE_DIR="${HOME}/.local/share/pnpm/store"
@@ -81,7 +85,7 @@ if $APPLY; then
     
     # 验证配置
     log "验证配置..."
-    if node /root/.cache/node/corepack/v1/pnpm/11.7.0/dist/pnpm.mjs store path 2>&1 | grep -q "$NEW_STORE_DIR"; then
+    if node "${PNPM_ENTRY:?pnpm 入口未解析}" store path 2>&1 | grep -q "$NEW_STORE_DIR"; then
         log "✓ 配置成功！pnpm store 已切换到: $NEW_STORE_DIR"
     else
         log "⚠ 配置可能未生效，请手动检查"
@@ -103,7 +107,7 @@ else
     log "  echo 'store.path=${NEW_STORE_DIR}' >> ~/.npmrc"
     log ""
     log "  # 3. 验证配置"
-    log "  node /root/.cache/node/corepack/v1/pnpm/11.7.0/dist/pnpm.mjs store path"
+    log "  node ${PNPM_ENTRY} store path"
     log ""
     log "或使用一键命令："
     log "  bash scripts/setup-pnpm-store.sh --apply"
@@ -112,4 +116,4 @@ fi
 section "3. 完成"
 log ""
 log "配置完成后，重新运行插件安装命令即可。"
-log "日志文件: /tmp/pnpm-store-setup-$(date +%Y%m%d-%H%M%S).log"
+log "日志文件: ${PLATFORM_TMP_ROOT}/pnpm-store-setup-$(date +%Y%m%d-%H%M%S).log"

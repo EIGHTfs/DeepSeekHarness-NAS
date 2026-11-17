@@ -1,10 +1,14 @@
 #!/bin/bash
 # 最终安装测试 - 使用临时 pnpm store
+
+# 平台路径与 pnpm 入口统一从共享库取
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/platform-paths.sh"
+PNPM_ENTRY="$(resolve_pnpm_entry)" || { echo "✗ 未找到 pnpm 入口" >&2; exit 1; }
 set -u
 
 PLUGIN="dsh-edit-diff"
-TEMP_STORE="/tmp/pnpm-store-final"
-TEMP_HOME="/tmp/dsh-home-final"
+TEMP_STORE="$(platform_tmp_dir pnpm)" || { echo "✗ 无法创建临时目录" >&2; exit 1; }
+TEMP_HOME="$(platform_tmp_dir dsh)" || { echo "✗ 无法创建临时目录" >&2; exit 1; }
 
 # 创建目录
 mkdir -p "$TEMP_STORE" "$TEMP_HOME"
@@ -31,7 +35,7 @@ echo "执行安装命令..."
 echo ""
 
 # 执行安装
-if HOME="$TEMP_HOME" node /root/.cache/node/corepack/v1/pnpm/11.7.0/dist/pnpm.mjs add "$PLUGIN" 2>&1; then
+if HOME="$TEMP_HOME" node "${PNPM_ENTRY:?pnpm 入口未解析}" add "$PLUGIN" 2>&1; then
     echo ""
     echo "✓ 安装成功！"
     echo "请检查 ~/.dsh/profiles/web/package.json 确认插件已添加"

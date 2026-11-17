@@ -5,12 +5,15 @@
 #  用法：bash scripts/test-pnpm-store-fix.sh [--fix]
 # ============================================================
 
+
+# 平台路径与 pnpm 入口统一从共享库取
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/platform-paths.sh"
+PNPM_ENTRY="$(resolve_pnpm_entry)" || { echo "✗ 未找到 pnpm 入口" >&2; exit 1; }
 set -u
 
 STORE_PATH="/vol2/1000/DeepSeek Harness/.pnpm-store"
 INDEX_DB="${STORE_PATH}/v11/index.db"
-LOG_FILE="/tmp/pnpm-store-diag-$(date +%Y%m%d-%H%M%S).log"
-
+LOG_FILE="$(platform_tmp_file pnpm-store-diag)" || { echo "✗ 无法创建日志文件" >&2; exit 1; }
 # 颜色输出
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -114,7 +117,7 @@ if $FIX_MODE; then
     # 尝试 3: 测试 pnpm 命令
     log ""
     log "尝试 3: 测试 pnpm store path..."
-    if node /root/.cache/node/corepack/v1/pnpm/11.7.0/dist/pnpm.mjs store path 2>&1; then
+    if node "${PNPM_ENTRY:?pnpm 入口未解析}" store path 2>&1; then
         log "${GREEN}✓${NC} pnpm store path 命令正常"
     else
         log "${RED}✗${NC} pnpm store path 命令失败"
