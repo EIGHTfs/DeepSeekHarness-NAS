@@ -170,21 +170,76 @@ fi
 # "^22.19.0 || >=24.0.0"→22，与官方仓库自身用 22 构建通过的史实一致）。
 # 解析失败退出非 0：宁可构建失败显眼暴露，也不静默用旧运行时打出一个暗雷包。
 if [[ "${PRINT_ENGINES_NODE:-0}" == "1" ]]; then
-  _hdr=()
-  [[ -n "$FETCH_TOKEN" ]] && _hdr=(-H "Authorization: token $FETCH_TOKEN")
-  _PJ="$(curl -s --connect-timeout 8 --max-time 20 --retry 5 --retry-delay 3 "${_hdr[@]}" \
-    "https://api.github.com/repos/$REPO/contents/package.json?ref=$TARGET_TAG" || true)"
-  if [[ -z "$_PJ" || -z "$(echo "$_PJ" | grep -o '"content"')" ]]; then
-    echo "✗ 无法从 api.github.com 读取 $REPO@${TARGET_TAG} 的 package.json（网络/限流/tag 不存在）。" >&2
+  # 取官方该 tag 的 package.json 文本。取法分两级，原因是实测踩过一个脆弱点：
+  #   CI 里 runner 是共享出口 IP，匿名调用 api.github.com 的配额（60 次/小时）经常已被打满，
+  #   于是这里会失败并输出「网络/限流/tag 不存在」这种含糊结论 —— 构建直接挂，但根因其实是限流。
+  #   ① 首选 raw.githubusercontent.com：直取文件、不占 API 配额，稳定得多；
+  #   ② 回退 api.github.com（带 token 时用 token；遇 403/429 视为限流，退避重试后仍失败才报错）。
+  # 两级都失败才退出，且错误信息带上 HTTP 状态码与来源，便于一眼区分「限流」与「tag 真的不存在」。
+  _PJ_TMP="$(mktemp "${TMPDIR:-/tmp}/dsh-pkg.XXXXXX")"
+  _PJ_TEXT=""
+  _PJ_SRC=""
+  _PJ_CODE=""
+  _PJ_TRY=0
+  _RAW_URL="https://raw.githubusercontent.com/$REPO/${TARGET_TAG}/package.json"
+  while [[ $_PJ_TRY -lt 3 && -z "$_PJ_TEXT" ]]; do
+    _PJ_TRY=$((_PJ_TRY + 1))
+    _PJ_CODE="$(curl -sS -o "$_PJ_TMP" -w '%{http_code}' --connect-timeout 8 --max-time 20 \
+      --retry 2 --retry-delay 2 "$_RAW_URL" 2>/dev/null || true)"
+    if [[ "$_PJ_CODE" == "200" ]]; then
+      _PJ_TEXT="$(cat "$_PJ_TMP")"
+      _PJ_SRC="raw.githubusercontent.com"
+    else
+      echo "  raw 第 ${_PJ_TRY} 次取 package.json 失败（HTTP ${_PJ_CODE:-无}），退避重试…" >&2
+      sleep "$_PJ_TRY"
+    fi
+  done
+
+  if [[ -z "$_PJ_TEXT" ]]; then
+    _hdr=()
+    [[ -n "$FETCH_TOKEN" ]] && _hdr=(-H "Authorization: token $FETCH_TOKEN")
+    _PJ_TRY=0
+    while [[ $_PJ_TRY -lt 3 && -z "$_PJ_TEXT" ]]; do
+      _PJ_TRY=$((_PJ_TRY + 1))
+      _PJ_CODE="$(curl -sS -o "$_PJ_TMP" -w '%{http_code}' --connect-timeout 8 --max-time 20 "${_hdr[@]}" \
+        "https://api.github.com/repos/$REPO/contents/package.json?ref=$TARGET_TAG" 2>/dev/null || true)"
+      if [[ "$_PJ_CODE" == "200" ]]; then
+        # API 返回的是 {"content":"<base64>",…} 包装，解出正文
+        _PJ_TEXT="$(python3 - "$_PJ_TMP" <<'PYDECODE'
+import base64, json, sys
+try:
+    wrapped = json.load(open(sys.argv[1], encoding="utf-8"))
+    sys.stdout.write(base64.b64decode(wrapped["content"]).decode("utf-8", "replace"))
+except Exception as exc:
+    sys.stderr.write("  API 返回体解码失败: %s\n" % exc)
+    sys.exit(1)
+PYDECODE
+)"
+        [[ -n "$_PJ_TEXT" ]] && _PJ_SRC="api.github.com"
+      elif [[ "$_PJ_CODE" == "403" || "$_PJ_CODE" == "429" ]]; then
+        echo "  API 第 ${_PJ_TRY} 次被限流（HTTP $_PJ_CODE），按 ${_PJ_TRY} 秒退避后重试…" >&2
+        sleep "$_PJ_TRY"
+      else
+        echo "  API 第 ${_PJ_TRY} 次取 package.json 失败（HTTP ${_PJ_CODE:-无}）" >&2
+        sleep 1
+      fi
+    done
+  fi
+
+  if [[ -z "$_PJ_TEXT" ]]; then
+    rm -f "$_PJ_TMP"
+    echo "✗ 两级都取不到 $REPO@${TARGET_TAG} 的 package.json（最后一次 HTTP $_PJ_CODE）" >&2
+    echo "  已尝试：raw.githubusercontent.com（3 次）+ api.github.com（3 次）" >&2
+    echo "  HTTP 403/429 表示限流 —— 给脚本传 --token 或设 DS_FETCH_TOKEN 可显著提高配额" >&2
     exit 1
   fi
-  echo "$_PJ" | python3 -c '
-import sys, json, base64, re
+  echo "  package.json 来源: $_PJ_SRC" >&2
+  echo "$_PJ_TEXT" | python3 -c '
+import sys, json, re
 try:
-    d = json.load(sys.stdin)
-    pkg = json.loads(base64.b64decode(d["content"]).decode("utf-8", "replace"))
+    pkg = json.load(sys.stdin)
 except Exception as e:
-    sys.stderr.write("✗ package.json 拉取或解析失败: %s\n" % e)
+    sys.stderr.write("✗ package.json 解析失败: %s\n" % e)
     sys.exit(1)
 eng = (pkg.get("engines") or {}).get("node") or ""
 if not eng:
@@ -202,7 +257,10 @@ major = min(majors)
 sys.stderr.write("  → 应安装 Node %d.x（setup-node 会装该系列最新版，≥官方下限）\n" % major)
 print(major)
 '
-  exit $?
+  # 保留 python 的退出码（它承担「解析失败即失败」的语义），再清理临时文件
+  _PJ_RC=$?
+  rm -f "$_PJ_TMP"
+  exit "$_PJ_RC"
 fi
 echo "目标 tag: $TARGET_TAG"
 
