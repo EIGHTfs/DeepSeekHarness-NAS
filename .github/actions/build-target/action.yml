@@ -113,11 +113,18 @@ runs:
       uses: actions/cache@v6
       with:
         path: ${{ runner.temp }}/reuse-target.tar.gz
-        # v2：修正了 tar 漏 .build-done 的问题；版本前缀保证旧缓存（可能不完整）不再被命中。
-        # 同时把 action 自身纳入指纹：打包/解包逻辑一变即换 key，避免命中语义已变的旧缓存。
-        key: dsh-target-v2-${{ steps.tag.outputs.tag }}-${{ hashFiles('build/build-config.yaml','build/build-common.sh','build/prune-target.sh','build/prune_common.py','build/build-prune-whitelist.json','scripts/lib/common.sh','.github/actions/build-target/action.yml','.github/actions/pack-with-target/action.yml') }}
+        # v3：把**运行器架构**纳入 key 与 restore-keys。
+        #   病根（v2 的真实事故）：key 只有「官方 tag + 逻辑指纹」，没有架构 ——
+        #   x86_64 与 arm64 并行构建时，先跑完的那个把 target 写进缓存，后跑的另一个直接复用，
+        #   于是产物里塞进**对方的** bin/node 与 native 模块：
+        #     · x86_64 安装包装出 ARM 的 bin/node → 执行即架构错误，套件起不来
+        #     · native/system/packages/linux-x64/bin/glibc/system.node 缺失（包里只有 linux-arm64 那份）
+        #   这批缺陷在安装阶段看不出来，要等服务起来后第一次用文件锁（flock）才暴露。
+        #   修法：key 与 restore-keys 同时带 ${{ runner.arch }}（X64 / ARM64）；升 v3 前缀让旧的
+        #   跨架构缓存彻底失效 —— 只改 key 不改 restore-keys 仍会命中对方的旧缓存。
+        key: dsh-target-v3-${{ steps.tag.outputs.tag }}-${{ runner.arch }}-${{ hashFiles('build/build-config.yaml','build/build-common.sh','build/prune-target.sh','build/prune_common.py','build/build-prune-whitelist.json','scripts/lib/common.sh','.github/actions/build-target/action.yml','.github/actions/pack-with-target/action.yml') }}
         restore-keys: |
-          dsh-target-${{ steps.tag.outputs.tag }}-
+          dsh-target-v3-${{ steps.tag.outputs.tag }}-${{ runner.arch }}-
 
     - name: 命中则解包 target（随后 build-common.sh 会跳过编译）
       if: steps.cache-target.outputs.cache-hit == 'true'
