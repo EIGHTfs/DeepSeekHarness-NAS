@@ -539,18 +539,29 @@ PYD
     echo "     （纯白名单裁剪：删 .pnpm 中非白名单包 + 非目标平台二进制 → target 体积骤降）"
   fi
   if _STAGE_OK install; then
-    echo "【meta】写 $WORK/build-meta.env（APP_NAME/PKG_VER/SPK_VERSION/FPK_VERSION/COMMIT）"
+    echo "【meta】写 $WORK/build-meta.env（APP_NAME/PKG_VER/SPK_VERSION/FPK_VERSION/COMMIT/DSH_TAG）"
   fi
   echo "════════════════ 预演结束（未执行任何动作、未改动任何文件）════════════════"
   exit 0
 fi
 
 if [ "$SKIP_BUILD" = "1" ] && [ -f "$WORK/.build-done" ] && [ -d "$TARGET" ] && [ -f "$TARGET/package.json" ]; then
-  # 断点续传：构建已完成（有 .build-done 标记）→ 跳过，直接复用 target
-  echo "▶ 复用已有 target（$WORK/.build-done 存在，跳过编译）"
-  safe_rm_rf "$ASSEMBLE"
-  mkdir -p "$ASSEMBLE"
-  _BUILD_SKIPPED=1
+  # 断点续传：.build-done 只说明「以前构建成功过」，不说明「是哪个官方 tag 构建的」。
+  #   所以复用前必须把 meta 里记录的 DSH_TAG 与本次目标 tag 比一次：
+  #   不同就绝不复用 —— 否则会把旧版本的 target 当成新版本打包，
+  #   产物文件名与版本号都正确、内容却是别的版本，且全程不报错。
+  #   （meta 没记录 DSH_TAG 时视为老产物，无据可依，沿用原行为复用并提示）
+  _meta_tag="$(sed -n "s/^DSH_TAG=['\"]\([^'\"]*\)['\"].*/\1/p" "$WORK/build-meta.env" 2>/dev/null | head -1)"
+  if [ -n "$_meta_tag" ] && [ -n "${DSH_TAG_ARG:-}" ] && [ "$_meta_tag" != "$DSH_TAG_ARG" ]; then
+    echo "▶ 已有 target 出自 $_meta_tag，本次目标是 $DSH_TAG_ARG → 不复用，改为完整构建"
+    safe_rm_rf "$WORK"
+    mkdir -p "$WORK" "$TARGET" "$ASSEMBLE"
+  else
+    echo "▶ 复用已有 target（$WORK/.build-done 存在，跳过编译；meta tag=${_meta_tag:-未记录}）"
+    safe_rm_rf "$ASSEMBLE"
+    mkdir -p "$ASSEMBLE"
+    _BUILD_SKIPPED=1
+  fi
 elif [ "$BUILD_STAGE" != "all" ] && [ -f "$BUILD_SRC/package.json" ]; then
   # 分阶段模式：WORK 已由前一阶段准备好，直接复用（不清不删）
   echo "▶ 分阶段模式 (stage=$BUILD_STAGE)：复用已有 WORK $WORK"
@@ -1028,6 +1039,10 @@ SPK_VERSION='${SPK_VERSION}'
 FPK_VERSION='${FPK_VERSION}'
 DESC='${DESC}'
 COMMIT_HASH='${COMMIT_HASH}'
+# 官方 tag（本次构建的目标版本）。用途：SKIP_BUILD 复用 target 前拿它比对，
+#   避免「旧版本的 target 被当成新版本打包」——那种错包文件名与版本号都对，内容却是别的版本。
+#   未显式指定 --tag 时为空串（表示「按最新自探测」，无从比对，沿用原复用行为）。
+DSH_TAG='${DSH_TAG_ARG}'
 WORK='${WORK}'
 TARGET='${TARGET}'
 EOF
