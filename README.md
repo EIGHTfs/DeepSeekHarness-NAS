@@ -12,7 +12,6 @@ DeepSeek Harness（dsh）的 NAS 适配包：群晖 DSM `.spk` / 飞牛 fnOS `.f
 | 门户免密 | 套件图标打开带 token，认证后免密 | DSM/fnOS 桌面图标 |
 | 局域网限制 | 公网 IP 一律 403 提示页 | 内置，无需配置 |
 | 命令行 `dsh` / `pnpm` | 装完 SSH 直接敲，无需进套件目录 | `/usr/bin/dsh`、`/usr/bin/pnpm` |
-| 网页安装工具 | 已独立为单独仓库（远程装/卸/检/修，带历史） | `nas-pkg-installer` |
 | 自动构建发布 | 官方更新自动对齐构建，发 Release 双产物 | GitHub Actions |
 | 架构参数化 | 同一脚本出 x86_64 / arm64 包 | `build/build-config.yaml` 的 `defaults.arch` |
 
@@ -56,29 +55,6 @@ synopkg start DeepSeekHarness-NAS               # 群晖启停（stop/restart/st
 appcenter-cli start DeepSeekHarness-NAS         # 飞牛启停（stop/status/check 同名）
 ```
 
-## 配置模型
-
-Web UI 设置 → Models → 添加提供方；或直接改文件。
-
-```
-/var/packages/deepseek-harness-nas/target/var/data/.dsh/settings.yaml      # provider 配置
-/var/packages/deepseek-harness-nas/target/var/data/.dsh/.credentials.yaml   # API Key
-```
-
-```yaml
-providers:
-  myprovider:
-    id: myprovider
-    name: My Provider
-    type: openai-completions
-    base_url: https://api.example.com/v1      # Bearer Token 类端点
-    models:
-      - id: my-model
-        name: my-model
-API_KEYS:
-  DEEPSEEK_API_KEY: "<你的 API 密钥>"
-```
-
 ## 数据目录与版本隔离
 
 数据按版本隔离：`<平台应用数据目录>/<版本>/`（群晖为 `/volume1/@appdata/<包名>/<版本>/`），内含 `.dsh/`（即 `DSH_HOME`）、`ports`、日志与 PID。升级、回退、并存各用各的目录，互不覆盖；卸载默认保留，`--delete-data` 才删。目录明细见 [打包规范](docs/打包规范.md) 第 13 节。
@@ -86,7 +62,8 @@ API_KEYS:
 ## 构建与发布
 
 ```bash
-./build/build-common.sh [" " 1]          # 全量约 15-20 分钟；传 "" 1 复用已有 target（秒级）
+./build/build-common.sh              # 全量约 15-20 分钟（不指定源码目录 → 按 --tag 或自探测）
+SKIP_BUILD=1 ./build/build-common.sh   # 复用已有 target（秒级）
 ./build/build-common.sh --tag dsh-v0.2.1-alpha.1   # 构建历史版本必须显式给 tag（多版本源码并存时否则会选错）
 ./build/SPK/pack-spk.sh                  # → build/staging/DeepSeekHarness-NAS_x86_64-<版本>.spk
 ./build/FPK/pack-fpk.sh                  # → build/staging/DeepSeekHarness-NAS_x86-<版本>.fpk
@@ -137,11 +114,9 @@ API_KEYS:
 | `scripts/clean-build-artifacts.sh` | 清理失败/中间构建；`--caches` / `--dry-run` / `--force` |
 | `scripts/lib/common.sh` | 全仓唯一公共函数库（日志、安全删除、端口读取、`running_dsh` 等） |
 
-### 网页安装工具（已独立）
 
 远程安装/卸载/检查 SPK/FPK 的网页工具已拆分为独立仓库，本仓不再包含其代码与配置：
 
-- 仓库：https://github.com/EIGHTfs/nas-pkg-installer
 - 用法见该仓库 README
 
 本仓只负责打包与发布。
