@@ -20,13 +20,10 @@ LIB = os.path.join(ROOT, "scripts", "lib", "common.sh")
 SKIP_DIRS = {".git", "node_modules", "dist", ".trash"}
 
 # 显式豁免（**同名但语义不同**，非分叉；每项必须写明理由）
+# 当前为空：原先 3 条都指向 scripts/diagnose/ 下的历史诊断脚本，
+#   那些脚本已整体删除（其针对的「/vol2 下 pnpm store 沙盒不可写」环境已不存在，
+#   现由 scripts/fix-pnpm-store.sh 与 start.sh 的 fix_pnpm_store 承担），故豁免项一并清空。
 EXEMPT = {
-    "scripts/diagnose/dsh-plugin-install-fix.sh": {
-        "section": "彩色 log 版分隔线（log \"${BLUE}===…${NC}\"），与公共库的纯 echo 版语义不同"},
-    "scripts/diagnose/setup-pnpm-store.sh": {
-        "section": "彩色 log 版分隔线，同上"},
-    "scripts/diagnose/test-pnpm-store-fix.sh": {
-        "section": "彩色 log 版分隔线，同上"},
 }
 
 FUNC = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(\)\s*\{")
