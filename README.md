@@ -87,6 +87,7 @@ API_KEYS:
 
 ```bash
 ./build/build-common.sh [" " 1]          # 全量约 15-20 分钟；传 "" 1 复用已有 target（秒级）
+./build/build-common.sh --tag dsh-v0.2.1-alpha.1   # 构建历史版本必须显式给 tag（多版本源码并存时否则会选错）
 ./build/SPK/pack-spk.sh                  # → build/staging/DeepSeekHarness-NAS_x86_64-<版本>.spk
 ./build/FPK/pack-fpk.sh                  # → build/staging/DeepSeekHarness-NAS_x86-<版本>.fpk
 ./scripts/promote-release.sh             # 验证通过的产物提升到 release/
@@ -100,7 +101,7 @@ API_KEYS:
 
 | 名称 | 作用 |
 |---|---|
-| `build/build-common.sh` | 公共预编译（install + build + 裁剪 → target）；参数 `[SRC] [SKIP_BUILD] [--dry-run]` |
+| `build/build-common.sh` | 公共预编译（install + build + 裁剪 → target）；参数 `[SRC] [SKIP_BUILD] [--tag <tag>] [--dry-run]`；`--tag` 对应环境变量 `DSH_TAG`，源码目录由其直接定位并校验版本一致 |
 | `build/build-lib.sh` | 打包公共函数库（`gen_start_sh()`、`resolve_arch()`） |
 | `build/prune-target.sh` | 白名单裁剪，三模式：`--before-install <SRC>` / `--node-modules <SRC>` / `<TARGET> [WHITELIST]` |
 | `build/gen-prune-whitelist.sh` | 从 npm 锁文件生成 `lockfileDeps`；`[锁文件]` / `--dry-run` |

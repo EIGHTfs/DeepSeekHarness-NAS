@@ -29,6 +29,7 @@ import json
 # ── 内部实现变量：只在一次调用内传递，外部无需知道（新增请附理由）──
 EXEMPT = {
     'DSH_DIR',              # 由 start.sh 自身解析的实例目录（调用者不传）
+    'DSH_TAG_ARG',          # build-common.sh 内部变量（承载 --tag 的值）；对外开关已由 DSH_TAG 覆盖
     'DSH_HOME_RESOLVED',    # 内部解析结果缓存
     'DSH_PID',              # 内部 PID 读取结果
     'DSH_WEB',              # 内部：web 子命令参数

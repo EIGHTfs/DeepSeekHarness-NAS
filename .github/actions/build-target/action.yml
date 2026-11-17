@@ -150,7 +150,10 @@ runs:
     # ⚠ 单步构建（BUILD_STAGE=all）保证失败时 failure() 能捕获；日志靠 artifact 兜底。
     - name: 公共预编译 pnpm install + build + 裁剪（唯一一次）
       shell: bash
-      run: ./build/build-common.sh
+      # 显式把本次目标 tag 传给 build-common.sh：CI 每次是干净 checkout、只有一个源码目录，
+      # 自探测本来也不会错；但显式传 tag 后，脚本会按 tag 直接定位并校验
+      # 「源码 package.json version == 目标 tag」，等于多一道不可能误判的防线。
+      run: ./build/build-common.sh --tag "${{ steps.tag.outputs.tag }}"
 
     - name: 校验 target 与 meta 并打包为单文件（供 pack-* 复用）
       shell: bash

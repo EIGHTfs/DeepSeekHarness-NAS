@@ -190,8 +190,12 @@ NPM_FPK_SCRIPT="$BUILD_ROOT/build-npm-app.sh"        # FPK npm 链路（build/FP
 #   --dry-run            只预演，不实际构建
 #   --work-dir DIR       构建中间产物根（缺省 = build/master-build，即旧行为）
 #   --src DIR            源码目录（等价于第一个位置参数）
+#   --tag TAG            要构建的官方 tag（如 dsh-v0.2.1-alpha.1）；也可用环境变量 DSH_TAG
+#                        ⚠ 多版本源码目录并存时必须给：否则「源码自探测」会按 semver 取最新，
+#                          从新到旧构建时就会拿新版源码打旧版本的包（内容与版本号不符，且不报错）
 #   SRC SKIP_BUILD       位置参数：源码目录；1=复用已有 target（缺省=0 全量构建）
 DRY_RUN="${DRY_RUN:-0}"
+DSH_TAG_ARG="${DSH_TAG:-}"
 _POS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -199,6 +203,8 @@ while [ $# -gt 0 ]; do
     -h|--help)            sed -n '2,42p' "$0"; exit 0 ;;
     --work-dir|--workdir) D_WORK_ROOT="${2:?--work-dir 需要一个目录}"; shift 2 ;;
     --work-dir=*)         D_WORK_ROOT="${1#*=}"; shift ;;
+    --tag)                DSH_TAG_ARG="${2:?--tag 需要一个官方 tag}"; shift 2 ;;
+    --tag=*)              DSH_TAG_ARG="${1#*=}"; shift ;;
     --src)                _POS+=("${2:?--src 需要一个目录}"); shift 2 ;;
     --src=*)              _POS+=("${1#*=}"); shift ;;
     *)                    _POS+=("$1"); shift ;;
@@ -239,10 +245,31 @@ copy_tree_tar() {
   return 0
 }
 SRC="${_POS[0]:-}"
+
+# ── 指定了目标 tag 时：直接按 tag 定位目录，不做任何 semver 排序 ──
+# 为什么这条优先：候选排序只能「猜」一个最像的（当前实现是取最大 semver），
+#   而「从新到旧」构建时猜必错 —— 本地已存在 dsh-v0.2.2-rc.1（新）时再构建
+#   dsh-v0.2.1-alpha.1（旧），排序仍会选中 rc.1，于是拿新源码打出旧版本号的包：
+#   文件名对、版本号对、能装能跑，内容却是别的版本，且全程不报错。
+#   目标 tag 是已知信息，直接用它定位即可，不需要猜。
+if [ -z "$SRC" ] && [ -n "${DSH_TAG_ARG:-}" ]; then
+  _direct_src="$D_SRC/deepseek-ai/$DSH_TAG_ARG"
+  if [ -f "$_direct_src/package.json" ] && [ -d "$_direct_src/apps/cli" ]; then
+    SRC="$_direct_src"
+    echo "▶ 源码按 --tag 直接定位: $SRC"
+  else
+    echo "✗ 指定了 tag $DSH_TAG_ARG，但源码目录不存在或不完整：$_direct_src" >&2
+    echo "  先拉该 tag 的源码：./scripts/fetch-dsh-latest.sh --tag $DSH_TAG_ARG" >&2
+    exit 1
+  fi
+fi
+
 if [ -z "$SRC" ]; then
   # 通配扫描 src/deepseek-ai/*（不硬编码版本目录名），其次 master-build；
   # 多个候选时按 semver 取**最新**——2026-10-02 修复：原实现取 glob 字典序第一个，
   # 本地同时存在 dsh-v0.1.5-rc.2（旧）与 dsh-v0.2.0-rc.2（新）时会误选旧版构建。
+  # ⚠ 但「取最新」只适合「构建最新版」；要构建历史版本必须显式 --tag，
+  #   否则会静默拿新源码打旧包（因此下面那行提示写成刺眼警告）。
   _cands=()
   for cand in "$D_SRC"/deepseek-ai/* "$WORK_ROOT"/master-build/*; do
     if [ -f "$cand/package.json" ] && [ -d "$cand/apps/cli" ]; then
@@ -262,14 +289,39 @@ def vkey(p):
 cands = [l.strip() for l in sys.stdin if l.strip()]
 print(sorted(cands, key=vkey)[-1])
 ')"
-    echo "▶ 源码自探测: $SRC（候选取最新 semver，共 ${#_cands[@]} 个）"
+    echo "▶ 源码自探测: $SRC（未指定 --tag，按 semver 取最新；共 ${#_cands[@]} 个候选）"
+    if [ "${#_cands[@]}" -gt 1 ]; then
+      echo "   ⚠ 有 ${#_cands[@]} 个源码版本并存，本次按『最新』盲选：$(basename "$SRC")" >&2
+      echo "   ⚠ 若你要构建的是历史版本，必须显式 --tag <tag>，否则会用错源码打出错包" >&2
+    fi
   fi
 fi
 if [ -z "$SRC" ] || [ ! -f "$SRC/package.json" ]; then
-  echo "✗ 未找到源码目录。用法: $0 [SRC] [SKIP_BUILD] [--dry-run]" >&2
+  echo "✗ 未找到源码目录。用法: $0 [SRC] [SKIP_BUILD] [--tag <tag>] [--dry-run]" >&2
   exit 1
 fi
 SRC="$(cd "$SRC" && pwd)"
+
+# ── 源码版本 vs 目标 tag 一致性硬校验（最后一道兜底）──
+# 不论 SRC 是显式传入、按 tag 定位、还是自探测出来的，都在这里核对一次：
+#   目标 tag 去掉 dsh-v 前缀应与 SRC/package.json 的 version 完全相同。
+# 不符即失败 —— 这一道不依赖任何前置判断，能把所有漏下来的路径错配都拦住。
+if [ -n "${DSH_TAG_ARG:-}" ]; then
+  _src_version="$(python3 -c 'import json,sys;print((json.load(open(sys.argv[1],encoding="utf-8")).get("version") or ""))' "$SRC/package.json" 2>/dev/null)"
+  _tag_version="${DSH_TAG_ARG#dsh-v}"
+  if [ -z "$_src_version" ]; then
+    echo "✗ 读不到 $SRC/package.json 的 version，无法校验源码与 tag 是否匹配" >&2
+    exit 1
+  fi
+  if [ "$_src_version" != "$_tag_version" ]; then
+    echo "✗ 源码版本与目标 tag 不一致：源码 $_src_version ≠ tag $_tag_version" >&2
+    echo "  源码目录：$SRC" >&2
+    echo "  这通常意味着选错了源码目录（多版本并存时未指定 --tag，或该 tag 源码未下载）" >&2
+    exit 1
+  fi
+  echo "  ✓ 源码版本与目标 tag 一致：$_src_version（$DSH_TAG_ARG）"
+fi
+
 SKIP_BUILD="${SKIP_BUILD:-${_POS[1]:-1}}"   # 默认跳过已存在的 target（=0 强制全量重建）；支持环境变量或第 2 位置参数（2026-10-02：原先只读位置参数，环境变量写法会被静默忽略）
 # 分阶段构建门控：all | install | build | prune（CI 把长步骤拆成 3 个独立 step，
 # 靠 step 结论定位死点；分阶段时复用已有 WORK，不清不删）
