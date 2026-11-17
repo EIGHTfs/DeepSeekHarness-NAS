@@ -50,8 +50,8 @@ def token():
     for k in ('GH_TOKEN', 'GITHUB_TOKEN'):
         if os.environ.get(k):
             return os.environ[k]
-    for p in ('/volume13/Artificial Intelligence/DeepSeek/DeepSeekHarness/工作区/config.json',
-              os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config.json')):
+    # 候选只用「可推理的位置」：仓库同级的 config.json（由用户维护、不入库）。
+    for p in (os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config.json'),):
         try:
             return json.load(open(p, encoding='utf-8'))['githubToken']
         except Exception:

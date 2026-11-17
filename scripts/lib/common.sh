@@ -57,8 +57,8 @@
 #       - `synopkg` 多出现在**远端执行**的脚本里（scripts/clean-dsm-residue.sh 的
 #         REMOTE_EOF 段）——目标机上**没有** scripts/lib/common.sh，
 #         收口成 pkg_*() 会直接坏掉；它们必须自包含。
-#       - `base64` 一半是 **python 语言级**用法（scripts/gh-commit.py、migrate-session/lib/
-#         wsclient.py 的 import base64），与 shell 的 b64_encode 无关。
+#       - `base64` 一半是 **python 语言级**用法（scripts/migrate-session/lib/wsclient.py
+#         的 import base64），与 shell 的 b64_encode 无关。
 #
 #   → 因此 scripts/check-common-functions.sh（第 7 步守卫）必须**先剔除 heredoc 生成区段**
 #     再做"唯一性"判定，否则会误伤上述代码。
