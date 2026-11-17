@@ -97,10 +97,11 @@ mkdir -p "$APP_ROOT/bin" "$NODE_DIR"
 NODE_ARCHIVE="node-v${NODE_VERSION}-linux-x64.tar.xz"
 NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_ARCHIVE}"
 if [ ! -x "$NODE_DIR/bin/node" ]; then
-  echo "▶ 下载 Node ${NODE_VERSION}..."
-  curl -fL --retry 3 --connect-timeout 8 --max-time 180 -o "/tmp/${NODE_ARCHIVE}" "$NODE_URL"
-  tar -xJf "/tmp/${NODE_ARCHIVE}" -C "$NODE_DIR" --strip-components=1
-  rm -f "/tmp/${NODE_ARCHIVE}"
+  echo "▶ 下载 Node ${NODE_VERSION}（管道直解，不落临时文件）..."
+  # 原先的做法是 curl 落盘到一个写死的临时路径、再解压、再删除：三处硬编码、还要保证清理，
+  #   中途失败还会留下半个归档。本脚本已 set -o pipefail，直接管道更省事也更快。
+  curl -fL --retry 3 --connect-timeout 8 --max-time 180 "$NODE_URL" \
+    | tar -xJf - -C "$NODE_DIR" --strip-components=1
 fi
 export PATH="$NODE_DIR/bin:$PATH"
 cp "$NODE_DIR/bin/node" "$APP_ROOT/bin/node"
