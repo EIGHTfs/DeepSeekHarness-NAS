@@ -15,11 +15,17 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+# 平台路径与 pnpm 入口统一从共享库取（不再写死实例目录与 corepack 的版本化路径）
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/platform-paths.sh"
+
 # 路径配置
-DSH_DIR="/vol2/1000/DeepSeek Harness/dsh-v0.1.2-alpha.4"
+DSH_DIR="${1:-${DSH_DIR:-}}"
 WORKSPACE="$DSH_DIR/.dsh-home/工作区/DeepSeekHarness-NAS"
 PROFILES_DIR="$HOME/.dsh/profiles/web"
-TEMP_BASE="/tmp/dsh-fix-$$"
+TEMP_BASE="$(platform_tmp_dir dsh-fix)" || { echo "✗ 无法创建临时目录" >&2; exit 1; }
+
+# pnpm 入口：探测随包 pnpm / PATH 上的 pnpm / corepack 缓存，不再写死版本号目录
+PNPM_ENTRY="$(resolve_pnpm_entry)" || { echo "✗ 未找到 pnpm 入口" >&2; exit 1; }
 
 # 创建临时工作目录
 mkdir -p "$TEMP_BASE"/{store,cache,npmrc}
@@ -130,7 +136,7 @@ log ""
 log "或者直接使用 pnpm："
 log ""
 log "${GREEN}cd $PROFILES_DIR && \\${NC}"
-log "${GREEN}  HOME=$TEMP_BASE node /root/.cache/node/corepack/v1/pnpm/11.7.0/dist/pnpm.mjs add $PLUGIN_NAME${NC}"
+log "${GREEN}  HOME=$TEMP_BASE node $PNPM_ENTRY add $PLUGIN_NAME${NC}"
 log ""
 
 # ============================================================
@@ -149,7 +155,7 @@ if [[ "${2:-}" == "--install" ]]; then
     }
     
     # 执行安装
-    if HOME="$TEMP_BASE" node /root/.cache/node/corepack/v1/pnpm/11.7.0/dist/pnpm.mjs add "$PLUGIN_NAME" 2>&1; then
+    if HOME="$TEMP_BASE" node "${PNPM_ENTRY:?pnpm 入口未解析（应先用 resolve_pnpm_entry 赋值）}" add "$PLUGIN_NAME" 2>&1; then
         log "${GREEN}✓ 插件安装成功${NC}"
         log "插件已添加到 $PROFILES_DIR/package.json"
     else
