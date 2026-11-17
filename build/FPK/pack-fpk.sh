@@ -49,6 +49,11 @@ BUILD_LIB="$BUILD_ROOT/build-lib.sh"                         # 公共函数库�
 [ -f "$BUILD_LIB" ] || { echo "✗ 缺少公共函数库: $BUILD_LIB" >&2; exit 1; }
 . "$BUILD_LIB"
 
+# 平台路径与临时文件单一出处（platform_tmp_dir / platform_tmp_file 等）
+PLATFORM_PATHS_LIB="$BUILD_ROOT/../scripts/lib/platform-paths.sh"
+[ -f "$PLATFORM_PATHS_LIB" ] || { echo "✗ 缺少平台路径库: $PLATFORM_PATHS_LIB" >&2; exit 1; }
+. "$PLATFORM_PATHS_LIB"
+
 # ── 参数：--npm 走 npm 装包链路（默认源码 target 链路不变） ──
 #   --work-dir DIR 指定 build-common.sh / build-npm-app.sh 的产物根
 #     （缺省仍是 build/master-build，旧行为不变；命令行优先于 D_WORK_ROOT 环境变量）
@@ -296,9 +301,10 @@ fi
 echo "▶ 打包 app.tgz（gzip, 预构建产物包, ${#_FPK_EXCLUDES[@]} 条排除规则）"
 # ⚠ 必须用 find 顶层列表而非 `-C dir .`：`. ` 让全部条目带 ./ 前缀，fnOS 后端解压时
 #   把 ./ 当字面路径 → 顶层结构对不上
-( cd "$FPK_APP" && find . -maxdepth 1 -mindepth 1 -printf '%f\n' > /tmp/fpk-toplist.$$ && \
-  tar -czf "$FPK_SRC/app.tgz" --hard-dereference "${_FPK_EXCLUDES[@]}" --files-from=/tmp/fpk-toplist.$$ 2>/dev/null; \
-  rm -f /tmp/fpk-toplist.$$ )
+_FPK_TOPLIST="$(platform_tmp_file fpk-toplist)" || { echo "✗ 无法创建临时文件（fpk-toplist）" >&2; exit 1; }
+( cd "$FPK_APP" && find . -maxdepth 1 -mindepth 1 -printf '%f\n' > "$_FPK_TOPLIST" && \
+  tar -czf "$FPK_SRC/app.tgz" --hard-dereference "${_FPK_EXCLUDES[@]}" --files-from="$_FPK_TOPLIST" 2>/dev/null; \
+  rm -f "$_FPK_TOPLIST" )
 
 # ── app.tgz 后处理（2026-10-09，用户查证后的定论，勿回退）─────────────────────
 #   病根：npm/pnpm 生成的软链（5863 条，全是 node_modules/.pnpm 的相对链接）打包后
@@ -314,15 +320,17 @@ tar -xzf "$FPK_SRC/app.tgz" -C "$_APP_STAGE"
 # 软链清单：**打包成 links.tar**（只含软链条目，路径→目标精确保留），安装期原样解回。
 #   ⚠ 不要用「文本清单 + 逐行 ln -s」：实测解析 tar -tv 的字段不可靠，5863 条里会错 542 条
 #     （含 node_modules/@deepseek-ai/dsh 断链）→ 插件 failed to import。tar 还原才是精确的。
-( cd "$_APP_STAGE" && find . -type l -print > /tmp/fpk-links.$$ && \
-  tar -cf "$FPK_SRC/links.tar" --no-recursion -T /tmp/fpk-links.$$ ; rm -f /tmp/fpk-links.$$ )
+_FPK_LINKS="$(platform_tmp_file fpk-links)" || { echo "✗ 无法创建临时文件（fpk-links）" >&2; exit 1; }
+( cd "$_APP_STAGE" && find . -type l -print > "$_FPK_LINKS" && \
+  tar -cf "$FPK_SRC/links.tar" --no-recursion -T "$_FPK_LINKS" ; rm -f "$_FPK_LINKS" )
 _LINK_N="$(tar -tf "$FPK_SRC/links.tar" 2>/dev/null | wc -l | tr -d ' ')"
 find "$_APP_STAGE" -type l -delete
 find "$_APP_STAGE" -type d -exec chmod 755 {} + 2>/dev/null
 find "$_APP_STAGE" -type f -exec chmod 644 {} + 2>/dev/null
-( cd "$_APP_STAGE" && find . -maxdepth 1 -mindepth 1 -printf '%f\n' > /tmp/fpk-toplist2.$$ && \
-  tar -czf "$FPK_SRC/app.tgz" --owner=0 --group=0 --numeric-owner --files-from=/tmp/fpk-toplist2.$$ 2>/dev/null; \
-  rm -f /tmp/fpk-toplist2.$$ )
+_FPK_TOPLIST2="$(platform_tmp_file fpk-toplist2)" || { echo "✗ 无法创建临时文件（fpk-toplist2）" >&2; exit 1; }
+( cd "$_APP_STAGE" && find . -maxdepth 1 -mindepth 1 -printf '%f\n' > "$_FPK_TOPLIST2" && \
+  tar -czf "$FPK_SRC/app.tgz" --owner=0 --group=0 --numeric-owner --files-from="$_FPK_TOPLIST2" 2>/dev/null; \
+  rm -f "$_FPK_TOPLIST2" )
 safe_rm_rf "$_APP_STAGE" 2>/dev/null || rm -rf "$_APP_STAGE"
 echo "  ✓ app.tgz 后处理：移除 ${_LINK_N} 条软链（清单存 links.tar），uid/gid→root，目录755/文件644"
 # app/（target 副本 ~600M）使命完成立即删除（build-artifact-cleanup：中间产物用完即删）
@@ -864,8 +872,9 @@ echo "▶ 组装外层 FPK → $OUT_FPK"
 #   find 只列文件/软链（避开 GNU tar 给目录自动补 `/`）；排除 app/（内容已进 app.tgz）
 # ⚠ 不吞 tar 的 stderr：曾因 2>/dev/null 把「目标目录不存在（tar exit 2）」的真实
 #   报错吞掉，CI 日志只剩一句 "exit code 2"，排查耗时。宁可日志吵一点。
-( cd "$FPK_SRC" && find . -path ./app -prune -o \( -type f -o -type l \) -printf '%P\n' > /tmp/fpk-outer-list.$$ \
-  && tar -cf "${OUT_FPK}.tar" --files-from=/tmp/fpk-outer-list.$$; rm -f /tmp/fpk-outer-list.$$ \
+_FPK_OUTER_LIST="$(platform_tmp_file fpk-outer-list)" || { echo "✗ 无法创建临时文件（fpk-outer-list）" >&2; exit 1; }
+( cd "$FPK_SRC" && find . -path ./app -prune -o \( -type f -o -type l \) -printf '%P\n' > "$_FPK_OUTER_LIST" \
+  && tar -cf "${OUT_FPK}.tar" --files-from="$_FPK_OUTER_LIST"; rm -f "$_FPK_OUTER_LIST" \
   && gzip -9 -f "${OUT_FPK}.tar" && mv "${OUT_FPK}.tar.gz" "$OUT_FPK" )
 
 sync   # CIFS 元数据滞后
