@@ -84,6 +84,17 @@ jobs:
           dsh_tag: ${{ inputs.dsh_tag }}
           arch: ${{ inputs.arch }}
 
+      # 产物架构自检（出包前最后一道闸）
+      # 为什么必须有：曾出现 x86_64 安装包里塞进 arm64 的 bin/node 与 linux-arm64 原生模块
+      #   —— 起因是两架构并行构建共用了不含架构的 target 缓存。这类产物能装、文件齐、
+      #   结构对比与 sha256 全部正常，要等套件起不来或运行期第一次走 flock 才暴露。
+      #   这里用 ELF 头把 bin/node 的 e_machine 钉死，并核对 native 平台目录是否为目标架构。
+      - name: 校验产物架构与目标一致
+        shell: bash
+        run: |
+          set -e
+          python3 scripts/check-target-arch.py build/master-build/build --arch "${{ inputs.arch }}"
+
       # ── 方案 B：构建失败时自动学习缺失依赖并入库（用户 2026-10-09 定）──────────────
       # 为什么需要：官方新增构建期脚本可能 import 被裁剪剥掉的根 devDep（实测 alpha.2 的
       #   scripts/primary-runtime/prune-python-tests.ts → papaparse → TS2307 构建挂掉），
