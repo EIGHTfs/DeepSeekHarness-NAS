@@ -106,11 +106,21 @@ jobs:
       #   —— 起因是两架构并行构建共用了不含架构的 target 缓存。这类产物能装、文件齐、
       #   结构对比与 sha256 全部正常，要等套件起不来或运行期第一次走 flock 才暴露。
       #   这里用 ELF 头把 bin/node 的 e_machine 钉死，并核对 native 平台目录是否为目标架构。
+      # 路径不写死：target 目录名会随 --work-dir 与版本变化（master-build/build 或 build-<ver>），
+      #   写死过一次 build/master-build/build 结果多包了一层 target，校验直接找不到 bin/node 而误红。
+      #   改为按特征定位（含 bin/node 的那个 target 目录），并打印实际路径便于核对。
       - name: 校验产物架构与目标一致
         shell: bash
         run: |
           set -e
-          python3 scripts/check-target-arch.py build/master-build/build --arch "${{ inputs.arch }}"
+          target_dir="$(find build/master-build -maxdepth 4 -type d -name target -path '*/target' -exec test -f '{}/bin/node' \; -print -quit 2>/dev/null || true)"
+          if [ -z "$target_dir" ]; then
+            echo "✗ 未能在 build/master-build 下定位到含 bin/node 的 target 目录" >&2
+            find build/master-build -maxdepth 3 -type d -name target -print 2>/dev/null | sed 's/^/   候选: /' >&2 || true
+            exit 1
+          fi
+          echo "定位到 target: $target_dir"
+          python3 scripts/check-target-arch.py "$target_dir" --arch "${{ inputs.arch }}"
 
       # ── 方案 B：构建失败时自动学习缺失依赖并入库（用户 2026-10-09 定）──────────────
       # 为什么需要：官方新增构建期脚本可能 import 被裁剪剥掉的根 devDep（实测 alpha.2 的
