@@ -41,6 +41,10 @@
 _DSH_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/lib/common.sh"
 [ -f "$_DSH_LIB" ] && . "$_DSH_LIB"
 
+# ── 平台路径与临时文件单一出处（platform_tmp_dir / platform_tmp_file 等）──
+_PLATFORM_PATHS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/lib/platform-paths.sh"
+[ -f "$_PLATFORM_PATHS_LIB" ] && . "$_PLATFORM_PATHS_LIB"
+
 set -euo pipefail
 
 # ── lefthook 钩子防线（2026-11-01）──────────────────────────────────────────
@@ -732,7 +736,7 @@ if _STAGE_OK install && [ ! -d "$BUILD_SRC/node_modules" ]; then
   )
   _npm_pick_registry() {
     local _d _i=0 _u
-    _d="$(mktemp -d 2>/dev/null)" || _d="/tmp/npmreg.$$"
+    _d="$(platform_tmp_dir npmreg)" || { echo "✗ 无法创建临时目录（npmreg，PLATFORM_TMP_ROOT=${PLATFORM_TMP_ROOT:-未设置}）" >&2; return 1; }
     mkdir -p "$_d" 2>/dev/null || true
     for _u in "${NPM_REGISTRY_CANDIDATES[@]}"; do
       _i=$((_i + 1))
