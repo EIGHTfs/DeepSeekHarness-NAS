@@ -27,6 +27,10 @@ _DSH_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/lib/common.sh
 
 set -u
 
+# 平台路径与临时文件单一出处
+_PLATFORM_PATHS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/platform-paths.sh"
+[ -f "$_PLATFORM_PATHS_LIB" ] && . "$_PLATFORM_PATHS_LIB"
+
 WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NODE_VER="${NODE_VER:-22.23.3}"
 DSH_VERSION="${DSH_VERSION:-0.2.1-alpha.1}"
@@ -66,9 +70,11 @@ elif [ "$CHECK_ONLY" = "1" ]; then
 else
   warn "缺失 → 从 $NPMMIRROR 下载 v$NODE_VER"
   mkdir -p "$WS/tools/node-dist" && cd /tmp || exit 1
-  if curl -sL --max-time 600 -o /tmp/dsh-node.txz \
+  _DL="$(platform_tmp_file dsh-node)" || { miss "无法创建临时文件"; exit 1; }
+  if curl -sL --max-time 600 -o "$_DL" \
        "$NPMMIRROR/mirrors/node/v$NODE_VER/node-v$NODE_VER-linux-x64.tar.xz"; then
-    tar -xJf /tmp/dsh-node.txz -C "$WS/tools/node-dist" --no-same-owner 2>/dev/null
+    tar -xJf "$_DL" -C "$WS/tools/node-dist" --no-same-owner 2>/dev/null
+    rm -f "$_DL"
     NODE_BIN="$(ls -d "$WS"/tools/node-dist/node-v*/bin/node 2>/dev/null | head -1)"
     [ -n "$NODE_BIN" ] && ok "已下载: $NODE_BIN" || miss "下载后仍找不到 node"
   else
@@ -102,8 +108,10 @@ else
   if [ -n "$VER" ]; then
     DST="$WS/build/master-build/prebuilt/node_modules/$PKG"
     mkdir -p "$DST"
-    if curl -sL --max-time 300 -o /tmp/dsh-nas.tgz "$NPM_REG/$PKG/-/node-addon-system-$HOST-$VER.tgz"; then
-      tar -xzf /tmp/dsh-nas.tgz -C "$DST" --strip-components=1 --no-same-owner 2>/dev/null
+    _DL="$(platform_tmp_file dsh-nas)" || { miss "无法创建临时文件"; exit 1; }
+    if curl -sL --max-time 300 -o "$_DL" "$NPM_REG/$PKG/-/node-addon-system-$HOST-$VER.tgz"; then
+      tar -xzf "$_DL" -C "$DST" --strip-components=1 --no-same-owner 2>/dev/null
+      rm -f "$_DL"
       [ -f "$DST/bin/glibc/system.node" ] && ok "已下载: $DST/bin/glibc/system.node (v$VER)" || miss "解包后未找到 system.node"
     else
       miss "下载失败"
@@ -126,9 +134,11 @@ elif [ "$CHECK_ONLY" = "1" ]; then
 else
   warn "缺失 → 经 $GH_PROXY 拉 tag 包 dsh-v$DSH_VERSION（git 协议在本环境常不通）"
   mkdir -p "$SRC"
-  if curl -sL --max-time 900 -o /tmp/dsh-src.tgz \
+  _DL="$(platform_tmp_file dsh-src)" || { miss "无法创建临时文件"; exit 1; }
+  if curl -sL --max-time 900 -o "$_DL" \
        "$GH_PROXY/https://github.com/deepseek-ai/deepseek-harness/archive/refs/tags/dsh-v$DSH_VERSION.tar.gz"; then
-    tar -xzf /tmp/dsh-src.tgz -C "$SRC" --strip-components=1 --no-same-owner 2>/dev/null
+    tar -xzf "$_DL" -C "$SRC" --strip-components=1 --no-same-owner 2>/dev/null
+    rm -f "$_DL"
     [ -f "$SRC/package.json" ] && ok "已下载: $SRC" || miss "解包后未找到 package.json"
   else
     miss "下载失败"
