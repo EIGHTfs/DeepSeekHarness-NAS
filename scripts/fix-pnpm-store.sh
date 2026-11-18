@@ -8,10 +8,9 @@
 #  「ERR_PNPM_UNEXPECTED_STORE: Unexpected store location」
 #
 #  背景（2026-09-17 实测闭环）：
-#    DSH 套件以 `DeepSeekHarness-NAS` 用户运行，其 HOME 是
-#    /var/packages/DeepSeekHarness-NAS/home。profile 的 node_modules
-#    实际由这个 HOME 下的 store 链接而成：
-#      /var/packages/DeepSeekHarness-NAS/home/.local/share/pnpm/store/v11
+#    DSH 套件以 <包名> 用户运行，其 HOME 是 <套件根>/<包名>/home。
+#    profile 的 node_modules 实际由这个 HOME 下的 store 链接而成：
+#      <套件根>/<包名>/home/.local/share/pnpm/store/v11
 #    但该 HOME 下没有 .npmrc，pnpm 遂退回默认 store 位置
 #    （$HOME/.local/share/pnpm/store，或读不到 HOME 时的 /root 等）。
 #    两者不一致 → pnpm 拒绝操作并直接退出，表现为：
@@ -27,10 +26,17 @@
 #    2) 把 store-dir 写进套件用户的 HOME/.npmrc（幂等：已有同值则跳过）
 #    3) 以套件用户身份验证 pnpm 能读到该配置且 install 不再报错
 #
-#  用法: ./fix-pnpm-store.sh [DSH_HOME]
-#        缺省 DSH_HOME = /volume1/@appdata/DeepSeekHarness-NAS/<版本>/.dsh
+# 【USAGE-BEGIN】
+#  用法: ./fix-pnpm-store.sh [DSH_HOME] [选项]
+#        缺省 DSH_HOME = <数据根>/<包名>/<版本>/.dsh（自动取最新版本目录）
 #        若只给到实例目录，脚本自动补 .dsh
-#  -d / --dry-run : 只显示将改什么，不写入
+#  选项:
+#    -d, --dry-run        只显示将改什么，不写入
+#    --package <名>       套件包名（默认 DeepSeekHarness-NAS）
+#    --pkg-root <目录>    平台套件根（默认 /var/packages；飞牛为 /var/apps）
+#    --data-root <目录>   平台数据根（默认 /volume1/@appdata；飞牛为 /vol1/@appcenter）
+#        后三项让同一份逻辑适用于别的套件，不必改脚本。
+# 【USAGE-END】
 #
 #  注意：必须用 root 运行（要写套件用户 HOME）；脚本内部会 su 到
 #        套件用户执行验证，因此 .npmrc 的属主是套件用户而非 root。
@@ -39,17 +45,42 @@
 set -u
 
 DRY_RUN=0
-for a in "$@"; do
-  [ "$a" = "-d" ] || [ "$a" = "--dry-run" ] && DRY_RUN=1
+DSH_HOME=""
+# 包名与平台根目录都可覆盖：本脚本的逻辑与具体套件无关，别的套件同样适用。
+#   --package    套件包名（决定默认的 data/appstore/packages 路径，默认本项目）
+#   --pkg-root   平台套件根（群晖 /var/packages，飞牛 /var/apps）
+#   --data-root  平台数据根（群晖 /volume1/@appdata，飞牛 /vol1/@appcenter）
+PKG_NAME="${PKG_NAME:-DeepSeekHarness-NAS}"
+PKG_ROOT_ARG=""
+DATA_ROOT_ARG=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d|--dry-run) DRY_RUN=1; shift ;;
+    --package)    PKG_NAME="${2:?--package 需要一个包名}"; shift 2 ;;
+    --package=*)  PKG_NAME="${1#*=}"; shift ;;
+    --pkg-root)   PKG_ROOT_ARG="${2:?--pkg-root 需要一个目录}"; shift 2 ;;
+    --pkg-root=*) PKG_ROOT_ARG="${1#*=}"; shift ;;
+    --data-root)  DATA_ROOT_ARG="${2:?--data-root 需要一个目录}"; shift 2 ;;
+    --data-root=*)DATA_ROOT_ARG="${1#*=}"; shift ;;
+    -h|--help)
+      # 标记必须在源码里拆成两段拼接：整串写进命令会让 sed 自己那行也匹配到开始标记，
+      #   范围于是重新打开、一路打到文件末尾（实测踩过）。
+      _b='【USAGE''-BEGIN】'; _e='【USAGE''-END】'
+      sed -n "/${_b}/,/${_e}/p" "$0" | sed 's/^# \{0,1\}//' | grep -v 'USAGE-'
+      exit 0 ;;
+    *)            [ -z "$DSH_HOME" ] && DSH_HOME="$1"; shift ;;
+  esac
 done
 
-# ── 定位 DSH_HOME ─────────────────────────────────────────────
-DSH_HOME="${1:-}"
-[ "${DSH_HOME}" = "-d" ] || [ "${DSH_HOME}" = "--dry-run" ] && DSH_HOME=""
+# 平台路径单一出处（默认值即真实路径，可用环境变量/上面的参数覆盖）
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/platform-paths.sh"
+[ -n "$PKG_ROOT_ARG" ] && PLATFORM_DSM_PKG_ROOT="$PKG_ROOT_ARG"
+[ -n "$DATA_ROOT_ARG" ] && PLATFORM_DSM_APPDATA_ROOT="$DATA_ROOT_ARG"
 
+# ── 定位 DSH_HOME ─────────────────────────────────────────────
 if [ -z "$DSH_HOME" ]; then
-  # 自动探测：/volume1/@appdata/DeepSeekHarness-NAS/<版本>/.dsh
-  for base in /volume1/@appdata/DeepSeekHarness-NAS /vol1/@appdata/DeepSeekHarness-NAS; do
+  # 自动探测：<数据根>/<包名>/<版本>/.dsh（群晖与飞牛的数据根都试一遍）
+  for base in "$PLATFORM_DSM_APPDATA_ROOT/$PKG_NAME" "$PLATFORM_FNOS_APPCENTER_ROOT/$PKG_NAME"; do
     [ -d "$base" ] || continue
     ver="$(ls -1 "$base" 2>/dev/null | grep -E '^[0-9]' | sort -V | tail -1)"
     [ -n "$ver" ] && [ -d "$base/$ver/.dsh" ] && { DSH_HOME="$base/$ver/.dsh"; break; }
@@ -75,10 +106,10 @@ echo "  profile : $PROFILE_DIR"
 # ── 定位套件用户与 HOME ───────────────────────────────────────
 # 以 profile 目录的属主为准（就是运行 DSH 的那个用户），不硬编码用户名
 PKG_USER="$(stat -c '%U' "$PROFILE_DIR" 2>/dev/null)"
-[ -z "$PKG_USER" ] || [ "$PKG_USER" = "UNKNOWN" ] && PKG_USER="DeepSeekHarness-NAS"
+[ -z "$PKG_USER" ] || [ "$PKG_USER" = "UNKNOWN" ] && PKG_USER="$PKG_NAME"
 
 PKG_HOME=""
-[ -d "/var/packages/DeepSeekHarness-NAS/home" ] && PKG_HOME="/var/packages/DeepSeekHarness-NAS/home"
+[ -d "$PLATFORM_DSM_PKG_ROOT/$PKG_NAME/home" ] && PKG_HOME="$PLATFORM_DSM_PKG_ROOT/$PKG_NAME/home"
 [ -z "$PKG_HOME" ] && PKG_HOME="$(getent passwd "$PKG_USER" 2>/dev/null | cut -d: -f6)"
 
 if [ -z "$PKG_HOME" ] || [ ! -d "$PKG_HOME" ]; then
@@ -136,14 +167,13 @@ else
 fi
 
 # ── ③ 以套件用户身份验证 ────────────────────────────────────
-PNPM_MJS=""
-for c in /var/packages/DeepSeekHarness-NAS/target/pnpm/dist/pnpm.mjs \
-         /volume1/@appstore/DeepSeekHarness-NAS/pnpm/dist/pnpm.mjs; do
-  [ -f "$c" ] && { PNPM_MJS="$c"; break; }
-done
+# pnpm 入口与 node 都用共享库探测（随包 pnpm → PATH → corepack 缓存；node 走项目自备/PATH）
+PNPM_MJS="$(resolve_pnpm_entry 2>/dev/null || true)"
 NODE_BIN=""
-for c in /var/packages/DeepSeekHarness-NAS/target/bin/node /usr/local/bin/node /usr/bin/node; do
-  [ -x "$c" ] && { NODE_BIN="$c"; break; }
+for c in "$(platform_pkg_dest "$PKG_NAME")/bin/node" \
+         "$PLATFORM_DSM_PKG_ROOT/$PKG_NAME/target/bin/node" \
+         /usr/local/bin/node /usr/bin/node; do
+  [ -n "$c" ] && [ -x "$c" ] && { NODE_BIN="$c"; break; }
 done
 
 echo ""
