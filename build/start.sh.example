@@ -194,10 +194,16 @@ else
   # 使手动启动与套件启动落到同一 DSH_HOME（同一 PID 文件），避免「两套实例」——否则
   # is_running 各读各的 PID 文件互不感知，AI/手动 restart 会操作错误实例（2026-09-22 实测分叉）。
   # 探测不到（非群晖部署：fnOS 走 TRIM_PKGVAR 分支不受影响；纯目录部署）则回退 .dsh-home 保持原行为。
-  _APP_NAME="${APP_NAME:-$(basename "$DSH_DIR")}"
+  # ⚠ 包名不能只取 basename "$DSH_DIR"：DSH_DIR 通常是 <包根>/target，
+  #   basename 会得到字面量 "target"，于是探测 /var/packages/target/var 必然失败、
+  #   一路回退 .dsh-home —— 手工启动与套件启动就此落到两套 DSH_HOME，正是本段要避免的分叉。
+  #   改为按「DSH_DIR 的父目录名」优先（target 的父就是包名），并保留多个候选依次试。
   SYNODATA=""
-  for _d in "/var/packages/${_APP_NAME}/var" /volume*/@appdata/${_APP_NAME}; do
-    [ -d "$_d/$PKG_VERSION" ] && { SYNODATA="$_d"; break; }
+  for _name in "${APP_NAME:-}" "$(basename "$(dirname "$DSH_DIR")" 2>/dev/null)" "$(basename "$DSH_DIR" 2>/dev/null)"; do
+    [ -n "$_name" ] || continue
+    for _d in "/var/packages/${_name}/var" /volume*/@appdata/${_name}; do
+      [ -d "$_d/$PKG_VERSION" ] && { SYNODATA="$_d"; break 2; }
+    done
   done
   if [ -n "$SYNODATA" ]; then
     DSH_HOME_PARENT="$SYNODATA/$PKG_VERSION"
