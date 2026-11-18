@@ -1712,6 +1712,11 @@ cmd_start() {
   install_dsh_wrapper() {
     local target="$1" real="$2"
     mkdir -p "$(dirname "$target")" 2>/dev/null || return 1
+    # ⚠ 先删目标再写：安装期 pack-spk 曾用 ln -sfn 把 /usr/bin/dsh 建成指向 $DSH_DIR/bin/dsh 的**软链**。
+    #   若直接 `cat > /usr/bin/dsh`，写入会顺着软链**写穿到真身**，把实例自带的 bin/dsh 覆盖成
+    #   「exec 自己」的 8 行 wrapper → dsh 命令无限递归、退出码 0 但零输出（实测踩到）。
+    #   删掉（含软链本身）再写，目标就是独立实文件，不会波及真身。
+    rm -f "$target" 2>/dev/null || true
     cat > "$target" <<DSH_WRAPPER_EOF
 #!/bin/sh
 # DSH CLI wrapper —— 由 start.sh 生成（2026-09-17），请勿手改：
