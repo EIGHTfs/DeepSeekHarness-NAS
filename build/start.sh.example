@@ -2,7 +2,7 @@
 # ============================================================
 #  DSH 实例启动脚本 (dsh-v0.1.2-alpha.4) —— 自包含版
 #  数据区: <DSH_DIR>/.dsh-home/.dsh (自动定位)
-#  用法:   ./start.sh [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store]
+#  用法:   ./start.sh [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store|self-check]
 #
 #  ⚠ 本文件是【逻辑母版】，不是最终运行脚本：
 #     最终 start.sh 由 pack-spk.sh / pack-fpk.sh 依 build-config.yaml 生成，
@@ -29,7 +29,6 @@
 
 # ---------- 自动定位 ----------
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
 # 智能定位 DSH 实例目录：
 #   1) 脚本所在目录本身就是实例（默认部署）
 #   2) 逐级向上找（脚本副本放在实例内的工作区/子目录时）
@@ -55,7 +54,7 @@ find_dsh_dir() {
     fi
   done
   echo "[!] 未找到 DSH 实例目录（apps/cli/src/bin.ts / lib/bin.js）" >&2
-  exit 1
+  return 1
 }
 # ---------- gen-portal：生成门户配置（ui/config）----------
 #   纯配置输出：端口取自 --proxy-port / 环境变量 / 母版占位符默认值；
@@ -69,60 +68,6 @@ find_dsh_dir() {
 #                   token 每次启动会变 → 该字段由运行期（服务起来后）重写，而非打包期固化。
 #   --key-id NAME   UI 键名主体（默认 __APP_ID__，去连字符；SPK 用默认即与 INFO dsmappname 一致，
 #                   FPK 需带连字符传 --key-id __APP_NAME__ 与 manifest desktop_applaunchname 对齐）
-if [ "${1:-}" = "gen-portal" ]; then
-  shift
-  _gp_type="url"; _gp_prefix="SYNO.SDS."; _gp_all="false"; _gp_url="false"
-  _gp_keyid="__APP_ID__"
-  _gp_proxy="${DSH_PROXY_PORT:-__PROXY_PORT__}"
-  _gp_token=""                    # 非空则门户 url 写成 "/?token=…"（见上方用法说明）
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --type=*)       _gp_type="${1#*=}" ; shift ;;
-      --type)         _gp_type="$2" ; shift 2 ;;
-      --key-prefix=*) _gp_prefix="${1#*=}" ; shift ;;
-      --key-prefix)   _gp_prefix="$2" ; shift 2 ;;
-      --key-id=*)     _gp_keyid="${1#*=}" ; shift ;;
-      --key-id)       _gp_keyid="$2" ; shift 2 ;;
-      --all-users=*)  _gp_all="${1#*=}" ; shift ;;
-      --all-users)    _gp_all="$2" ; shift 2 ;;
-      --with-url=*)   _gp_url="${1#*=}" ; shift ;;
-      --with-url)     _gp_url="$2" ; shift 2 ;;
-      --token=*)      _gp_token="${1#*=}" ; shift ;;
-      --token)        _gp_token="$2" ; shift 2 ;;
-      --proxy-port=*) _gp_proxy="${1#*=}" ; shift ;;
-      --proxy-port)   _gp_proxy="$2" ; shift 2 ;;
-      *)              echo "[!] gen-portal 未知参数: $1" >&2 ; exit 1 ;;
-    esac
-  done
-  _gp_url_line=""
-  # ★ 2026-10-10 实测：fnOS 桌面/套件入口的 url 必须【不带参数】（对照能正常打开的
-  #   1Panel，它的 .url 条目里根本没有 url 字段，只有 protocol+port）。此前写
-  #   "/?token=…" 会让「打开」按钮失效；免密改由反代自动完成（⓪局域网硬闸 → ①无 token
-  #   自动带 token → ①b 陈旧 token 换成当次），实测三种方式都 200。
-  if [ "$_gp_url" = "true" ]; then
-    _gp_url_line='
-            "url": "/",'
-  fi
-  cat <<PORTAL_EOF
-{
-    ".url": {
-        "${_gp_prefix}${_gp_keyid}.Application": {
-            "type": "${_gp_type}",
-            "icon": "images/icon_{0}.png",
-            "title": "__PORTAL_TITLE__",
-            "desc": "__PORTAL_DESC__",
-            "protocol": "http",
-            "port": "${_gp_proxy}",${_gp_url_line}
-            "allUsers": ${_gp_all}
-        }
-    }
-}
-PORTAL_EOF
-  exit 0
-fi
-
-DSH_DIR="$(find_dsh_dir)"
-
 # ---------- 版本号解析（优先级链，配置驱动）----------
 # 数据目录按版本隔离（TRIM_PKGVAR/<version>/，覆盖安装不覆盖旧数据），名牌亦取此值。
 # 优先级顺序由 build-config.yaml 的 brand_version_order 决定（打包期注入本行，
@@ -136,7 +81,6 @@ DSH_DIR="$(find_dsh_dir)"
 #   会把数据目录错建成 <var>/1.0.0（2026-09-13 实测）。
 BRAND_VERSION_ORDER="__BRAND_VERSION_ORDER__"
 
-# 单个来源的取值（无值输出空）
 _version_from() {
   local src="$1" dir="$2" f v
   case "$src" in
@@ -174,6 +118,70 @@ resolve_pkg_version() {
   done
   return 0
 }
+find_node() {
+  # 1) 本实例自带 node（bin/node，与 start.sh 同目录 —— 相对路径，与包名无关，最稳）
+  # 2) 系统标准路径（/usr/local/bin /usr/bin）
+  # 3) PATH 兜底
+  for c in "$SCRIPT_DIR/bin/node" "$DSH_DIR/bin/node" \
+           "/usr/local/bin/node" "/usr/bin/node"; do
+    [ -x "$c" ] && { echo "$c"; return 0; }
+  done
+  command -v node 2>/dev/null
+}
+# ---------- 首启构建（已抽离留档 2026-09-13） ----------
+# 完整预构建包（-dist）已含 node_modules 与构建产物，装完即用、免首启构建。
+# 如需精简包首启构建逻辑（ensure_built + 构建进度占位页），
+# 见同级 scripts/first-build-logic.sh（抽离留档，实际打包不使用）。
+
+detect_entry() {
+  if [ -f "$DSH_DIR/apps/cli/lib/bin.js" ]; then
+    ENTRY="$DSH_DIR/apps/cli/lib/bin.js"; TSX=0
+  elif [ -f "$DSH_DIR/apps/cli/src/bin.ts" ]; then
+    ENTRY="$DSH_DIR/apps/cli/src/bin.ts"; TSX=1
+  elif [ -f "$DSH_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js" ]; then
+    ENTRY="$DSH_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js"; TSX=0
+  elif [ -f "$DSH_DIR/lib/bin.js" ]; then
+    ENTRY="$DSH_DIR/lib/bin.js"; TSX=0
+  else
+    echo "[!] 未找到 DSH 启动入口（apps/cli/src/bin.ts / lib/bin.js）" >&2
+    return 1
+  fi
+}
+_tmp_exec_ok() {
+  [ -n "$1" ] || return 1
+  [ -d "$1" ] && [ -w "$1" ] || return 1
+  _probe="$1/.dsh-exec-probe.$$"
+  printf '#!/bin/sh\nexit 0\n' > "$_probe" 2>/dev/null || return 1
+  chmod 700 "$_probe" 2>/dev/null
+  "$_probe" >/dev/null 2>&1
+  _rc=$?
+  rm -f "$_probe" 2>/dev/null
+  return $_rc
+}
+# 【2026-10-03】目录创建推迟到 cmd_start：原先写在顶层，会让只读的 `check` 也产生副作用
+# （凭空建出数据目录/ tmp），且 status/stop 本就不该创建目录。只读子命令必须真的只读。
+ensure_pid_dirs() {
+  mkdir -p "$PID_DIR" 2>/dev/null || true
+  mkdir -p "$TMPDIR" 2>/dev/null || true
+}
+# sticky /tmp + fs.protected_regular=1：非属主无法截断他人文件。
+# 先截断；失败则 unlink 再新建（sticky 目录里文件所有者/root 可删）。
+ensure_tmpfile_writable() {
+  local f="$1"
+  if : > "$f" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$f" 2>/dev/null || true
+  if : > "$f" 2>/dev/null; then
+    return 0
+  fi
+  echo "[!] 无法写入 $f（请检查该路径及其父目录的权限/属主）" >&2
+  return 1
+}
+
+# ---------- 解析区：所有"值计算"集中于此，可被 source 后单独调用 ----------
+resolve_environment() {
+DSH_DIR="$(find_dsh_dir)"
 PKG_VERSION="$(resolve_pkg_version "$DSH_DIR")"
 [ -z "$PKG_VERSION" ] && PKG_VERSION="__FPK_VERSION__"
 # 名牌名称（网页左上角；由打包脚本依 build-config.yaml brand_name 注入）
@@ -227,79 +235,8 @@ fi
 #   与 profile 会双双跑偏 —— 那是比原 bug 更隐蔽的错误。用户想指定 home 应走 wrapper
 #   的 CLI 场景（见 install_dsh_wrapper），服务侧不接受外部覆盖。
 export DSH_HOME="$DSH_HOME_DIR"
-
-find_node() {
-  # 1) 本实例自带 node（bin/node，与 start.sh 同目录 —— 相对路径，与包名无关，最稳）
-  # 2) 系统标准路径（/usr/local/bin /usr/bin）
-  # 3) PATH 兜底
-  for c in "$SCRIPT_DIR/bin/node" "$DSH_DIR/bin/node" \
-           "/usr/local/bin/node" "/usr/bin/node"; do
-    [ -x "$c" ] && { echo "$c"; return 0; }
-  done
-  command -v node 2>/dev/null
-}
-NODE_BIN="$(find_node)" || { echo "[!] 未找到 node 可执行文件" >&2; exit 1; }
-
-# ---------- 首启构建（已抽离留档 2026-09-13） ----------
-# 完整预构建包（-dist）已含 node_modules 与构建产物，装完即用、免首启构建。
-# 如需精简包首启构建逻辑（ensure_built + 构建进度占位页），
-# 见同级 scripts/first-build-logic.sh（抽离留档，实际打包不使用）。
-
-detect_entry() {
-  if [ -f "$DSH_DIR/apps/cli/lib/bin.js" ]; then
-    ENTRY="$DSH_DIR/apps/cli/lib/bin.js"; TSX=0
-  elif [ -f "$DSH_DIR/apps/cli/src/bin.ts" ]; then
-    ENTRY="$DSH_DIR/apps/cli/src/bin.ts"; TSX=1
-  elif [ -f "$DSH_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js" ]; then
-    ENTRY="$DSH_DIR/node_modules/@deepseek-ai/dsh/lib/bin.js"; TSX=0
-  elif [ -f "$DSH_DIR/lib/bin.js" ]; then
-    ENTRY="$DSH_DIR/lib/bin.js"; TSX=0
-  else
-    echo "[!] 未找到 DSH 启动入口（apps/cli/src/bin.ts / lib/bin.js）" >&2
-    exit 1
-  fi
-}
-
-detect_entry
-
-# ---------- CLI 参数解析 ----------
-DSH_CMD="${1:-start}"
-PROXY_PORT_ARG=""
-DSH_PORT_ARG=""
-CONTAINER_PORT_ARG=""
-OWNER_ARG=""
-CHECK_DEEP=0
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --proxy-port=*)     PROXY_PORT_ARG="${1#*=}" ; shift ;;
-    --dsh-port=*)       DSH_PORT_ARG="${1#*=}" ; shift ;;
-    --container-port=*) CONTAINER_PORT_ARG="${1#*=}" ; shift ;;
-    --proxy-port)       PROXY_PORT_ARG="$2" ; shift 2 ;;
-    --dsh-port)         DSH_PORT_ARG="$2" ; shift 2 ;;
-    --container-port)   CONTAINER_PORT_ARG="$2" ; shift 2 ;;
-    --owner=*)          OWNER_ARG="${1#*=}" ; shift ;;
-    --owner)            OWNER_ARG="$2" ; shift 2 ;;
-    --deep)             CHECK_DEEP=1 ; shift ;;
-    start|stop|restart|status|check|fix-owner|fix-deps|fix-store) DSH_CMD="$1" ; shift ;;
-    -h|--help)
-      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store]"
-      echo "  --proxy-port N       反代端口（默认 __PROXY_PORT__，环境变量 DSH_PROXY_PORT）"
-      echo "  --dsh-port N         DSH 内部端口（默认 __DSH_PORT__，环境变量 DSH_DSH_PORT）"
-      echo "  --container-port N   容器页面端口（默认 __CONTAINER_PORT__，环境变量 DSH_CONTAINER_PORT）"
-      echo "  check                只读自检：属主/凭据权限/ACL/端口/缺包（--deep 追加缺包导入探测）"
-      echo "  fix-owner            修复属主漂移（仅 root；--owner <服务用户名>）"
-      echo "  --owner NAME         fix-owner 的目标属主（默认取数据父目录的属主）"
-      echo "  --deep               check 追加运行时缺包导入探测（较慢）"
-      exit 0
-      ;;
-    *)
-      echo "[!] 未知参数: $1" >&2
-      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store]" >&2
-      exit 1
-      ;;
-  esac
-done
-
+NODE_BIN="$(find_node)" || { echo "[!] 未找到 node 可执行文件" >&2; return 1; }
+detect_entry || return 1
 # ---------- 端口 / tmp / IP ----------
 # 端口优先级：CLI 参数 > 环境变量 > 默认值
 PROXY_PORT="${PROXY_PORT_ARG:-${DSH_PROXY_PORT:-__PROXY_PORT__}}"
@@ -339,17 +276,6 @@ DSH_TMP_DIR=""
 #   静态/文档请求一律 400（存在=400、不存在=404，极具误导性）。
 #   实测：同一进程只改 TMPDIR —— /tmp → 失败；应用临时目录（btrfs）→ 成功。
 #   故候选目录必须通过"可写 + 可执行"双检（exec 探测：写一个脚本并运行）。
-_tmp_exec_ok() {
-  [ -n "$1" ] || return 1
-  [ -d "$1" ] && [ -w "$1" ] || return 1
-  _probe="$1/.dsh-exec-probe.$$"
-  printf '#!/bin/sh\nexit 0\n' > "$_probe" 2>/dev/null || return 1
-  chmod 700 "$_probe" 2>/dev/null
-  "$_probe" >/dev/null 2>&1
-  _rc=$?
-  rm -f "$_probe" 2>/dev/null
-  return $_rc
-}
 for _cand in "${TRIM_PKGTMP:-}" "/var/apps/${APP_NAME}/tmp" "/var/packages/${APP_NAME}/tmp" "${PID_DIR}/tmp"; do
   [ -n "$_cand" ] || continue
   _tmp_exec_ok "$_cand" && { DSH_TMP_DIR="$_cand"; break; }
@@ -362,12 +288,6 @@ if [ -z "$DSH_TMP_DIR" ]; then
 fi
 [ -n "$DSH_TMP_DIR" ] || DSH_TMP_DIR="${PID_DIR}/tmp"
 export TMPDIR="$DSH_TMP_DIR" TMP="$DSH_TMP_DIR" TEMP="$DSH_TMP_DIR"
-# 【2026-10-03】目录创建推迟到 cmd_start：原先写在顶层，会让只读的 `check` 也产生副作用
-# （凭空建出数据目录/ tmp），且 status/stop 本就不该创建目录。只读子命令必须真的只读。
-ensure_pid_dirs() {
-  mkdir -p "$PID_DIR" 2>/dev/null || true
-  mkdir -p "$TMPDIR" 2>/dev/null || true
-}
 # fnOS/Synology 把包用户的登录 shell 记成 /sbin/nologin，但该文件在本机并不存在
 # （/sbin -> usr/sbin，/usr/sbin/nologin 缺失）。DSH 的 subprocess-local 用
 # process.env.SHELL || os.userInfo().shell 解析侧边栏终端默认 shell；不设 SHELL 时
@@ -375,25 +295,24 @@ ensure_pid_dirs() {
 # 'subprocess-local: command "/sbin/nologin" is not an executable file'。
 # process.env.SHELL 优先级高于 passwd，继承值不可执行时回退到真实存在的 bash。
 [ -x "${SHELL:-}" ] || export SHELL=/bin/bash
-
 LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 [ -n "$LAN_IP" ] || LAN_IP="<NAS-IP>"
-
-# sticky /tmp + fs.protected_regular=1：非属主无法截断他人文件。
-# 先截断；失败则 unlink 再新建（sticky 目录里文件所有者/root 可删）。
-ensure_tmpfile_writable() {
-  local f="$1"
-  if : > "$f" 2>/dev/null; then
-    return 0
-  fi
-  rm -f "$f" 2>/dev/null || true
-  if : > "$f" 2>/dev/null; then
-    return 0
-  fi
-  echo "[!] 无法写入 $f（请检查该路径及其父目录的权限/属主）" >&2
-  return 1
+  return 0
 }
 
+# ---------- self-check：输出本机解析结果摘要（只读，供验证用）----------
+cmd_self_check() {
+  printf "PKG_VERSION=%s\n" "$PKG_VERSION"
+  printf "PKG_NAME=%s\n" "$(basename "$(dirname "$DSH_DIR")")"
+  printf "DSH_DIR=%s\n" "$DSH_DIR"
+  printf "DSH_HOME=%s\n" "$DSH_HOME_DIR"
+  printf "NODE_BIN=%s\n" "$NODE_BIN"
+  printf "ENTRY=%s\n" "$ENTRY"
+  case "$PKG_VERSION" in \__*__*|"") echo "[!] 版本未正确注入" >&2; return 1;; esac
+  [ -x "$NODE_BIN" ] || { echo "[!] NODE_BIN 不可执行: $NODE_BIN" >&2; return 1; }
+  [ -f "$ENTRY" ] || { echo "[!] ENTRY 不存在: $ENTRY" >&2; return 1; }
+  return 0
+}
 # ============================================================
 #  内嵌修复/守护代码（CommonJS）。启动 DSH + 反代 + 容器页，
 #  权限/目录修复，token 捕获，信号处理。所有输入走 DSH_REPAIR_* 环境变量。
@@ -2275,6 +2194,98 @@ cmd_fix_store() {
   fix_pnpm_store_dir
 }
 
+
+# 【分区纪律】被 source 时只定义函数、不执行动作；直接执行才进入 main。
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+if [ "${1:-}" = "gen-portal" ]; then
+  shift
+  _gp_type="url"; _gp_prefix="SYNO.SDS."; _gp_all="false"; _gp_url="false"
+  _gp_keyid="__APP_ID__"
+  _gp_proxy="${DSH_PROXY_PORT:-__PROXY_PORT__}"
+  _gp_token=""                    # 非空则门户 url 写成 "/?token=…"（见上方用法说明）
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --type=*)       _gp_type="${1#*=}" ; shift ;;
+      --type)         _gp_type="$2" ; shift 2 ;;
+      --key-prefix=*) _gp_prefix="${1#*=}" ; shift ;;
+      --key-prefix)   _gp_prefix="$2" ; shift 2 ;;
+      --key-id=*)     _gp_keyid="${1#*=}" ; shift ;;
+      --key-id)       _gp_keyid="$2" ; shift 2 ;;
+      --all-users=*)  _gp_all="${1#*=}" ; shift ;;
+      --all-users)    _gp_all="$2" ; shift 2 ;;
+      --with-url=*)   _gp_url="${1#*=}" ; shift ;;
+      --with-url)     _gp_url="$2" ; shift 2 ;;
+      --token=*)      _gp_token="${1#*=}" ; shift ;;
+      --token)        _gp_token="$2" ; shift 2 ;;
+      --proxy-port=*) _gp_proxy="${1#*=}" ; shift ;;
+      --proxy-port)   _gp_proxy="$2" ; shift 2 ;;
+      *)              echo "[!] gen-portal 未知参数: $1" >&2 ; exit 1 ;;
+    esac
+  done
+  _gp_url_line=""
+  # ★ 2026-10-10 实测：fnOS 桌面/套件入口的 url 必须【不带参数】（对照能正常打开的
+  #   1Panel，它的 .url 条目里根本没有 url 字段，只有 protocol+port）。此前写
+  #   "/?token=…" 会让「打开」按钮失效；免密改由反代自动完成（⓪局域网硬闸 → ①无 token
+  #   自动带 token → ①b 陈旧 token 换成当次），实测三种方式都 200。
+  if [ "$_gp_url" = "true" ]; then
+    _gp_url_line='
+            "url": "/",'
+  fi
+  cat <<PORTAL_EOF
+{
+    ".url": {
+        "${_gp_prefix}${_gp_keyid}.Application": {
+            "type": "${_gp_type}",
+            "icon": "images/icon_{0}.png",
+            "title": "__PORTAL_TITLE__",
+            "desc": "__PORTAL_DESC__",
+            "protocol": "http",
+            "port": "${_gp_proxy}",${_gp_url_line}
+            "allUsers": ${_gp_all}
+        }
+    }
+}
+PORTAL_EOF
+  exit 0
+fi
+# ---------- CLI 参数解析 ----------
+DSH_CMD="${1:-start}"
+PROXY_PORT_ARG=""
+DSH_PORT_ARG=""
+CONTAINER_PORT_ARG=""
+OWNER_ARG=""
+CHECK_DEEP=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --proxy-port=*)     PROXY_PORT_ARG="${1#*=}" ; shift ;;
+    --dsh-port=*)       DSH_PORT_ARG="${1#*=}" ; shift ;;
+    --container-port=*) CONTAINER_PORT_ARG="${1#*=}" ; shift ;;
+    --proxy-port)       PROXY_PORT_ARG="$2" ; shift 2 ;;
+    --dsh-port)         DSH_PORT_ARG="$2" ; shift 2 ;;
+    --container-port)   CONTAINER_PORT_ARG="$2" ; shift 2 ;;
+    --owner=*)          OWNER_ARG="${1#*=}" ; shift ;;
+    --owner)            OWNER_ARG="$2" ; shift 2 ;;
+    --deep)             CHECK_DEEP=1 ; shift ;;
+    start|stop|restart|status|check|fix-owner|fix-deps|fix-store|self-check) DSH_CMD="$1" ; shift ;;
+    -h|--help)
+      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store|self-check]"
+      echo "  --proxy-port N       反代端口（默认 __PROXY_PORT__，环境变量 DSH_PROXY_PORT）"
+      echo "  --dsh-port N         DSH 内部端口（默认 __DSH_PORT__，环境变量 DSH_DSH_PORT）"
+      echo "  --container-port N   容器页面端口（默认 __CONTAINER_PORT__，环境变量 DSH_CONTAINER_PORT）"
+      echo "  check                只读自检：属主/凭据权限/ACL/端口/缺包（--deep 追加缺包导入探测）"
+      echo "  fix-owner            修复属主漂移（仅 root；--owner <服务用户名>）"
+      echo "  --owner NAME         fix-owner 的目标属主（默认取数据父目录的属主）"
+      echo "  --deep               check 追加运行时缺包导入探测（较慢）"
+      exit 0
+      ;;
+    *)
+      echo "[!] 未知参数: $1" >&2
+      echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store|self-check]" >&2
+      exit 1
+      ;;
+  esac
+done
+resolve_environment || exit 1
 # ---------- main ----------
 case "$DSH_CMD" in
   start)   cmd_start ;;
@@ -2285,8 +2296,10 @@ case "$DSH_CMD" in
   fix-owner) cmd_fix_owner ;;
   fix-deps) cmd_fix_deps ;;
   fix-store) cmd_fix_store ;;
+  self-check) cmd_self_check ;;
   *)
-    echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store]"
+    echo "用法: $0 [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store|self-check]"
     exit 1
     ;;
 esac
+fi
