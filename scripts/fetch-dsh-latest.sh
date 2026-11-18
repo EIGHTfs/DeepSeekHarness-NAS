@@ -377,6 +377,11 @@ if ! unzip -q "$ZIP" -d "$WORK/extract"; then
 fi
 INNER="$(find "$WORK/extract" -mindepth 1 -maxdepth 1 -type d | head -n1)"
 [[ -z "$INNER" ]] && { echo "✗ 解压后未找到源码目录。" >&2; exit 1; }
+# 与 git clone 分支同一处理：目标已存在时 mv 会把源移进目标内部（源码落到 <target>/<解压目录>/），
+#   故先清掉目标。TARGET 只是官方源码快照目录，不含用户数据。
+if [ -e "$TARGET" ]; then
+  rm -rf --one-file-system "$TARGET" 2>/dev/null || true
+fi
 mv "$INNER" "$TARGET"
 rm -f "$ZIP"
 
