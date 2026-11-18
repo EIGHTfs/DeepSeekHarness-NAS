@@ -5,7 +5,7 @@
 用法:
     ./build/fix-node-links.py <应用体或 target 目录> [--quiet]
 
-为什么需要它（2026-10-09 真机实测，每一句都有现场）：
+为什么需要它（真机实测，每一句都有现场）：
   DSH 运行时按 node_modules/<包名> 解析依赖，而 pnpm 的链接分三层，任一层缺失都会
   在启动时报 Cannot find module / Cannot find package：
     ① 顶层  node_modules/<包名>              —— 工作区包与 hoisted 依赖
@@ -37,7 +37,7 @@ SKIP_TOP = {"node_modules", ".git"}
 def ver_key(entity_dir):
     """从 .pnpm/<名字>@<版本>[_peer…] 目录名取版本元组，用于选最高版本。
 
-    实测教训（2026-10-09）：同一包常有多个版本实体（signal-exit@3.0.7 与 4.1.0），
+    实测教训：同一包常有多个版本实体（signal-exit@3.0.7 与 4.1.0），
     按**字典序**取第一个会选中 3.0.7，而消费者要的是 4.x —— 症状是
     `Named export 'onExit' not found. 'signal-exit' is a CommonJS module`（v3 无该导出），
     导致 dsh-plugin-manager failed to import。故一律**取最高版本**。
@@ -52,7 +52,7 @@ def pick_entity(dirs):
     return sorted(dirs, key=lambda d: ver_key(d))[-1]
 
 
-# ── 2026-10-10 真机实证（DSM 7.4.1）：多版本【不能一律取最高】✗ ───────────────
+# ── 真机实证（DSM 7.4.1）：多版本【不能一律取最高】✗ ─────────────────────────
 #   compression@1.8.2 声明 negotiator "~0.6.4"，包内却没有 node_modules/negotiator
 #   → Node 向上走到提升层的 negotiator@1.1.0（Express 5 那份）
 #   → negotiator@1.1 在 encoding 路径上用 content-type.parse('gzip')
@@ -130,7 +130,7 @@ def pick_for_range(ent, name, rng):
 def _walk_pkgjson(root, max_depth=6):
     """在 root 下找 package.json，但【绝不进入 node_modules】、【绝不跟随软链】。
 
-    ★ 2026-10-10 实测教训（CI #98 铁证）：原实现用
+    ★ 实测教训（CI 铁证）：原实现用
         glob.glob(os.path.join(root, '**', 'package.json'), recursive=True)
       Python 的 glob 对 `**` 会**跟随软链**下降，而裁剪后的 .pnpm 里实体之间全是软链
       （A→B→C…），遍历量组合爆炸 —— 实测让 build-common.sh 在这一步空转
@@ -214,7 +214,7 @@ def link(link_path, target, stats):
 
 
 def relink(link_path, target, stats):
-    """★ 2026-10-10 真机实测：pnpm 会把提升/顶层链指向【旧版本】实体 ——
+    """★ 真机实测：pnpm 会把提升/顶层链指向【旧版本】实体 ——
        execa@10.0.1 声明 get-stream ^9.0.1，而 .pnpm/node_modules/get-stream 指向 5.2.0(CJS)
        → 报 "Named export 'getStreamAsArray' not found ... is a CommonJS module"。
     原 link() 【只补缺、从不纠正】→ 错链永远错（plugin-manager 起不来的根因）。
@@ -257,10 +257,10 @@ def main():
         for name, dirs in ent.items():
             relink(os.path.join(hoist, name), pick_entity(dirs), top_stats)
 
-    # ① 顶层 node_modules/<包名>：★ 2026-10-10 真机验收发现——原来【从未补过这一层】。
-    #   Node 从 apps/cli/lib/ 往上找依赖时，命中路径正是 <应用体>/node_modules/<包名>；
-    #   而 prune 只保留 .pnpm 实体、顶层链被清掉 → 装完 commander/js-yaml/cordis 全缺
-    #   （实测：补 661 条顶层链后应用立刻 running、套件打开 200）。
+    # ① 顶层 node_modules/<包名>：★ 真机验收发现——原来【从未补过这一层】。
+    #   Node 从 apps/cli/lib/ 往上找依赖时，命中路径正是 <应用体>/node_modules/<包名>。
+    #   而 prune 只保留 .pnpm 实体、顶层链被清掉 → 装完 commander/js-yaml/cordis 全缺。
+    #   实测：补 661 条顶层链后应用立刻 running、套件打开 200。
     #   多版本一律取最高版本（与提升目录同规则，见 ver_key 的实测教训）。
     _nm_top = os.path.join(ad, "node_modules")
     for _n, _dirs in ent.items():
@@ -269,8 +269,8 @@ def main():
         link(os.path.join(_nm_top, _n), _src, top_stats)
 
     # ③ 包内：按各 package.json 的依赖建链
-    # .pnpm 内部实体：结构是已知扁平的（.pnpm/<目录>/node_modules/<包>/package.json），
-    # 直接枚举即可，绝不对此做 ** 递归遍历（#98 实测会因软链跟随而爆炸）。
+    # .pnpm 内部实体：结构是已知扁平的（.pnpm/<目录>/node_modules/<包>/package.json），直接枚举即可。
+    # 绝不对此做 ** 递归遍历（#98 实测会因软链跟随而爆炸）。
     PNPM_ENTITY_FLAT = True
     for _d in sorted(os.listdir(pnpm)) if os.path.isdir(pnpm) else []:
         _p = os.path.join(pnpm, _d)

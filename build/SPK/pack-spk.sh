@@ -2,14 +2,14 @@
 #===============================================================================
 # DeepSeek Harness NAS — SPK 打包脚本（群晖 DSM；架构由 build-config.yaml defaults.arch 决定：x86_64 | arm64→armv8）
 #===============================================================================
-# 【三脚本分工】2026-09-13 从原 build.sh（spk+fpk 混合 1216 行）拆分：
+# 【三脚本分工】由原 build.sh（spk+fpk 混合 1216 行）拆分而来：
 #   build-common.sh  公共：pnpm install + build + 黑白名单裁剪 → target 整树 + build-meta.env
 #   pack-spk.sh     【本脚本】消费 target → 群晖 .spk 安装包
 #   pack-fpk.sh     消费 target → 飞牛 .fpk 安装包
 #
 # 用法:
 #   ./pack-spk.sh
-#   （无参数。所有配置读 build-config.yaml + build-meta.env；
+#   （无参数。所有配置读 build-config.yaml + build-meta.env。
 #     前置：先运行 ./build-common.sh 生成 target）
 #
 # 产物:
@@ -17,10 +17,10 @@
 #
 # 关键设计（注释按本脚本职责重新整理）:
 #   - 端口: proxy/dsh/container 读 build-config.yaml spk: 段（默认 30800/30801/30802）
-#   - start.sh: 由本脚本按 SPK 端口段生成（gen_start_sh，母版 scripts/start.sh.example，
-#     端口/appname 占位符全部注入，无硬编码）
-#   - 内层 package.tgz: gzip + --hard-dereference（pnpm 硬链展开，DSM 才能解）；
-#     软链保留（旧包含软链可装，软链不是问题）
+#   - start.sh: 由本脚本按 SPK 端口段生成（gen_start_sh，母版 scripts/start.sh.example）。
+#     端口与 appname 占位符全部注入，无硬编码。
+#   - 内层 package.tgz: gzip + --hard-dereference（pnpm 硬链展开，DSM 才能解）。
+#     软链保留（旧包含软链可装，软链不是问题）。
 #   - 外层 .spk: 未压缩 tar，无 ./ 前缀（DSM 规范）
 #   - 门户 ui/config: start.sh gen-portal 生成（键名与 INFO dsmappname 逐字一致）
 #   - 数据目录版本隔离: 安装脚本按内嵌 dsh 版本建 <var>/<version>/，覆盖安装不丢旧数据
@@ -68,9 +68,9 @@ D_SCRIPTS="${D_SCRIPTS:-$WS/scripts}"
 # ----------------------------------------------------------------------------
 # build-config.yaml 解析（SPK 段覆盖 defaults：端口 + appname + 品牌元数据）
 #   全部字段一律来自配置，脚本内不写死任何可变值（no-hardcode-config）
-#   ★ 入参命名空间 = SPKCFG_*（2026-10-05 与 FPK 侧的 FPKCFG_* 统一，两平台命令形态一致）：
+#   ★ 入参命名空间 = SPKCFG_*（与 FPK 侧的 FPKCFG_* 统一，两平台命令形态一致）：
 #     YAML 的值先注入到 SPKCFG_*，再由下面几行落到脚本内部使用的 SPK_*/CFG_*。
-#     → 外部（网页「构建参数」面板 / 命令行）预先给同名 SPKCFG_* 环境变量即可覆盖，
+#     → 外部（网页「构建参数」面板 / 命令行）预先给同名 SPKCFG_* 环境变量即可覆盖。
 #       优先级 = 环境变量 > YAML section > YAML defaults（与本文件头部声明一致）。
 # ----------------------------------------------------------------------------
 # 公共函数库提前 source：下面的「无 PyYAML 兜底」要用 yaml_section_env。
@@ -194,8 +194,8 @@ mkdir -p "$ASSEMBLE"
 # 由 start.sh 自带 gen-portal 生成（端口/appname 同一份构建配置，无静态模板）
 "$TARGET/start.sh" gen-portal --type url --key-prefix "SYNO.SDS." --all-users false > "$TARGET/ui/config"
 
-# INFO（版本 = SPK 前三位；desc/displayname/maintainer 等一律来自 build-config.yaml，
-#   仅 DESC 在配置留空时回退 build-meta.env 的 README 摘要）
+# INFO（版本 = SPK 前三位；desc/displayname/maintainer 等一律来自 build-config.yaml）。
+#   仅 DESC 在配置留空时回退 build-meta.env 的 README 摘要。
 cat > "$ASSEMBLE/INFO" <<EOF
 package="${APP_NAME}"
 version="${SPK_VERSION}"
@@ -226,8 +226,8 @@ if [ -n "${CFG_SUPPORT_URL:-}" ]; then
   printf 'support_url="%s"\n' "$CFG_SUPPORT_URL" >> "$ASSEMBLE/INFO"
 fi
 
-# conf: privilege（应用用户名按 APP_NAME 替换）+ resource（脚本管理时必须 {}，
-#   DSM 7 postinst worker 无法为 port-config/data-share 建系统资源 → 276 失败）
+# conf: privilege（应用用户名按 APP_NAME 替换）+ resource（脚本管理时必须 {}）。
+#   DSM 7 postinst worker 无法为 port-config/data-share 建系统资源 → 276 失败。
 mkdir -p "$ASSEMBLE/conf"
 sed "s/deepseek-harness-nas/${APP_NAME}/g" "$D_ASSETS/conf/privilege" > "$ASSEMBLE/conf/privilege"
 printf '{}' > "$ASSEMBLE/conf/resource"
@@ -242,8 +242,8 @@ PACKAGE_SSS="/var/packages/${PACKAGE_NAME}/scripts/start-stop-status"
 PKG_VAR_DIR="/var/packages/${PACKAGE_NAME}/var"
 
 # 读取打包内嵌版本号（数据目录按版本隔离：<var>/<version>/）
-# 来源优先级与 bin/start.sh 的 resolve_pkg_version 一致（dsh 包 → npm 产物 → 顶层），
-# 顺序来自 build-config.yaml brand_version_order（打包期替换 __BRAND_VERSION_ORDER_COMMA__）
+# 来源优先级与 bin/start.sh 的 resolve_pkg_version 一致（dsh 包 → npm 产物 → 顶层）。
+# 顺序来自 build-config.yaml brand_version_order（打包期替换 __BRAND_VERSION_ORDER_COMMA__）。
 pkg_version() {
   local src="$1" f v
   case "$src" in
@@ -287,13 +287,13 @@ setup_pkg_env() {
 }
 
 # ── 安装向导端口覆盖（WIZARD_UIFILES/install_uifile → wizard_proxy_port 等）──
-# 用户安装时填的端口写数据目录 <PKG_VAR>/ports（版本隔离、跨升级保留），
-# start-stop-status 优先读它；未填则回退打包默认（target/var/ports）。
-# 2026-10-02 修正：ui/config 门户端口**无条件同步**（不依赖 wizard 是否填写）——
+# 安装向导填的端口写数据目录 <PKG_VAR>/ports（版本隔离、跨升级保留），start-stop-status 优先读它。
+# 未填则回退打包默认（target/var/ports）。
+# ui/config 门户端口**无条件同步**（不依赖 wizard 是否填写）——
 #   重装时安装向导没填端口 → 旧逻辑 NEED 为空 → 不同步 → DSM 重新部署的
 #   ui/config 回到打包默认 30800，而服务端口（ports 文件跨版本保留的 3080）没变
-#   → 服务 3080 / 门户 30800 不一致（实测 10.10.10.64）。现在始终用
-#   「向导值 → 历史 ports 文件 → 打包默认」的最终值同步 ui/config，门户与服务恒一致。
+#   结果：服务 3080 / 门户 30800 不一致（实测 10.10.10.64）。
+#   现在始终用「向导值 → 历史 ports 文件 → 打包默认」的最终值同步 ui/config，门户与服务恒一致。
 apply_wizard_ports() {
   local VER="$(pkg_version_resolved)"
   local PORTS_FILE="${PKG_VAR_DIR}/${VER}/ports"
@@ -314,7 +314,7 @@ apply_wizard_ports() {
   # 写 ports 文件（总是写，反映最终生效端口；服务 start-stop-status 优先读它）
   mkdir -p "${PKG_VAR_DIR}/${VER}"
   {
-    echo "# 生效端口（2026-10-02：向导值优先，其次历史保留，缺省打包默认）"
+    echo "# 生效端口（向导值优先，其次历史保留，缺省打包默认）"
     echo "PROXY_PORT=${_PP}"
     echo "DSH_PORT=${_DP}"
     echo "CONTAINER_PORT=${_CP}"
@@ -364,8 +364,8 @@ postreplace() {
 
 # 卸载清理（群晖 CLI 卸载只执行 preuninst；postuninst 双保险）
 # 数据删除尊重安装向导 uninstall_uifile 的 wizard_delete_data：
-#   卸载时用户选「彻底删除」（true）才清数据；选「保留」（默认 false）则数据目录原样保留，
-#   重装直接恢复（2026-10-02 按用户「卸载给选项」需求实现，对齐 SynoCommunity 通用范式）。
+#   卸载时用户选「彻底删除」（true）才清数据；选「保留」（默认 false）则数据目录原样保留。
+#   重装直接恢复（卸载给选项，对齐 SynoCommunity 通用范式）。
 cleanup_uninstall() {
   local VER="$(pkg_version_resolved)"
   if [ "${wizard_delete_data:-false}" = "true" ]; then
@@ -393,7 +393,7 @@ cleanup_uninstall() {
 }
 
 preuninst() {
-  # ★ 2026-10-10：卸载时置标记 → start.sh stop 输出"已卸载"而不是"DSH 未运行"（避免无谓弹窗 ✗）
+  # ★ 卸载时置标记 → start.sh stop 输出"已卸载"而不是"DSH 未运行"（避免无谓弹窗 ✗）
   DSH_UNINSTALLING=1 "${PACKAGE_SSS}" stop
   cleanup_uninstall
   exit 0
@@ -414,10 +414,10 @@ postupgrade() {
   exit 0
 }
 
-# hook 分发：仅当 installer **被直接运行**时执行（synopkg CLI 以 `installer <hook名>`
-# 子命令方式调用）。⚠ 独立 hook 文件（scripts/postinst 等）是 source 本文件定义函数、
-# 由薄壳调用同名函数——此时 basename 是 hook 名，绝不能进 case（否则命中 `*)` 的
-# `exit 0` 会让整个 hook 立即退出，postinst() 等函数永远不被调用，2026-10-02 实测铁证）
+# hook 分发：仅当 installer **被直接运行**时执行（synopkg CLI 以 `installer <hook名>` 子命令调用）。
+# ⚠ 独立 hook 文件（scripts/postinst 等）是 source 本文件定义函数、由薄壳调用同名函数。
+#   此时 basename 是 hook 名，绝不能进 case —— 否则命中 `*)` 的 `exit 0` 会让整个 hook 立即退出。
+#   后果：postinst() 等函数永远不被调用（实测铁证）。
 if [ "$(basename "$0" 2>/dev/null)" = "installer" ]; then
 case "$1" in
   preinst)      preinst ;;
@@ -440,17 +440,17 @@ PACKAGE_NAME="${SYNOPKG_PKGNAME}"
 PACKAGE_BASE="/var/packages/${PACKAGE_NAME}/target"
 START_SCRIPT="${PACKAGE_BASE}/start.sh"
 
-# 端口读取优先级（2026-11-06 修正）：
+# 端口读取优先级：
 #   ① 数据目录 <var>/<当前安装版本>/ports（安装向导 wizard_*_port 写入，跨升级保留）→ 最高
-#   ② 数据目录里【版本号最大】的 <var>/<版本>/ports —— 历史版本残留不能盖过新版
-#      原来用 "${SYNOPKG_PKGVAR}"/*/ports 通配取第一个 ✗，会取到旧版目录：
-#      实测旧版 0.2.0-rc.2/ports 的 PROXY_PORT=3080 盖掉了新版的 30800 →
-#      门户开在 3080、ui/config 却指向 30800，套件图标点了直接连不上 ✗
+#   ② 数据目录里【版本号最大】的 <var>/<版本>/ports —— 历史版本残留不能盖过新版。
+#      反例：用 "${SYNOPKG_PKGVAR}"/*/ports 通配取第一个 ✗ 会取到旧版目录。
+#      实测：旧版本目录里的 PROXY_PORT=3080 盖掉了新版的 30800。
+#      后果：门户开在 3080、ui/config 却指向 30800，套件图标点了直接连不上 ✗
 #   ③ 打包默认 target/var/ports → 回退
 PORT_FILE="${PACKAGE_BASE}/var/ports"
 _CUR_VER="$(sed -n 's/^version="\([^"]*\)".*/\1/p' "/var/packages/${PACKAGE_NAME}/INFO" 2>/dev/null | head -1)"
 if [ -n "${_CUR_VER}" ]; then
-  # INFO 的 version 是前三位（如 0.2.2），数据目录是完整串（如 0.2.2-rc.1）→ 用前缀匹配
+  # INFO 的 version 只取前三位（x.y.z），数据目录名是完整串（含 -rc/-alpha 后缀）→ 用前缀匹配
   for _pf in "${SYNOPKG_PKGVAR}/${_CUR_VER}"*/ports; do
     [ -f "$_pf" ] && { PORT_FILE="$_pf"; break; }
   done
@@ -472,10 +472,10 @@ fi
 stop() {
   "${START_SCRIPT}" stop --proxy-port "$PROXY_PORT" --dsh-port "$DSH_PORT" --container-port "$CONTAINER_PORT" 2>/dev/null || true
   sleep 2
-  # 按【端口】清理残留实例（2026-11-06 新增）：
-  #   旧实例父进程是 `node -e '<内联脚本>'`，按名字 pkill "start.sh" 匹配不到 ✗ →
-  #   残留进程继续占 dsh/容器端口 → 下次启动 dsh 报 webserver EADDRINUSE，
-  #   连带 web-runtime(required) 失败（对外显示「2 required plugins did not activate」）
+  # 按【端口】清理残留实例：
+  #   旧实例父进程是 `node -e '<内联脚本>'`，按名字 pkill "start.sh" 匹配不到 ✗。
+  #   于是残留进程继续占 dsh/容器端口 → 下次启动 dsh 报 webserver EADDRINUSE。
+  #   连带 web-runtime(required) 失败（对外显示「2 required plugins did not activate」）。
   for _port in "$PROXY_PORT" "$DSH_PORT" "$CONTAINER_PORT"; do
     for _owner in $(netstat -lntp 2>/dev/null | awk -v P=":${_port} " '$4 ~ P {print $7}' | cut -d/ -f1 | sort -u); do
       case "$_owner" in ''|0|1) continue ;; esac
@@ -492,8 +492,8 @@ stop() {
 }
 
 
-# ★ 2026-10-10 修复：与 FPK 同款 —— SPK 生成物里【调用了 running_dsh 却没有定义】，
-#   导致群晖/系统的服务状态判定失败、应用入口异常。实现照抄 scripts/lib/common.sh。
+# ★ 必须定义 running_dsh：SPK 生成物里曾【调用它却没有定义】，实现照抄 scripts/lib/common.sh。
+#   后果：群晖/系统的服务状态判定失败、应用入口异常。
 running_dsh() {
   local port="$1" startsh="$2"
   if [ -n "$port" ]; then
@@ -518,16 +518,16 @@ start() {
     --dsh-port "$DSH_PORT" \
     --container-port "$CONTAINER_PORT" \
     > "${PACKAGE_BASE}/var/logs/start.log" 2>&1 &
-  # ── 就绪等待（2026-10-10 修复，与 FPK 同款）──
-  #   真机实证（VirtualDSM 7.4.1，synopkg.log）：install 阶段 start-stop-status start
-  #   返回 ret=[1] → DSM 记 "start version 0.2.1 failed" → 前端报安装失败 ✗。
-  #   两个原因：
-  #     a) 端口用了 $SPK_DSH_PORT —— 那是【打包脚本】的变量，本文件是 <<'SSS_EOF' 引号
-  #        heredoc，运行时为空 → running_dsh 拿空端口 → 恒判未运行；
-  #     b) 只 sleep 5 就判定，而 DSH 冷启动约 10 秒（启动期自愈要补上千条链接）。
-  #   修法：端口用运行时 $DSH_PORT（上面已 source var/ports）；改为有界轮询（≤12s，命中即返回）；
-  #   超时也返回 0 —— start.sh 已成功 spawn，交给 DSM 自己的 status 轮询判定，
-  #   绝不把"还在启动中"误报成"启动失败"（那会让整个安装被标成失败）。
+  # ── 就绪等待（与 FPK 同款）──
+  #   真机实证（VirtualDSM 7.4.1，synopkg.log）：install 阶段 start-stop-status start 返回 ret=[1]。
+  #   于是 DSM 记 "start version <版本> failed" → 前端报安装失败 ✗。
+  #   原因一：端口用了 $SPK_DSH_PORT —— 那是【打包脚本】的变量，本文件是 <<'SSS_EOF' 引号 heredoc，运行时为空。
+  #     结果：running_dsh 拿空端口 → 恒判未运行。
+  #   原因二：只 sleep 5 就判定，而 DSH 冷启动约 10 秒（启动期自愈要补上千条链接）。
+  #   修法一：端口用运行时 $DSH_PORT（上面已 source var/ports）。
+  #   修法二：改为有界轮询（≤12s，命中即返回）。
+  #   ⚠ 超时也必须返回 0 —— start.sh 已成功 spawn，交给 DSM 自己的 status 轮询判定。
+  #   否则会把"还在启动中"误报成"启动失败"（那会让整个安装被标成失败）。
   local _w=0
   while [ "$_w" -lt 12 ]; do
     running_dsh "${DSH_PORT:-$SPK_DSH_PORT}" && break
@@ -558,10 +558,10 @@ case "$1" in
 esac
 SSS_EOF
 
-# ── 独立生命周期 hook 文件（DSM 官方机制，2026-10-02 修复）────────────────────
+# ── 独立生命周期 hook 文件（DSM 官方机制，缺失即向导/初始化全失效）──────────
 # ⚠ DSM **只执行与 hook 同名的独立脚本**（preinst/postinst/preuninst/postuninst/
 #   preupgrade/postupgrade），**不会调用单一的 scripts/installer**——实测 10.10.10.64
-#   DSM 7.2 安装日志仅见文件 mv + start-stop-status，无任何 hook 执行记录；
+#   DSM 7.2 安装日志仅见文件 mv + start-stop-status，无任何 hook 执行记录。
 #   同机 aiproxy 套件正是靠这套独立薄壳文件让 wizard 值落地（其 aiproxy_key 已生成）。
 #   此前只放 installer → 端口向导/卸载选项/目录初始化全部静默失效。
 # 形态（官方 + aiproxy 实测）：source installer 定义函数 → 调用与文件名同名函数。
@@ -586,10 +586,10 @@ cp "$D_ASSETS/ui/images/"*.png "$ASSEMBLE/ui/images/" 2>/dev/null || true
 cp "$TARGET/ui/config" "$ASSEMBLE/ui/config"
 cp "$D_ASSETS/PACKAGE_ICON.PNG" "$D_ASSETS/PACKAGE_ICON_256.PNG" "$ASSEMBLE/"
 
-# ── WIZARD_UIFILES 安装/卸载向导（2026-10-02 新增：安装时填端口 + 卸载保留/删除选项）──
-# 官方机制：WIZARD_UIFILES/install_uifile（安装向导）→ wizard_* 环境变量传 postinst；
-#           uninstall_uifile（卸载向导）→ wizard_delete_data 传 preuninst/postuninst。
-# 详见 syno-spk-package-guide 1.7.2 / B2（aiproxy 实测范式）。
+# ── WIZARD_UIFILES 安装/卸载向导（安装时填端口 + 卸载保留/删除选项）──────────
+# 官方机制一：WIZARD_UIFILES/install_uifile（安装向导）→ wizard_* 环境变量传 postinst。
+# 官方机制二：uninstall_uifile（卸载向导）→ wizard_delete_data 传 preuninst/postuninst。
+# 详见 syno-spk-package-guide 的 B2 节（aiproxy 实测范式）。
 mkdir -p "$ASSEMBLE/WIZARD_UIFILES"
 cat > "$ASSEMBLE/WIZARD_UIFILES/install_uifile" <<WIZARD_EOF
 [
@@ -699,11 +699,11 @@ chmod 644 "$ASSEMBLE/INFO" "$ASSEMBLE/conf/privilege" "$ASSEMBLE/conf/resource" 
         "$ASSEMBLE/ui/config" 2>/dev/null || true
 chmod 755 "$ASSEMBLE/scripts/start-stop-status" "$ASSEMBLE/scripts/installer" 2>/dev/null || true
 
-# ── 运行时精准补包（2026-10-02 自动并入打包流程）────────────────────────────
-# 裁剪白名单（npm 链路 lock）会漏 pnpm 链路的运行时传递依赖（实测 execa 的
-# is-plain-obj 等）→ 装完 DSH 启动时内置插件 failed to import（Cannot find package）。
-# 此处探测 boot 入口 import 缺失 → 从构建副本 BUILD_SRC 精准恢复缺包（不搞全量闭包，
-# 体积保持精准级；实测只补 execa 依赖链 ~14 个小包，714M → SPK ~137MB）。
+# ── 运行时精准补包（打包流程末端自动执行）──────────────────────────────────
+# 裁剪白名单（npm 链路 lock）会漏 pnpm 链路的运行时传递依赖（实测 execa 的 is-plain-obj 等）。
+# 后果：装完 DSH 启动时内置插件 failed to import（Cannot find package）。
+# 此处探测 boot 入口 import 缺失 → 从构建副本 BUILD_SRC 精准恢复缺包（不搞全量闭包，体积保持精准级）。
+# 实测只补 execa 依赖链 ~14 个小包，714M → SPK ~137MB。
 _FIX_SCRIPT="$BUILD_ROOT/fix-runtime-deps.sh"
 if [ -x "$_FIX_SCRIPT" ] && [ -d "${WORK:-}/source/node_modules/.pnpm" ]; then
   echo "▶ 运行时精准补包（fix-runtime-deps.sh）"
@@ -726,9 +726,9 @@ find "$ASSEMBLE" -type f -exec chmod 644 {} + 2>/dev/null
 chmod 755 "$ASSEMBLE/scripts/"* 2>/dev/null || true
 chmod 755 "$ASSEMBLE/scripts/start-stop-status" "$ASSEMBLE/scripts/installer" 2>/dev/null || true
 
-# 文件名用【完整版本】FPK_VERSION，与 FPK 产物同格式（DeepSeekHarness-NAS_x86-<完整版本>.fpk）；
-# 而 INFO 里的内部 version（见上文 version= 那行）仍用 SPK_VERSION（前三段）——
-# 群晖套件版本号不接受 -alpha.1 这类后缀，但**文件名不受此限**，故两者刻意不同，勿统一。
+# 文件名用【完整版本】FPK_VERSION，与 FPK 产物同格式（DeepSeekHarness-NAS_x86-<完整版本>.fpk）。
+# 而 INFO 里的内部 version（见上文 version= 那行）仍用 SPK_VERSION（前三段）。
+# 原因：群晖套件版本号不接受 -alpha.1 这类后缀，但**文件名不受此限**，故两者刻意不同，勿统一。
 OUT_SPK="$D_STAGING/${APP_NAME}_${SPK_ARCH}-${FPK_VERSION}.spk"
 # ⚠ staging 是 gitignore 的产物目录，CI 全新 checkout 不存在 → tar 因写不进去失败
 #   （exit code 2）。本地长期有该目录，掩盖了此问题。

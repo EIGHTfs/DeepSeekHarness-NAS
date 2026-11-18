@@ -64,7 +64,7 @@ appcenter-cli start DeepSeekHarness-NAS         # 飞牛启停（stop/status/che
 ```bash
 ./build/build-common.sh              # 全量约 15-20 分钟（不指定源码目录 → 按 --tag 或自探测）
 SKIP_BUILD=1 ./build/build-common.sh   # 复用已有 target（秒级）
-./build/build-common.sh --tag dsh-v0.2.1-alpha.1   # 构建历史版本必须显式给 tag（多版本源码并存时否则会选错）
+./build/build-common.sh --tag dsh-v<版本>   # 构建历史版本必须显式给 tag（多版本源码并存时否则会选错）
 ./build/SPK/pack-spk.sh                  # → build/staging/DeepSeekHarness-NAS_x86_64-<版本>.spk
 ./build/FPK/pack-fpk.sh                  # → build/staging/DeepSeekHarness-NAS_x86-<版本>.fpk
 ./scripts/promote-release.sh             # 验证通过的产物提升到 release/
@@ -88,15 +88,12 @@ SKIP_BUILD=1 ./build/build-common.sh   # 复用已有 target（秒级）
 | `build/fix-node-links.py` | pnpm 三层链接补全与错链纠正；`<应用体或 target> [--quiet]` |
 | `build/prune_common.py` | 裁剪公共模块（依赖闭包计算）；由 `PRUNE_COMMON_DIR` 定位 |
 | `scripts/learn-prune-whitelist.sh` | 白名单自动学习（`--scan <SRC>` / `--log <FILE>`），写入 `_autoLearned` |
-| `scripts/prepare-build-env.sh` | 构建环境准备（幂等、不 mount）；无参数 |
 | `scripts/fetch-dsh-latest.sh` | 拉官方源码到 `src/deepseek-ai/<tag>`；`[--token <ghp>]`，`--print-tag` 只出 tag |
 | `scripts/fetch-release-mt.sh` | 下载本仓 Release 资产；`[--tag <tag>] [--only spk\|fpk] [--threads N]` |
 | `scripts/promote-release.sh` | staging → release 提升；`D_REL=<dir>` 可覆盖输出目录 |
 | `scripts/prune-release-assets.py` | 清理 Release 改名残留资产；`--tag <tag> --keep-from <dir> [--dry-run]` |
 | `scripts/update-release-note.sh` | 单独刷新某个 Release 正文（不重新构建）；`--tag <tag> [--trigger <名>] [--dry-run]`，`--tag` 可空=最新 |
 | `scripts/collect-failure-fixtures.py` | 采集历史 CI 失败日志做回归夹具；`[--limit N] [--out <dir>] [--dry-run]` |
-| `scripts/fetch-official-docs.py` | 抓官方文档快照；无参数 |
-| `scripts/generate-diff-report.sh` | 正式版 / 测试版 FPK 差异报告；无参数 |
 
 ### 运行与维护
 
@@ -104,22 +101,11 @@ SKIP_BUILD=1 ./build/build-common.sh   # 复用已有 target（秒级）
 |---|---|
 | `scripts/dsh` / `scripts/pnpm` | dsh、pnpm 命令包装器（打进包 `bin/`） |
 | `scripts/fix-login-shell.sh` | 登录 shell 悬空探测修复；`--check` / `--patch [文件]` / `--passwd` / `--shell PATH` / `--dry-run` |
-| `scripts/fix-pnpm-store.sh` | 修复 pnpm storeDir 记录；`<目标树>`，可空 = 当前实例 |
-| `scripts/fix-dsh-settings-namespace.sh` | 修复 alpha 版 `settingsNamespace` 缺失导致的插件加载失败；无参数，幂等带备份 |
-| `scripts/fix-dsh-bundle-patch-insert.py` | 修复 bundle patch 插入问题；`<目标树>` |
 | `scripts/set-dsh-cpu-quota.sh` | 设置 DSH CPU 配额；无参数 |
 | `scripts/verify-dsh-cpu-quota.sh` | 验证 CPU 配额生效；无参数 |
-| `scripts/migrate-session.sh` | 会话跨版本迁移；`--list` / `--check <文件>` / `--fix-layout` / `--cwd <新cwd> --in <源> --id <id>` / `--rollback [备份名]` |
 | `scripts/clean-dsm-residue.sh` | DSM 卸载残留清理；`<套件名> [主机] [SSH用户]`，`--keep-data`（缺省）/ `--delete-data` |
 | `scripts/clean-build-artifacts.sh` | 清理失败/中间构建；`--caches` / `--dry-run` / `--force` |
 | `scripts/lib/common.sh` | 全仓唯一公共函数库（日志、安全删除、端口读取、`running_dsh` 等） |
-
-
-远程安装/卸载/检查 SPK/FPK 的网页工具已拆分为独立仓库，本仓不再包含其代码与配置：
-
-- 用法见该仓库 README
-
-本仓只负责打包与发布。
 
 ### 守卫与测试
 
@@ -173,7 +159,6 @@ SKIP_BUILD=1 ./build/build-common.sh   # 复用已有 target（秒级）
 - [群晖资源限制](docs/群晖资源限制.md) — DSM 下 taskset 绑核 / MemoryLimit / cgroup 归属
 - [可行性-OpenWrt与iStoreOS](docs/可行性-OpenWrt与iStoreOS.md) — 换平台打包的实测事实与路线
 - [故障排查指南](docs/故障排查指南.md) — 症状 → 判据 → 处置
-- [CHANGELOG](docs/CHANGELOG.md) — 版本记录
 
 ## 许可证
 

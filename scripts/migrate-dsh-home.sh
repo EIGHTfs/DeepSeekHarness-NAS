@@ -90,7 +90,7 @@ detect_installed_version() {
 
 # ── 当前版本的判定（不靠目录名猜）────────────────────────────────────────
 # 权威来源：包内 package.json 的 version —— 打包时由产物自身携带，等于「这份安装包属于哪个 dsh 版本」。
-#   INFO 的 version 只有前三位（0.2.2），rc/alpha 序号丢了，无法区分 0.2.2-rc.1 与 rc.3；
+#   INFO 的 version 只有前三位（x.y.z），rc/alpha 序号丢了，无法区分同一 x.y.z 下的不同预发布；
 #   而数据目录是「装过的版本」的集合，按目录名取最大在降级安装后会指错。
 detect_installed_full_version() {
   local package_json="/var/packages/${PACKAGE_NAME}/target/package.json"
@@ -122,7 +122,7 @@ detect_current_data_dir() {
   if [ "${count:-0}" -gt 1 ] 2>/dev/null; then
     echo "  ⚠ 数据目录里有 ${count} 个候选匹配 ${short_version}*：" >&2
     printf '%s\n' "$matches" | sed 's/^/     /' >&2
-    echo "    无法自动判断当前版本，请用 --target <完整版本> 指定（例如 --target 0.2.2-rc.3）" >&2
+    echo "    无法自动判断当前版本，请用 --target <完整版本> 指定（例如 --target <版本>）" >&2
   fi
 }
 

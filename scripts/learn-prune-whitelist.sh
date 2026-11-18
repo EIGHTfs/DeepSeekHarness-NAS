@@ -78,7 +78,7 @@ if mode == 'scan':
     if not os.path.isfile(root_pkg):
         sys.exit(f'✗ 源码根 package.json 不存在: {root_pkg}')
     root_dev = set((json.load(open(root_pkg, encoding='utf-8')).get('devDependencies') or {}).keys())
-    # ── 扩展③：候选集加上 workspace 各包的 devDependencies（2026-10-03）──
+    # ── 扩展③：候选集加上 workspace 各包的 devDependencies ──
     #   只扩扫描面不扩候选集，workspace 包自己的构建期 devDeps（如 vite）与类型依赖
     #   （如 @types/semver）会被 `learned &= stripped` 过滤掉 → "扫到了却学不进来"。
     import glob as _glob2
@@ -233,7 +233,7 @@ elif mode == 'log':
                 learned.add('/'.join(parts[:2]))
             else:
                 learned.add(mod.split('/')[0])
-    # ── TS7016：缺的是**类型声明**（@types/<pkg>），不是运行时包本身（2026-10-03）──
+    # ── TS7016：缺的是**类型声明**（@types/<pkg>），不是运行时包本身 ──
     #   实测 scripts/release/publish.ts: error TS7016: Could not find a declaration file
     #   for module 'semver' → 要补 @types/semver（semver 本身可能已在 lockfileDeps）。
     for _pat in [r"Could not find a declaration file for module '([^'\n]+)'",
@@ -247,7 +247,7 @@ elif mode == 'log':
             else:
                 learned.add('@types/' + _mod.split('/')[0])
     # 运行时探测（fix-runtime-deps.sh）的缺包行：▶ 第 N 轮缺包: a b c
-    #   按用户口径（只允许白名单自动学习），这些**正是白名单该包含**的运行期依赖，
+    #   白名单自动学习的边界内，这些**正是白名单该包含**的运行期依赖，
     #   应学进白名单，而不是打包时临时补包（那会让出货超出白名单）。
     for _m in re.finditer(r"第\s*\d+\s*轮缺包[:：]\s*([^\n]+)", text):
         for _tok in _m.group(1).split():
@@ -256,7 +256,7 @@ elif mode == 'log':
                 continue
             learned.add(_tok if (_tok.startswith("@") and _tok.count("/") == 1) else _tok.split("/")[0])
     # pnpm install 摘要行：`+ <包> <版本>`（顶层被装上的包，含根 devDependencies）
-    #   2026-10-04 根因修：mode A（install 前裁剪）会剥掉"不在白名单里的根 devDeps"，
+    #   根因修：mode A（install 前裁剪）会剥掉"不在白名单里的根 devDeps"，
     #   而它们拉进来的传递依赖随之不再安装 → tsc 顶层解析报 TS2307（实测 vitest → vite）。
     #   故把安装摘要里的包一并学进白名单（仍是**自动学习**，非手工塞包）。
     # 注意：CI 日志每行带时间戳前缀，故**不能**锚定行首
@@ -265,8 +265,8 @@ elif mode == 'log':
         if _tok.startswith(".") or _tok.startswith("node:"):
             continue
         learned.add(_tok if (_tok.startswith("@") and _tok.count("/") == 1) else _tok.split("/")[0])
-    # ── 类型检查失败但【日志里没有模块名】→ 依"源码声明的类型包"补齐（2026-10-15 实证）──
-    #   实测（官方 dsh-v0.2.1-alpha.3，#131/#132）：tsc 报
+    # ── 类型检查失败但【日志里没有模块名】→ 依"源码声明的类型包"补齐 ──
+    #   实测（上游某 alpha 版本，#131/#132）：tsc 报
     #     TS7026: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists
     #     TS2339: Property 'props' does not exist on type 'FactoryErrorBoundary'
     #     TS4112: This member cannot have an 'override' modifier …

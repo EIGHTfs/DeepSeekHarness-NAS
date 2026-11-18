@@ -2,9 +2,8 @@
 #===============================================================================
 # scripts/lib/common.sh — **唯一公共函数库**（build / scripts 两方共用）
 #
-# 设计口径（用户明确）：
-#   「此次一鼓作气把所有能公共的都公共」——审计出的重复实现一律收进本文件，
-#   各脚本只允许**调用**，不允许再定义同名副本。
+# 设计口径：
+#   审计出的重复实现一律收进本文件，各脚本只允许**调用**，不允许再定义同名副本。
 #
 #   【谁在强制】scripts/check-common-functions.py（CI 守卫套件的一环，见 README「脚本一览」）。
 #   它从本文件**派生**出允许被定义/被调用的函数清单，再断言全仓库不存在第二处同名定义。
@@ -45,7 +44,7 @@
 #       :479 才是打包器自己的实现；二者同名不同作用域。
 #     · preinst/postinst/preuninst/postuninst/start/status（DSM 专有）与
 #       install_callback/service_*（fnOS 专有）—— 平台专有，保留各自实现。
-#     · scripts/migrate-session.sh、fix-login-shell.sh、fetch-release-mt.sh 的领域逻辑。
+#     · scripts/fix-login-shell.sh、fetch-release-mt.sh 的领域逻辑。
 #     · **打包器里嵌入目标运行时的 rm -rf 也不要收口**（甄别启发式的假阴性）：
 #       例 build/SPK/pack-spk.sh 的 preuninst/postuninst 段（与 synouser --del 同段）——
 #       它**未用 \${} 转义**（值在构建期烘焙），但命令是在**目标机卸载时执行**，目标机上
@@ -57,15 +56,15 @@
 #       - `synopkg` 多出现在**远端执行**的脚本里（scripts/clean-dsm-residue.sh 的
 #         REMOTE_EOF 段）——目标机上**没有** scripts/lib/common.sh，
 #         收口成 pkg_*() 会直接坏掉；它们必须自包含。
-#       - `base64` 一半是 **python 语言级**用法（scripts/migrate-session/lib/wsclient.py
-#         的 import base64），与 shell 的 b64_encode 无关。
+#       - `base64` 有一半是 **python 语言级**用法（源码里 `import base64`），
+#         与 shell 的 b64_encode 无关。
 #
 #   → 因此 scripts/check-common-functions.sh（第 7 步守卫）必须**先剔除 heredoc 生成区段**
 #     再做"唯一性"判定，否则会误伤上述代码。
 #
 # 【本文件收口的重复项（原散落位置）】
-#   日志/文案 info ok warn miss err die log_msg …… prepare-build-env.sh、
-#        fix-login-shell.sh、sync-github-release.sh 等 5+ 处
+#   日志/文案 info ok warn miss err die log_msg …… 多个历史脚本（现已全部收口到本文件）
+#       多个历史脚本（现已全部收口到本文件）
 #   safe_rm_rf / has_mount_under …… 各处清理脚本
 #   rssh（远程执行：sshpass→密钥→候选路径回退）…… 远端执行脚本
 #   resolve_node（优先 /usr/bin/node，不可执行则自探测）…… 多处
@@ -91,7 +90,7 @@ warn()    { echo "  ⚠ $*" >&2; }
 miss()    { echo "  ✗ $*" >&2; }
 err()     { echo "✗ $*" >&2; }
 die()     { echo "✗ $*" >&2; exit 1; }
-# 兼容旧名（build/FPK/pack-fpk.sh、scripts/sync-github-release.sh 用过）
+# 兼容旧名（build/FPK/pack-fpk.sh 仍在用）
 log_msg() { echo "$*"; }
 # 分节标题（构建日志可读性）
 section() { echo; echo "═══ $* ═══"; }
@@ -101,13 +100,13 @@ section() { echo; echo "═══ $* ═══"; }
 #   has_mount_under <dir>   目录之下（含自身）是否有挂载点
 #   safe_rm_rf <path>...    逐个删除；**含挂载点者跳过并告警**，绝不跨文件系统
 #   背景：rm -rf /volume1/@appdata/<PKG> 会递归进入其下挂载点并在**源端**删光数据
-#        （2026-10-03 事故）；--one-file-system 只能防跨设备删除，故再加显式检测。
+#        （真实发生过的事故）；--one-file-system 只能防跨设备删除，故再加显式检测。
 #-------------------------------------------------------------------------------
 has_mount_under() {
   local dir="$1" _dev m _rest
   [ -e "$dir" ] || return 1
   dir="$(readlink -f "$dir" 2>/dev/null || echo "$dir")"
-  # ⚠ 必须解析 /proc/mounts 的**第 2 字段**（挂载点）。2026-10-04 回归测试抓到的真 bug：
+  # ⚠ 必须解析 /proc/mounts 的**第 2 字段**（挂载点）。回归测试抓到过的真 bug：
   #   曾误用 awk 取第 5..NF 字段（那是 dump/pass 的 0 0）→ 检测恒为假 → 事故防线形同虚设
   #   （当时 safe_rm_rf /proc 只是被内核挡住，并非被我们挡住）。挂载点内空格以 \040 转义。
   # 语义：**dir 之下（含自身）是否存在挂载** —— 事故场景（@appdata/<PKG> 之下挂着工作区）正属此列。
@@ -138,7 +137,7 @@ safe_rm_rf() {
 # 三、远程执行（唯一实现）
 #   优先 sshpass（密码）；否则用密钥；密钥候选路径按序探测。
 #   超时由 RSSH_TIMEOUT 控制（默认 120s），在**远端**执行，避免 timeout 不能
-#   执行 shell 函数的坑（2026-10-03 踩过）。
+#   执行 shell 函数的坑（timeout 只认外部命令，包 shell 函数无效）。
 #   用法：rssh <host> <user> <password|-> '<remote command>'
 #-------------------------------------------------------------------------------
 RSSH_TIMEOUT="${RSSH_TIMEOUT:-120}"
@@ -183,7 +182,7 @@ rssh_remote_tmp() {
 #-------------------------------------------------------------------------------
 # 四、工具解析与下载
 #-------------------------------------------------------------------------------
-# node 解析（用户口径 2026-10-03：优先 /usr/bin/node，不可执行则自探测）
+# node 解析（优先 /usr/bin/node，不可执行则自探测）
 resolve_node() {
   local c
   for c in /usr/bin/node /usr/local/bin/node \
@@ -273,7 +272,7 @@ resolve_pkg_version() {
   echo ""
 }
 
-# 体积门禁（默认 600MB；用户口径）
+# 体积门禁（默认 600MB；判据是 du -m 统计的安装包整体大小）
 check_pkg_size() {
   local f="$1" limit_mb="${2:-600}" sz
   [ -f "$f" ] || { err "check_pkg_size: 找不到 $f"; return 1; }
@@ -290,7 +289,7 @@ check_pkg_size() {
 #    = 本应用 start.sh 的**绝对路径**（可选，用于进程兜底）
 #   ⚠ 禁止宽松的 ps -ef | grep start.sh：会命中命令行含 start.sh 的无关进程
 #     （含诊断命令自身），实测导致 status 恒判「运行中」→ 系统不再拉起服务
-#     （2026-09-13 教训，原 FPK 实现注释）。故只认：端口在听，或绝对路径精确匹配。
+#     （原 FPK 实现的教训）。故只认：端口在听，或绝对路径精确匹配。
 running_dsh() {
   local port="$1" startsh="$2"
   if [ -n "$port" ]; then

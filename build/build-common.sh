@@ -2,7 +2,7 @@
 #===============================================================================
 # DeepSeek Harness NAS — 公共预编译脚本（黑白名单筛选 + 源码预编译 → target）
 #===============================================================================
-# 【三脚本分工】2026-09-13 从原 build.sh（spk+fpk 混合 1216 行）拆分：
+# 【三脚本分工：本文件 + 两个平台打包器】
 #   build-common.sh  公共：pnpm install + pnpm build + 黑白名单裁剪 → target 整树
 #   pack-spk.sh     群晖 .spk 打包（消费 target；无参数，端口/名字读 build-config.yaml）
 #   pack-fpk.sh     飞牛 .fpk 打包（消费 target；无参数，端口/名字读 build-config.yaml）
@@ -24,7 +24,7 @@
 #   - 裁剪段删除：非目标平台二进制 / devDependencies（含传递依赖，清单动态读根 package.json）
 #     / claude-agent-sdk+codex / packages|apps 的 src / docs / benchmarks / native
 #   - 保留：bin/node + bin/dsh + bin/pnpm + 随包 pnpm + 各包 lib/dist 产物 + 运行时 node_modules
-#   - 装完即用，无首启构建（首启构建逻辑已抽离 scripts/first-build-logic.sh 留档）；
+#   - 装完即用，无首启构建（首启构建逻辑已抽离 scripts/first-build-logic.sh 留档）。
 #     start.sh 由 pack-spk.sh / pack-fpk.sh 各自按端口段生成（本脚本不生成）
 #
 # 产物:
@@ -47,13 +47,13 @@ _PLATFORM_PATHS_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/li
 
 set -euo pipefail
 
-# ── lefthook 钩子防线（2026-11-01）──────────────────────────────────────────
+# ── lefthook 钩子防线──────────────────────────────────────────
 # 官方源码树带 lefthook（devDependencies + postinstall 装钩子），上游 lefthook.yml
 # 定义了 pre-commit / pre-merge-commit / pre-push。本仓不跑官方钩子体系，但两类场景
 # 仍会触发：① 仓库连同 .git/ 从别的环境迁来，.git/hooks 里留着旧钩子（旧钩子常写死
 # 上一台机器的绝对路径，找不到可执行文件时继续向上兜底扫描，在 CIFS/SMB 上可能长时间
 # 无响应 ✗）；② 有人把官方源码就地 install，钩子被装进当前 git 目录。
-# 钩子文件自带跳过开关（if [ "$LEFTHOOK" = "0" ]; then exit 0; fi），这里显式导出，
+# 钩子文件自带跳过开关（if [ "$LEFTHOOK" = "0" ]; then exit 0; fi），这里显式导出。
 # 保证构建期间的任何 git commit 不被失效钩子拖住。${VAR:-默认} 写法保留控制权：
 # 外部显式给 LEFTHOOK=1 仍可强制启用钩子。
 export LEFTHOOK="${LEFTHOOK:-0}"
@@ -67,9 +67,9 @@ NPM_CACHE="${npm_config_cache:-$WS/assets/pnpm-cache}"
 PNPM_BIN="$WS/tools/pnpm/bin/pnpm.mjs"  # 强制用项目自带 pnpm（tools/pnpm，不用系统自带）
 PNPM_BIN_DIR="$WS/tools/pnpm/bin"
 
-# ── NODE_SRC 自探测（2026-10-02）────────────────────────────────────────────
-# 打包进应用的 node 二进制。0.2.0 起官方 native/system 需编译 node-api 附件
-# （flock.c），依赖 node 发行版自带的 include/node 头文件——套件裁剪 node 没有，
+# ── NODE_SRC 自探测────────────────────────────────────────────
+# 打包进应用的 node 二进制。上游 <版本> 起 native/system 需编译 node-api 附件（flock.c）。
+# 该附件依赖 node 发行版自带的 include/node 头文件，而套件裁剪过的 node 没有。
 # 故不能只看"有没有 node"，必须校验 headers 存在。探测顺序：
 #   ① 显式传入 $NODE_SRC（环境变量，最高优先，CI 用 setup-node 路径走这里）
 #   ② 项目自备 tools/node-dist/node-v*/bin/node（含 include/node，本地构建用）
@@ -84,10 +84,10 @@ node_has_headers() {  # $1=node 可执行文件路径 → 校验同级/上级 in
 resolve_node_src() {
   local _c=""
   # ① 首选 /usr/bin/node —— 但**必须可执行**才算数。
-  #    旧写法最后直接 echo /usr/bin/node，不校验存在性：本机（193）该路径不存在，
-  #    于是垫片被写死成 exec "/usr/bin/node" → 每次 pnpm install 都
-  #    "/usr/bin/node: No such file or directory"（实测 2026-10-03）。
-  #    用户口径：优先 /usr/bin/node，不可执行则自探测。
+  #    旧写法最后直接 echo /usr/bin/node，不校验存在性：本机（193）该路径不存在。
+  #    于是垫片被写死成 exec "/usr/bin/node" → 每次 pnpm install 都报
+  #    "/usr/bin/node: No such file or directory"。
+  #    判据：优先 /usr/bin/node，不可执行则自探测。
   if [ -x /usr/bin/node ]; then echo "/usr/bin/node"; return 0; fi
   # ② 自探测（先要带 headers 的：native 编译需要）
   _c="$(ls -d "$WS"/tools/node-dist/node-v*/bin/node 2>/dev/null | head -1)"
@@ -98,7 +98,7 @@ resolve_node_src() {
   for _c in /usr/local/bin/node \
             "$(ls -d "$WS"/tools/node-dist/node-v*/bin/node 2>/dev/null | head -1)" \
             "$(command -v node 2>/dev/null || true)" \
-            /volume1/@appstore/DeepSeekHarness-NAS/bin/node; do
+            "${SYNOPKG_PKGDEST:-}/bin/node"; do
     [ -n "$_c" ] && [ -x "$_c" ] && { echo "$_c"; return 0; }
   done
   echo "/usr/bin/node"
@@ -116,10 +116,10 @@ if [ -x "$NODE_SRC" ]; then
   esac
 fi
 
-# ── pnpm 引擎自举（2026-09-16：tools/pnpm/dist 不入库，见 .gitignore）──
-#   bin/pnpm.mjs 只是入口（await import('../dist/pnpm.mjs') 引擎在 dist/）；
-#   dist 为 pnpm 官方安装产物（457 文件大 bundle），不入 git。CI / 新 clone 后
-#   bin 在但 dist 缺失 → 此处自动用 npm 下载 pnpm 官方包解压补全，保证构建可用。
+# ── pnpm 引擎自举（tools/pnpm/dist 不入库，见 .gitignore）──
+#   bin/pnpm.mjs 只是入口（await import('../dist/pnpm.mjs')，引擎在 dist/ 里）。
+#   dist 为 pnpm 官方安装产物（457 文件大 bundle），不入 git。
+#   CI / 新 clone 后会出现 bin 在但 dist 缺失 → 此处自动用 npm 下载 pnpm 官方包解压补全，保证构建可用。
 ensure_pnpm_engine() {
   if [ -f "$PNPM_BIN" ] && [ -f "$WS/tools/pnpm/dist/pnpm.mjs" ]; then
     return 0  # bin + dist 齐全，直接可用
@@ -194,8 +194,8 @@ NPM_FPK_SCRIPT="$BUILD_ROOT/build-npm-app.sh"        # FPK npm 链路（build/FP
 #   --dry-run            只预演，不实际构建
 #   --work-dir DIR       构建中间产物根（缺省 = build/master-build，即旧行为）
 #   --src DIR            源码目录（等价于第一个位置参数）
-#   --tag TAG            要构建的官方 tag（如 dsh-v0.2.1-alpha.1）；也可用环境变量 DSH_TAG
-#                        ⚠ 多版本源码目录并存时必须给：否则「源码自探测」会按 semver 取最新，
+#   --tag TAG            要构建的官方 tag（形如 dsh-v<版本>）；也可用环境变量 DSH_TAG
+#                        ⚠ 多版本源码目录并存时必须给，否则「源码自探测」会按 semver 取最新。
 #                          从新到旧构建时就会拿新版源码打旧版本的包（内容与版本号不符，且不报错）
 #   SRC SKIP_BUILD       位置参数：源码目录；1=复用已有 target（缺省=0 全量构建）
 DRY_RUN="${DRY_RUN:-0}"
@@ -222,10 +222,10 @@ fi
 
 # ── copy_tree_tar：用 tar 管道复制目录树（规避 deep-hardlink 与 CIFS 限制）──
 # 为什么不用 cp -a：pnpm 的 node_modules/.pnpm 是深硬链目录，在 CIFS/NFS 上
-#   cp -a 递归复制会报「Directory not empty」中断（实测），tar 管道更稳。
-# 为什么需要容错：CIFS/SMB 拒绝改 mtime/权限，tar 解包时会对每个条目报
-#   「Cannot utime / Cannot change mode」并以退出码 2 结束 —— 内容其实完整，
-#   但退出码会让构建误判失败。故：过滤这两类已知无害报错，其余报错照常失败；
+#   cp -a 递归复制会报「Directory not empty」中断，tar 管道更稳。
+# 为什么需要容错：CIFS/SMB 拒绝改 mtime/权限，tar 解包时会对每个条目报「Cannot utime / Cannot change mode」。
+#   这两个报错以退出码 2 结束，但内容其实完整，退出码会让构建误判失败。
+#   故：过滤这两类已知无害报错，其余报错照常失败。
 #   再用「文件数比对」做完整性兜底（内容不全会立刻暴露，不会静默半成品）。
 copy_tree_tar() {
   local src_dir="$1" dst_dir="$2" _tar_err _real_err _src_n _dst_n
@@ -251,11 +251,10 @@ copy_tree_tar() {
 SRC="${_POS[0]:-}"
 
 # ── 指定了目标 tag 时：直接按 tag 定位目录，不做任何 semver 排序 ──
-# 为什么这条优先：候选排序只能「猜」一个最像的（当前实现是取最大 semver），
-#   而「从新到旧」构建时猜必错 —— 本地已存在 dsh-v0.2.2-rc.1（新）时再构建
-#   dsh-v0.2.1-alpha.1（旧），排序仍会选中 rc.1，于是拿新源码打出旧版本号的包：
-#   文件名对、版本号对、能装能跑，内容却是别的版本，且全程不报错。
-#   目标 tag 是已知信息，直接用它定位即可，不需要猜。
+# 为什么这条优先：候选排序只能「猜」一个最像的（当前实现是取最大 semver），而「从新到旧」构建时猜必错。
+#   例：本地已存在 dsh-v<新版本> 时再构建 dsh-v<旧版本>，排序仍会选中新版本，于是拿新源码打出旧版本号的包。
+#   后果：文件名对、版本号对、能装能跑，内容却是别的版本，且全程不报错。
+#   判据：目标 tag 是已知信息，直接用它定位即可，不需要猜。
 if [ -z "$SRC" ] && [ -n "${DSH_TAG_ARG:-}" ]; then
   _direct_src="$D_SRC/deepseek-ai/$DSH_TAG_ARG"
   if [ -f "$_direct_src/package.json" ] && [ -d "$_direct_src/apps/cli" ]; then
@@ -269,10 +268,9 @@ if [ -z "$SRC" ] && [ -n "${DSH_TAG_ARG:-}" ]; then
 fi
 
 if [ -z "$SRC" ]; then
-  # 通配扫描 src/deepseek-ai/*（不硬编码版本目录名），其次 master-build；
-  # 多个候选时按 semver 取**最新**——2026-10-02 修复：原实现取 glob 字典序第一个，
-  # 本地同时存在 dsh-v0.1.5-rc.2（旧）与 dsh-v0.2.0-rc.2（新）时会误选旧版构建。
-  # ⚠ 但「取最新」只适合「构建最新版」；要构建历史版本必须显式 --tag，
+  # 通配扫描 src/deepseek-ai/*（不硬编码版本目录名），其次 master-build。
+  # 多个候选时按 semver 取**最新**：原实现取 glob 字典序第一个，新旧版本目录并存时会误选旧版构建。
+  # ⚠ 但「取最新」只适合「构建最新版」；要构建历史版本必须显式 --tag。
   #   否则会静默拿新源码打旧包（因此下面那行提示写成刺眼警告）。
   _cands=()
   for cand in "$D_SRC"/deepseek-ai/* "$WORK_ROOT"/master-build/*; do
@@ -326,26 +324,26 @@ if [ -n "${DSH_TAG_ARG:-}" ]; then
   echo "  ✓ 源码版本与目标 tag 一致：$_src_version（$DSH_TAG_ARG）"
 fi
 
-SKIP_BUILD="${SKIP_BUILD:-${_POS[1]:-1}}"   # 默认跳过已存在的 target（=0 强制全量重建）；支持环境变量或第 2 位置参数（2026-10-02：原先只读位置参数，环境变量写法会被静默忽略）
-# 分阶段构建门控：all | install | build | prune（CI 把长步骤拆成 3 个独立 step，
-# 靠 step 结论定位死点；分阶段时复用已有 WORK，不清不删）
+SKIP_BUILD="${SKIP_BUILD:-${_POS[1]:-1}}"   # 默认跳过已存在的 target（=0 强制全量重建）；环境变量与第 2 位置参数都生效
+# 分阶段构建门控：all | install | build | prune。
+# CI 把长步骤拆成 3 个独立 step，靠 step 结论定位死点；分阶段时复用已有 WORK，不清不删。
 BUILD_STAGE="${BUILD_STAGE:-all}"
 _STAGE_OK() { [ "$BUILD_STAGE" = "all" ] || [ "$BUILD_STAGE" = "$1" ]; }
 
-# ── 编译 dry-run（2026-10-02）：所有阶段均可预演，不执行任何编译/裁剪/写盘 ──
+# ── 编译 dry-run：所有阶段均可预演，不执行任何编译/裁剪/写盘 ──
 #   ./build-common.sh [SRC] [SKIP_BUILD] --dry-run     # 或 DRY_RUN=1
-#   仅报告：阶段计划、源码/版本/node/编译器自探测结果、白名单与排除规则统计、
-#   现有 target 体积、各阶段将执行的具体动作（逐条 [dry-run] 列出）。
+#   仅报告：阶段计划、源码/版本/node/编译器自探测结果、白名单与排除规则统计。
+#   另外报告：现有 target 体积、各阶段将执行的具体动作（逐条 [dry-run] 列出）。
 _dry() { [ "$DRY_RUN" = "1" ]; }
 # 预演提示（dry-run 时打印一行；非 dry-run 静默）
 dry_note() { if _dry; then echo "  [dry-run] $1"; fi; return 0; }
 # GitHub annotation：存在 check run 里，日志 blob 丢（BlobNotFound）也能从 API 拿
 _ANN() { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::warning::$1" || echo "[stage] $1"; }
 
-# ── 日志增强：段耗时 + CI 折叠分组（2026-10-10 用户要求"日志能加的都加"）────────
+# ── 日志：段耗时 + CI 折叠分组（便于看出哪一段慢）────────
 #   动机：在线构建偶发变慢，但日志里只有阶段名、没有耗时 → 无法回答"慢在哪"。
 #   用法：在每个阶段边界调 _tick "阶段名"（打印【本段】与【累计】耗时并累计到汇总）。
-#   · CI 里用 ::group:: / ::endgroup:: 折叠，本地退化为 ▶ 一行；
+#   · CI 里用 ::group:: / ::endgroup:: 折叠，本地退化为 ▶ 一行。
 #   · 全部只在 stdout 打，不改任何行为、不写文件。
 _DSH_T_START="${_DSH_T_START:-$(date +%s)}"
 _DSH_T_LAST="$_DSH_T_START"
@@ -445,11 +443,10 @@ echo "commit     : $COMMIT_HASH"
 #===============================================================================
 # 一、工作目录 + target 校验/复用
 #===============================================================================
-# ── 构建目录：**单一复用**（用户口径 2026-10-03：「旧产物可以复用，别分 build 版本」）──
-#   旧写法 build-<SPK_VERSION>：每换一个版本就新建整树 → 实测堆出约 10G 重复
-#   （build-0.1.5 / build-0.2.0 / build-0.2.1 / npm-app-*），且每次都要全量 pnpm install
-#   （install 阶段光完整性校验就 539s）。
-#   现在：跨版本**复用同一目录**，source/node_modules 由 pnpm 增量 reconcile（秒~分钟级）；
+# ── 构建目录：单一复用（旧产物可复用，不按 build 版本分目录）──
+#   旧写法 build-<SPK_VERSION>：每换一个版本就新建整树，实测堆出约 10G 重复（build-<版本> / npm-app-* 各一份）。
+#   代价：每次都要全量 pnpm install，install 阶段光完整性校验就 539s。
+#   现在：跨版本**复用同一目录**，source/node_modules 由 pnpm 增量 reconcile（秒~分钟级）。
 #   配合既有的 SKIP_BUILD=1（复用 target）与 BUILD_STAGE=build|prune（跳过 install）实现"改哪跑哪"。
 #   需要全新构建时显式 FRESH_BUILD=1：旧目录**带时间戳归档**（不直接删，可回溯）。
 WORK_NAME="${WORK_NAME:-build}"
@@ -551,9 +548,8 @@ fi
 
 if [ "$SKIP_BUILD" = "1" ] && [ -f "$WORK/.build-done" ] && [ -d "$TARGET" ] && [ -f "$TARGET/package.json" ]; then
   # 断点续传：.build-done 只说明「以前构建成功过」，不说明「是哪个官方 tag 构建的」。
-  #   所以复用前必须把 meta 里记录的 DSH_TAG 与本次目标 tag 比一次：
-  #   不同就绝不复用 —— 否则会把旧版本的 target 当成新版本打包，
-  #   产物文件名与版本号都正确、内容却是别的版本，且全程不报错。
+  #   所以复用前必须把 meta 里记录的 DSH_TAG 与本次目标 tag 比一次：不同就绝不复用。
+  #   否则会把旧版本的 target 当成新版本打包，产物文件名与版本号都正确、内容却是别的版本，且全程不报错。
   #   （meta 没记录 DSH_TAG 时视为老产物，无据可依，沿用原行为复用并提示）
   _meta_tag="$(sed -n "s/^DSH_TAG=['\"]\([^'\"]*\)['\"].*/\1/p" "$WORK/build-meta.env" 2>/dev/null | head -1)"
   if [ -n "$_meta_tag" ] && [ -n "${DSH_TAG_ARG:-}" ] && [ "$_meta_tag" != "$DSH_TAG_ARG" ]; then
@@ -585,19 +581,18 @@ if [ "$BUILD_STAGE" = "build" ] && [ -f "$BUILD_SRC/package.json" ]; then
   echo "▶ (stage=build) 复用已有构建副本 $BUILD_SRC（跳过复制，保留 node_modules）"
 else
   echo "▶ 复制源码到构建副本 $BUILD_SRC"
-  # ⚠ cp -a 语义坑（2026-10-02 实测修复）：`cp -a SRC DST` 在 **DST 已存在** 时，会把
-  #   SRC 复制成 DST/<SRC 的 basename>（嵌套），而不是覆盖 DST 内容。分阶段
-  #   stage=install 复用已有 WORK 时必踩：会生成 source/dsh-v0.2.0-rc.2/ 并把源码
-  #   复制进子目录（还可能在 .git 大文件上失败中断）→ 后续 install/build 全乱。
+  # ⚠ cp -a 语义坑：`cp -a SRC DST` 在 **DST 已存在** 时，会把 SRC 复制成 DST/<SRC 的 basename>（嵌套）。
+  #   而不是覆盖 DST 内容。分阶段 stage=install 复用已有 WORK 时必踩：会生成 source/<tag>/。
+  #   后果：源码被复制进子目录（还可能在 .git 大文件上失败中断）→ 后续 install/build 全乱。
   #   故先清目标，保证结果恒为「DST = SRC 的内容」。
   #
-  # ⚠ 深硬链目录坑（2026-10-03 实测修复）：pnpm 的 node_modules/.pnpm 是**深硬链目录**，
-  #   在 ZFS/CIFS/NFS 上 `cp -a` 递归复制会报「Directory not empty」而中断 —— 实测
-  #   .../@playwright+mcp@0.0.80/...: Directory not empty → 构建中止、日志停在"复制源码"，
+  # ⚠ 深硬链目录坑：pnpm 的 node_modules/.pnpm 是**深硬链目录**。
+  #   在 ZFS/CIFS/NFS 上 `cp -a` 递归复制会报「Directory not empty」而中断，实测报错形如
+  #   .../@playwright+mcp@0.0.80/...: Directory not empty → 构建中止、日志停在"复制源码"。
   #   且留下半成品 BUILD_SRC 让下次重跑继续踩。
-  #   改用 **tar 管道 + --hard-dereference**（硬链展开为真实文件、软链保留），与
-  #   build/FPK/pack-fpk.sh 的 app.tgz 段同一套实现（那里也是为规避深目录复制失败）。
-  # CIFS/SMB 上 safe_rm_rf 删深层旧副本常报「Directory not empty」（服务端语义，不是权限问题），
+  #   改用 **tar 管道 + --hard-dereference**（硬链展开为真实文件、软链保留）。
+  #   与 build/FPK/pack-fpk.sh 的 app.tgz 段同一套实现（那里也是为规避深目录复制失败）。
+  # CIFS/SMB 上 safe_rm_rf 删深层旧副本常报「Directory not empty」（服务端语义，不是权限问题）。
   # 改名让出路径即可（同卷 mv 秒级），避免整轮构建卡在清理。
   safe_rm_rf "$BUILD_SRC" 2>/dev/null || true
   if [ -e "$BUILD_SRC" ]; then
@@ -627,26 +622,24 @@ mkdir -p "$_HOME_DIR"
 
 # ── pnpm 命令垫片（包装：版本锁定 + pnpm10 json → pnpm11 yaml 桥接）─────────
 # 为什么必须有这层包装：
-#   ① tools/pnpm/bin/ 只有 pnpm.mjs / pnpm.cjs，没有名为 `pnpm` 的可执行入口。
-#      上游 scripts/build.ts 用 `sh -c "pnpm run build:lib:*"` 调子脚本（子进程重查
-#      PATH），仅把该目录前置到 PATH 仍找不到 `pnpm` → CI 报 `sh: 1: pnpm: not found`
-#      （本机靠 /usr/bin/pnpm 兜住，掩盖了该问题）。
-#   ② pnpm 11 默认 pmOnFail=download：读到 package.json 的 packageManager 字段就
-#      **自动联网下载并切换到那个版本**。官方源码写 `packageManager: pnpm@11.7.0`，
-#      于是构建实际跑的不是我们打包/验证过的 pnpm（每次构建多一次 29MB 下载，且
-#      版本不受控）。实测对照：目录内 packageManager=pnpm@11.7.0 → 进程版本 11.7.0；
-#      改成 11.25.0 或去掉该字段 → 自带版本 11.25.0。`--pm-on-fail=ignore` 可跳过切换
-#      （pnpm 源码提示语原文：Set `pmOnFail` to `ignore` to skip the version switch）。
-#   ③ pnpm 11 不再读 package.json 的 `pnpm` 字段（onlyBuiltDependencies 等），全改读
-#      pnpm-workspace.yaml → 垫片每次调用前自动跑 tools/pnpm-bridge.py 做 json→yaml 转换。
+  #   ① tools/pnpm/bin/ 只有 pnpm.mjs / pnpm.cjs，没有名为 `pnpm` 的可执行入口。
+  #      上游 scripts/build.ts 用 `sh -c "pnpm run build:lib:*"` 调子脚本（子进程会重查 PATH）。
+  #      仅把该目录前置到 PATH 仍找不到 `pnpm` → CI 报 `sh: 1: pnpm: not found`（本机靠 /usr/bin/pnpm 兜住，掩盖了该问题）。
+  #   ② pnpm 11 默认 pmOnFail=download：读到 package.json 的 packageManager 字段就**自动联网下载并切换到那个版本**。
+  #      官方源码写 `packageManager: pnpm@11.7.0`，于是构建实际跑的不是我们打包/验证过的 pnpm。
+  #      代价：每次构建多一次 29MB 下载，且版本不受控。
+  #      实测对照：目录内 packageManager=pnpm@11.7.0 → 进程版本 11.7.0；改成 11.25.0 或去掉该字段 → 自带版本 11.25.0。
+  #      `--pm-on-fail=ignore` 可跳过切换（pnpm 源码提示语原文：Set `pmOnFail` to `ignore` to skip the version switch）。
+  #   ③ pnpm 11 不再读 package.json 的 `pnpm` 字段（onlyBuiltDependencies 等），全改读 pnpm-workspace.yaml。
+  #      故垫片每次调用前自动跑 tools/pnpm-bridge.py 做 json→yaml 转换。
 #   三者合一：所有 pnpm 调用（含上游 sh -c 子进程）都锁我们用自带的 pnpm 11 且配置已桥接。
 _PNPM_SHIM="$PNPM_BIN_DIR/pnpm"
 # 三个条件任一不满足就重新生成：
 #   ① 垫片不存在或不可执行；
 #   ② 版本串不符（生成逻辑变了）；
-#   ③ **垫片里记录的仓库路径不是当前仓库** —— 垫片内嵌了 $D_TOOLS 与 $PNPM_BIN 的绝对路径，
-#      从别的机器同步过来的旧垫片会带着上一台的路径（实测：本机构建生成的垫片同步到另一台后，
-#      所有 pnpm 调用报 Cannot find module .../volume1/VirtualDSM/...）。只查版本串会漏掉这种情况。
+#   ③ **垫片里记录的仓库路径不是当前仓库** —— 垫片内嵌了 $D_TOOLS 与 $PNPM_BIN 的绝对路径。
+#      从别的机器同步过来的旧垫片会带着上一台的路径：实测本机构建生成的垫片同步到另一台后，所有 pnpm 调用报 Cannot find module .../volume1/VirtualDSM/...
+#      只查版本串会漏掉这种情况。
 if [ ! -x "$_PNPM_SHIM" ] \
    || ! grep -q "build-common pnpm shim v3" "$_PNPM_SHIM" 2>/dev/null \
    || ! grep -qF "$D_TOOLS" "$_PNPM_SHIM" 2>/dev/null; then
@@ -661,12 +654,10 @@ if [ -f "$D_TOOLS/pnpm-bridge.py" ]; then
 fi
 # node 解析：生成期写死的优先，但**运行期再自愈一次** —— 生成期的 /usr/bin/node 可能
 # 在这台机上不存在（实测 193），写死路径会让所有 pnpm 调用直接失败。
-# ⚠ 本段处在**未加引号的 heredoc** 内：应在垫片里保持变量的写法必须转义 \$，
-#   否则会被生成期的 set -u 判为 unbound variable（实测踩坑）。
+# ⚠ 本段处在**未加引号的 heredoc** 内：要在垫片里保持变量的写法必须转义 \$，否则会被生成期的 set -u 判为 unbound variable（实测踩坑）。
 _PNPM_NODE="$NODE_SRC"
 if [ ! -x "\$_PNPM_NODE" ]; then
-  # 兜底候选（含**相对垫片自身**的随包 node —— 生成期 NODE_SRC 可能为空，
-  #   垫片必须能自己探测；2026-10-03 修复）
+  # 兜底候选（含**相对垫片自身**的随包 node —— 生成期 NODE_SRC 可能为空，垫片须能自己探测）
   for _c in /usr/bin/node /usr/local/bin/node \
             "$(dirname "$0")"/../../node-dist/node-v*/bin/node; do
     [ -x "\$_c" ] && { _PNPM_NODE="\$_c"; break; }
@@ -685,14 +676,12 @@ fi
 fi   # 结束准备门控（复制源码+品牌+假git+垫片；stage=prune 时跳过）
 
 # ── install 前纯白名单裁剪 devDeps（省 install 磁盘峰值，防 CI 撑爆 runner）──
-# prune-target.sh --before-install 对 BUILD_SRC 根 package.json 的 devDependencies
-# 应用纯白名单：不在白名单（extra + lockfileDeps + workspaceRuntimeDeps）的 devDep
-# 一律删除，install 时就不再下载（vitest/jsdom/mermaid 等巨大）。
-# 构建必需工具（typescript/tsx/tsdown/lightningcss/execa/smol-toml）已手动追加进
-#   白名单 extra（gen-prune-whitelist.sh 自动生成只动 lockfileDeps，不覆盖手动部分），
-#   install 时保留，build 不会缺工具。
-#   PRUNE_BEFORE_INSTALL=0：跳过 install 前裁剪（本地构建物模式——全量 install 后
-#   tsc 类型检查 scripts/** 不再缺包；产物体积由 target 裁剪兜底）。
+# prune-target.sh --before-install 对 BUILD_SRC 根 package.json 的 devDependencies 应用纯白名单。
+# 判据：不在白名单（extra + lockfileDeps + workspaceRuntimeDeps）的 devDep 一律删除，install 时就不再下载（vitest/jsdom/mermaid 等巨大）。
+# 构建必需工具（typescript/tsx/tsdown/lightningcss/execa/smol-toml）已手动追加进白名单 extra。
+# gen-prune-whitelist.sh 自动生成只动 lockfileDeps，不覆盖手动部分；这些工具 install 时保留，build 不会缺工具。
+# PRUNE_BEFORE_INSTALL=0：跳过 install 前裁剪（本地构建物模式——全量 install 后 tsc 类型检查 scripts/** 不再缺包）。
+# 该模式下产物体积由 target 裁剪兜底。
 if _STAGE_OK install && [ "${PRUNE_BEFORE_INSTALL:-1}" = "1" ] && [ -x "$SCRIPT_DIR/prune-target.sh" ]; then
   echo "▶ install 前裁剪 devDeps（复用黑白名单）:$SCRIPT_DIR/prune-target.sh --before-install $BUILD_SRC"
   "$SCRIPT_DIR/prune-target.sh" --before-install "$BUILD_SRC" || echo "  ⚠ install 前裁剪返回非零，继续（不阻断 install）"
@@ -704,18 +693,17 @@ _tick "前置准备（配置/源码副本）"
 _ANN "stage=$BUILD_STAGE install 开始"
 if _STAGE_OK install && [ ! -d "$BUILD_SRC/node_modules" ]; then
   echo "▶ pnpm install (~2-5min) [store=$PNPM_STORE]（项目 pnpm: $PNPM_BIN）"
-  # --no-frozen-lockfile：install 前剥离 devDeps 后 package.json 与 lockfile 不一致，
-  # CI 环境 pnpm 默认 frozen-lockfile 会报 ERR_PNPM_OUTDATED_LOCKFILE 拒绝安装
-  # （实测 2026-09-14：裁剪 23 个 devDeps 后 install 失败）。加此参数重算 lockfile。
-  # ── 网络容错（2026-10-03）：官方 0.2.1 的 @openai/codex 多平台 optional 包下载
-  #    error(23) 超时（默认 fetch-timeout=60s/retries=2）→ 整个 install 失败。
-  #    ① npm_config_fetch_timeout=600s + fetch_retries=5 + network_concurrency=8
-  #       （降低并发稳单包下载，pnpm 兼容 npm_config_* 环境变量）
+  # --no-frozen-lockfile：install 前剥离 devDeps 后 package.json 与 lockfile 不一致。
+  # 那时 CI 环境 pnpm 默认 frozen-lockfile 会报 ERR_PNPM_OUTDATED_LOCKFILE 拒绝安装（裁剪 23 个 devDeps 后 install 失败）。
+  # 加此参数即可重算 lockfile。
+  # ── 网络容错（针对上游 @openai/codex 的多平台 optional 包下载）─────────────
+  #    现象：下载报 error(23) 超时（默认 fetch-timeout=60s/retries=2）→ 整个 install 失败。
+  #    ① npm_config_fetch_timeout=600s + fetch_retries=5 + network_concurrency=8（降低并发稳单包下载，pnpm 兼容 npm_config_* 环境变量）
   #    ② install 失败自动重试 3 次（间隔 30s，瞬时网络抖动标准解法）
   #    ③ 仍失败切 npmmirror 镜像兜底一次（registry.npmjs.org 海外偶发不稳）
   _PNPM_LOG="$WS/assets/pnpm-install.log"
   # $1 额外参数（如 --registry）；$2 日志标签（默认 attempt）
-  # ⚠ 每次尝试写**独立日志**（2026-10-04）：原实现全部重定向到同一文件 →
+  # ⚠ 每次尝试写独立日志：否则多次尝试的输出混在一处，看不到首次报错
   #   后一次覆盖前一次，前几次的完整 stderr 被丢弃，导致 frozen-lockfile 那类
   #   只在第 1 次出现的报错无从定位（只剩 tail -15）。
   _pnpm_install() {
@@ -730,12 +718,12 @@ if _STAGE_OK install && [ ! -d "$BUILD_SRC/node_modules" ]; then
     cp -f "${_PNPM_LOG}.${_tag}" "$_PNPM_LOG" 2>/dev/null || true   # 保持旧路径仍指向最近一次
     return $_rc
   }
-  # ── npm 源选择（2026-10-09 用户建议 + 本机实测修正）────────────────────────────
+  # ── npm 源选择（并发探测，取最快可用者）────────────────────────────
   #   原实现：默认源硬试 3 次（每次失败 sleep 30s）→ 才切 npmmirror 兜底一次。
   #   两个毛病：① 白等最多 90 秒；② 失败原因若非网络（如 pnpm 参数错）照样重试 3 次，纯浪费。
   #   现改为：并发探测候选源（每个一次请求、超时 4s），取【HTTP 2xx/3xx 且耗时最短】者。
-  #   ★ 规则是"最快者胜"而不是"先回者胜"：本机实测 registry.npmjs.org 200 但耗时 5.99s
-  #     （"假可用"，几乎等于超时），registry.npmmirror.com 仅 0.63s —— 按列表顺序选会选错。
+  #   ★ 规则是"最快者胜"而不是"先回者胜"：本机实测 registry.npmjs.org 虽 200 但耗时 5.99s（"假可用"，几乎等于超时）。
+  #     而 registry.npmmirror.com 仅 0.63s —— 按列表顺序选会选错。
   #   全不可达则回落默认源（让 pnpm 自己报网络错，便于定位）。
   #   以后加镜像：只往下面数组加一行即可。
   NPM_REGISTRY_CANDIDATES=(
@@ -781,8 +769,8 @@ if _STAGE_OK install && [ ! -d "$BUILD_SRC/node_modules" ]; then
     echo "  ── 第 $_attempt 次失败输出（完整日志: ${_PNPM_LOG}.attempt-$_attempt）──" >&2
     tail -15 "${_PNPM_LOG}.attempt-$_attempt" 2>/dev/null || true
     grep -m3 -iE "unknown option|ERR_PNPM|error" "${_PNPM_LOG}.attempt-$_attempt" 2>/dev/null | sed 's/^/     /' >&2 || true
-    # ★ 参数类错误重试无意义（2026-10-09 实测：Unknown option: 'frozen-lockfile' 连报 3 次，
-    #   每次还白等 30 秒 = 90 秒纯浪费）→ 立即中止，交给下方汇总输出定位。
+    # ★ 参数类错误重试无意义：Unknown option: 'frozen-lockfile' 会连报多次，每次还白等 30 秒。
+    #   共 90 秒纯浪费 → 立即中止，交给下方汇总输出定位。
     if grep -qiE "unknown option|ERR_PNPM_BAD_OPTION|ERR_PNPM_INVALID" "${_PNPM_LOG}.attempt-$_attempt" 2>/dev/null; then
       echo "  ✗ 参数类错误（重试无意义）→ 立即中止 install 重试" >&2
       break
@@ -809,8 +797,8 @@ fi
 _tick "install（pnpm install）"
 _ANN "stage=$BUILD_STAGE install 结束 (node_modules=$( [ -d "$BUILD_SRC/node_modules" ] && echo 有 || echo 无))"
 
-# ── build 前裁剪（2026-10-02，默认开）：install 完成立即按白名单裁 BUILD_SRC/node_modules/.pnpm，
-#   使 pnpm build 在**精简依赖树**上运行，避免「全量 install 8G → 编译 → 末尾才裁」的磁盘/内存峰值。
+# ── build 前裁剪（默认开）：install 完成立即按白名单裁 BUILD_SRC/node_modules/.pnpm。
+#   目的：使 pnpm build 在**精简依赖树**上运行，避免「全量 install 8G → 编译 → 末尾才裁」的磁盘/内存峰值。
 #   白名单含 extra（构建工具：typescript/tsx/tsdown/lightningcss 等），否则 build 会缺包。
 #   PRUNE_BEFORE_BUILD=0 关闭（回退为仅末尾 target 裁剪）。
 if _STAGE_OK build && [ "${PRUNE_BEFORE_BUILD:-1}" = "1" ] && [ -x "$SCRIPT_DIR/prune-target.sh" ]; then
@@ -829,13 +817,13 @@ if _STAGE_OK build; then
 _tick "install 收尾/组装"
 _ANN "stage=$BUILD_STAGE build 开始"
 
-# ── native/system 编译自探测（2026-10-02）──────────────────────────────────
-# 0.2.0 起官方 build:native-system 用 cc 编译 flock.c（Node-API 附件）+ musl-gcc 编
-# landlock-run；host-addon-only 模式只需 cc 出 glibc/system.node。部分环境（DSM 套件机、
-# 精简容器）无 C 编译器 → 这里自探测：无 cc 时用「cc 替身 + 官方预编译产物」复用，
-# 保持官方 build 链完全不变（writeClientBuildRecord 等后续步骤照跑）。
-# 复用依据：官方 native 产物确定性（实测三个不同来源 system.node md5 全为
-# 36a017660f00886cb9b42b427cefc347），故与 CI 编译产物一致。
+# ── native/system 编译自探测：无 C 编译器时复用官方预编译产物 ──────────────
+# 上游 <版本> 起 build:native-system 用 cc 编译 flock.c（Node-API 附件）+ musl-gcc 编 landlock-run。
+# host-addon-only 模式只需 cc 出 glibc/system.node。
+# 部分环境（DSM 套件机、精简容器）无 C 编译器 → 这里自探测：无 cc 时用「cc 替身 + 官方预编译产物」复用。
+# 这样官方 build 链完全不变（writeClientBuildRecord 等后续步骤照跑）。
+# 复用依据：官方 native 产物确定性（实测三个不同来源 system.node md5 全为 36a017660f00886cb9b42b427cefc347）。
+# 故与 CI 编译产物一致。
 _NATIVE_SHIM_DIR=""
 if ! command -v cc >/dev/null 2>&1; then
   _nat_host="linux-x64"
@@ -855,8 +843,8 @@ if ! command -v cc >/dev/null 2>&1; then
     cat > "$_NATIVE_SHIM_DIR/cc" <<SHIM
 #!/bin/sh
 # cc 替身（build-common.sh 自动生成）：无 C 编译器环境复用官方预编译 native 产物。
-# 官方 build.ts 以 \`cc ... -o <output> <source>\` 调用；本替身忽略编译参数，
-# 直接把预编译产物落到 -o 指定路径，使官方构建链无需改动即可完成。
+# 官方 build.ts 以 \`cc ... -o <output> <source>\` 调用；本替身忽略编译参数，直接把预编译产物落到 -o 指定路径。
+# 这样官方构建链无需改动即可完成。
 _out=""; _prev=""
 for _a in "\$@"; do
   if [ "\$_prev" = "-o" ]; then _out="\$_a"; break; fi
@@ -887,9 +875,9 @@ _BUILD_RC=0
 # 新逻辑查 available 内存（free -k Mem 行 available 列），取 60% 作为 tsc 堆上限。
 _AVAIL_KB=$(LC_ALL=C free -k 2>/dev/null | awk '/Mem:/{print $7}')
 if [ -n "$_AVAIL_KB" ]; then
-  # 2026-10-02：比例 60% → 75%，并支持 DSH_TSC_MEM 显式覆盖。
-  # 原因：0.2.0 源码 tsc -b tsconfig.host.json 需要 >2.3GB 堆；60% 在 3.8GB 可用内存
-  # 的机器上只给 2316MB → FATAL heap out of memory（本机实测 197s 后 OOM 退出 134）。
+  # 堆比例取 75%（而非 60%），并支持 DSH_TSC_MEM 显式覆盖。
+  # 原因：上游源码 tsc -b tsconfig.host.json 需要 >2.3GB 堆；60% 在 3.8GB 可用内存的机器上只给 2316MB。
+  # 后果：FATAL heap out of memory（本机实测 197s 后 OOM 退出 134）。
   # 堆上限是"上限"非预分配，设大无害（物理不够时走 swap）。
   _TSX_MEM="${DSH_TSC_MEM:-$((_AVAIL_KB * 75 / 100 / 1024))}"
   [ "$_TSX_MEM" -lt 1024 ] && _TSX_MEM=1024
@@ -904,8 +892,8 @@ fi
   DSH_CLIENT_COMMIT_HASH="$COMMIT_HASH" \
   DSH_CLIENT_TITLE="DeepSeekHarness-NAS" \
   "$_PNPM_SHIM" build ) > "$_BUILD_LOG" 2>&1 || _BUILD_RC=$?
-# ⚠ 失败时必须把真实报错打出来：原来 `| tail -20` 会把关键错误行截掉，
-#   CI 日志只剩最后 20 行，排查困难（2026-09-13 实测）。成功时仍只打尾部。
+# ⚠ 失败时必须把真实报错打出来：原来 `| tail -20` 会把关键错误行截掉，CI 日志只剩最后 20 行、看不到真实报错。
+#   成功时仍只打尾部。
 if [ "${_BUILD_RC:-0}" != "0" ]; then
   echo "✗ pnpm build 失败（退出码 $_BUILD_RC）完整日志: $_BUILD_LOG"
   tail -80 "$_BUILD_LOG"
@@ -962,11 +950,10 @@ mkdir -p "$TARGET/var/logs" "$TARGET/var/data" "$TARGET/.dsh-home/.dsh"
 mkdir -p "$TARGET/ui/images"
 cp "$D_ASSETS/ui/images/"*.png "$TARGET/ui/images/" 2>/dev/null || true
 
-# ── 门户图标命名归一化（2026-10-10 实测必需）──────────────────────────────────
-#   fnOS/群晖的门户条目用 "icon": "images/icon-{0}.png" 模板（【短横线】），
-#   而仓库里的图标资产是 icon_256.png / 64.png 这种命名 → 模板指空 → 桌面入口
-#   的图标取不到，应用中心「打开」按钮点不开（对照能正常打开的 1Panel：
-#   它的 ui/images 里就是 icon-32/64/128/256.png + icon.png）。
+# ── 门户图标命名归一化（必需）：门户模板只认短横线命名 ────────────────────────
+#   fnOS/群晖的门户条目用 "icon": "images/icon-{0}.png" 模板（【短横线】），而仓库里的图标资产是 icon_256.png / 64.png。
+#   命名对不上 → 模板指空 → 桌面入口的图标取不到，应用中心「打开」按钮点不开。
+#   对照能正常打开的 1Panel：它的 ui/images 里就是 icon-32/64/128/256.png + icon.png。
 #   这里统一补齐短横线命名（幂等；源取现有任一图标）。
 _normalize_portal_icons() {
   local dir="$1"
@@ -1009,25 +996,23 @@ _tick "prune（白名单裁剪）"
 _ANN "stage=$BUILD_STAGE prune 结束"
 fi
 
-# ── 顶层/提升/包内链接补全（2026-10-09 实测必需，勿删）────────────────────────
-#   见 build/fix-node-links.py 的文件头：pnpm 的链接分三层（顶层 / .pnpm/node_modules 提升 /
-#   .pnpm/<包>@<版本>/node_modules 包内），任一层缺失都会在启动时报
-#   Cannot find module / Cannot find package → DSH 退出 code=1 → 守护反复重试
-#   → 用户观感"启动卡很久"。该脚本确定性、幂等、只增不删、纯本地。
+# ── 顶层/提升/包内链接补全（必需，勿删）──────────────────────────────────────
+#   见 build/fix-node-links.py 的文件头：pnpm 的链接分三层（顶层 / .pnpm/node_modules 提升 / .pnpm/<包>@<版本>/node_modules 包内）。
+#   任一层缺失都会在启动时报 Cannot find module / Cannot find package → DSH 退出 code=1 → 守护反复重试。
+#   用户观感就是"启动卡很久"。该脚本确定性、幂等、只增不删、纯本地。
 #   ⚠ 必须放在裁剪之后、写 meta 之前，作用在 target 上（打包器直接消费 target）。
 if [ -d "$TARGET/node_modules" ] && [ -f "$SCRIPT_DIR/fix-node-links.py" ]; then
   python3 "$SCRIPT_DIR/fix-node-links.py" "$TARGET" || echo "  ⚠ 链接补全返回非零，继续（不阻断构建）"
 fi
-#   模式 B 是纯白名单裁剪（不做依赖闭包，否则 target 撑到 5.3G），会删掉运行时传递依赖：
-#     实测 execa → is-plain-obj、@js-temporal/polyfill → jsbi
-#     → 运行时 Cannot find package 'x' → DSH 内置插件 plugin-manager / otel / schedule /
-#       office-to-pdf failed to import → tool-schedule never started、新建会话失败。
-#   而 pnpm 的解析结果写在 .pnpm 的**目录列表**里，静态白名单必漏 → 必须探测驱动补包。
+#   模式 B 是纯白名单裁剪（不做依赖闭包，否则 target 撑到 5.3G），会删掉运行时传递依赖。
+#   实测：execa → is-plain-obj、@js-temporal/polyfill → jsbi 都被删。
+#   后果：运行时 Cannot find package 'x' → DSH 内置插件 plugin-manager / otel / schedule / office-to-pdf failed to import。
+#   连带 tool-schedule never started、新建会话失败。而 pnpm 的解析结果写在 .pnpm 的**目录列表**里，静态白名单必漏。
+#   故必须探测驱动补包（fix-runtime-deps.sh）。
 #   ★ 为什么必须放在这里而不是 pack-spk/pack-fpk：
-#     CI 的打包 job 只下载【target artifact】，$BUILD_SRC（构建副本）在那个 job 里不存在 ✗
-#     → 原先放在打包器里调用，在 CI 里一直静默跳过（日志："跳过运行时补包"），
-#       即运行时补包在 CI 里从来没生效过。这里 BUILD_SRC 就在手边，补进的是 TARGET，
-#       两个打包器都直接受益。
+#     CI 的打包 job 只下载【target artifact】，$BUILD_SRC（构建副本）在那个 job 里不存在 ✗。
+#     原先放在打包器里调用，在 CI 里一直静默跳过（日志："跳过运行时补包"），即运行时补包在 CI 里从来没生效过。
+#     这里 BUILD_SRC 就在手边，补进的是 TARGET，两个打包器都直接受益。
 if _STAGE_OK prune && [ -x "$SCRIPT_DIR/fix-runtime-deps.sh" ] && [ -d "$BUILD_SRC/node_modules/.pnpm" ]; then
 _tick "链接补全（fix-node-links.py）"
   echo "▶ 运行时精准补包（fix-runtime-deps.sh；裁剪后、写 meta 前）"
@@ -1051,9 +1036,9 @@ SPK_VERSION='${SPK_VERSION}'
 FPK_VERSION='${FPK_VERSION}'
 DESC='${DESC}'
 COMMIT_HASH='${COMMIT_HASH}'
-# 官方 tag（本次构建的目标版本）。用途：SKIP_BUILD 复用 target 前拿它比对，
-#   避免「旧版本的 target 被当成新版本打包」——那种错包文件名与版本号都对，内容却是别的版本。
-#   未显式指定 --tag 时为空串（表示「按最新自探测」，无从比对，沿用原复用行为）。
+# 官方 tag（本次构建的目标版本）。用途：SKIP_BUILD 复用 target 前拿它比对，避免「旧版本的 target 被当成新版本打包」。
+# 那种错包文件名与版本号都对，内容却是别的版本。
+# 未显式指定 --tag 时为空串（表示「按最新自探测」，无从比对，沿用原复用行为）。
 DSH_TAG='${DSH_TAG_ARG}'
 WORK='${WORK}'
 TARGET='${TARGET}'

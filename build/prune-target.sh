@@ -16,37 +16,36 @@
 #   │      │ build 之前         │ /.pnpm                   │ 声明(deps+dev+peer+optional)  │ (原有)   │
 #   │      │ --node-modules     │ (不裁源码/文档)          │ + extra（构建工具，必需）     │          │
 #   ├──────┼────────────────────┼──────────────────────────┼───────────────────────────────┼──────────┤
-#   │ B    │ build 之后、       │ TARGET/node_modules/     │ lockfileDeps                  │ 需要     │
-#   │      │ 打到 target        │ .pnpm + 源码/文档 +      │ + workspaceRuntimeDeps        │ ← 原本   │
-#   │      │ (默认，出货形态)   │ 权限归一 755/644         │ （不含 extra）                │   没有！ │
+#   │ B    │ build 之后、       │ TARGET/node_modules/     │ lockfileDeps                  │ 不需要   │
+#   │      │ 打到 target        │ .pnpm + 源码/文档 +      │ + workspaceRuntimeDeps        │ (缺包由  │
+#   │      │ (默认，出货形态)   │ 权限归一 755/644         │ （不含 extra）                │ 补包兜)  │
 #   └──────┴────────────────────┴──────────────────────────┴───────────────────────────────┴──────────┘
 #
 #   关键区别：
 #   ① A 只决定「要下载什么」（清单裁剪，省 CI 磁盘峰值）；B/C 决定「装好的树留什么」。
-#   ② C 必须带 extra（tsc/tsx/tsdown 等构建工具），否则 build 直接缺工具失败；
-#      B 不能带 extra（最终包不需要类型检查/测试工具），只保留运行时。
+#   ② C 必须带 extra（tsc/tsx/tsdown 等构建工具），否则 build 直接缺工具失败。B 不能带 extra（最终包不需要类型检查/测试工具），只保留运行时。
 #   ③ C 不裁源码/文档（build 还要读 src/）；B 才裁源码/文档并归一权限。
-#   ④ **只有 B 决定最终 SPK 里有什么** —— 所以只有 B 的闭包缺失会导致出货的包缺依赖
-#      （本次故障即此），A/C 的名单差异只会造成构建期或体积问题。
+#   ④ **只有 B 决定最终 SPK 里有什么**，所以只有 B 的闭包缺失会导致出货的包缺依赖（本次故障即此）。
+#      A/C 的名单差异只会造成构建期或体积问题。
 #
 #  模式 A：install 前（--before-install <BUILD_SRC>）
-#    pnpm install **之前** 对源码副本 BUILD_SRC 根 package.json 的 devDependencies
-#    应用纯白名单：不在白名单的 devDep 一律删除。
-#    效果：install 阶段不再下载被裁 devDeps（vitest/jsdom/mermaid 等巨大），
-#    CI runner 磁盘峰值骤降。构建必需工具（typescript/tsx/tsdown/lightningcss 等）
-#    已手动追加进白名单 extra，install 时保留，build 不会缺工具。
+#    pnpm install **之前** 对源码副本 BUILD_SRC 根 package.json 的 devDependencies 应用纯白名单。
+#    判据：不在白名单的 devDep 一律删除。
+#    效果：install 阶段不再下载被裁 devDeps（vitest/jsdom/mermaid 等巨大），CI runner 磁盘峰值骤降。
+#    构建必需工具（typescript/tsx/tsdown/lightningcss 等）已手动追加进白名单 extra。
+#    install 时保留它们，build 不会缺工具。
 #
 #  模式 B：target 后（默认 <TARGET> [WHITELIST]）
-#    对已构建 target 的 .pnpm 目录应用纯白名单裁剪（**含依赖闭包**，2026-10-03 修）：
+#    对已构建 target 的 .pnpm 目录应用纯白名单裁剪（**不做依赖闭包**，缺的传递依赖由 fix-runtime-deps.sh 补）：
 #    不在 lockfileDeps + workspaceRuntimeDeps 的一律删除。
 #    额外排除 codex/claude（disabled preset，即使在 lockfileDeps 也删）。
 #    + sourceDirs 源码/文档裁剪。
 #
-#  模式 C：install 后、build 前（--node-modules <BUILD_SRC> [WHITELIST]，2026-10-02 新增）
-#    对**构建副本** BUILD_SRC/node_modules/.pnpm 应用纯白名单裁剪，使 pnpm build 在
-#    精简依赖树上运行——避免「全量 install 8G → 编译 → 末尾才裁」的磁盘/内存峰值。
-#    ⚠ 与模式 B 的关键区别：**必须带 extra**（typescript/tsx/tsdown/lightningcss 等
-#      构建工具），否则 build 缺工具直接失败。不做源码/文档裁剪（build 还要读 src）。
+#  模式 C：install 后、build 前（--node-modules <BUILD_SRC> [WHITELIST]）
+#    对**构建副本** BUILD_SRC/node_modules/.pnpm 应用纯白名单裁剪。
+#    目的：使 pnpm build 在精简依赖树上运行，避免「全量 install 8G → 编译 → 末尾才裁」的磁盘/内存峰值。
+#    ⚠ 与模式 B 的关键区别：**必须带 extra**（typescript/tsx/tsdown/lightningcss 等构建工具），否则 build 缺工具直接失败。
+#      且不做源码/文档裁剪（build 还要读 src）。
 #
 # 【规则】纯白名单：白名单列出的保留，其余全删。无黑名单。
 #   白名单 = extra（模式 A/C 用，构建与类型检查包）+ lockfileDeps（自动生成的运行时依赖）
@@ -55,13 +54,13 @@
 #     运行时传递依赖会被误删。公共实现见 build/prune_common.py。
 #   ⚠ native/ 不在裁剪范围：node-addon-system-linux-x64 软链真身，删了启动必挂
 #
-# 【2026-10-03 修复：模式 B 补上依赖闭包】
-#   实测缺陷：模式 B 原本没有闭包扩展（模式 C 有），把外部包的传递依赖删光——
+# 【外部包的传递依赖必须专门兜住】
+#   实测缺陷：模式 B 原本没有闭包扩展（模式 C 有），把外部包的传递依赖删光。
 #     @deepseek-ai/libreoffice-kit → fontkit          （dsh-office-to-pdf failed to import）
-#     got                         → @sindresorhus/is  （dsh-otel failed to import）
+#     got                          → @sindresorhus/is （dsh-otel failed to import）
 #     @modelcontextprotocol/client → @modelcontextprotocol/core
 #   两台机器（10.10.10.64 / 10.10.10.193）装的同一 SPK 全部中招。
-#   同时把 pkg_name / pkg_deps / expand_closure 抽到 build/prune_common.py：
+#   同时把 pkg_name / pkg_deps / expand_closure 抽到 build/prune_common.py。
 #   原先 B/C 各自内联、pkg_name 重复定义两份，正是模式 B 漂移掉的机制性原因。
 #   ⚠ 以后新增模式请一律 import build/prune_common.py，不要再内联复制。
 #===============================================================================
@@ -111,16 +110,15 @@ if white.get('workspaceRuntimeDeps'):
                 pass
 
 # 纯白名单：根 devDependencies 不在白名单的一律删除
-# ★ 2026-10-15 实证（官方 dsh-v0.2.1-alpha.3 构建失败的真因）：
-#   上游在 alpha.3 的【根 devDependencies】新增了 @types/react ~18.3.1 与 @types/react-dom ~18.3.0，
-#   而白名单里没有它们 → 本步把它们剥掉 → pnpm install 根本不装 React 类型 →
-#   pnpm build 的 tsc 报:
+# ★ 实证：上游某版本构建失败的真因就在这里。
+#   上游在【根 devDependencies】新增了 @types/react 与 @types/react-dom，而白名单里没有它们。
+#   于是本步把它们剥掉 → pnpm install 根本不装 React 类型 → pnpm build 的 tsc 报：
 #     scoped-slots.tsx(435,63): TS2339 Property 'props' does not exist on type 'FactoryErrorBoundary'
 #     scoped-slots.tsx(439,35): TS7026 JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists
 #   → 构建失败 → 看门狗每 30 分钟重试、每 30 分钟再失败（#131/#132 实证）。
-#   原则修正：**类型层依赖永不裁剪** —— @types/* 与 typescript/@typescript-eslint/* 体积很小，
-#   却是 tsc 的必需品；"非白名单就删"对它们是错的。
-#   （配套：白名单 extra 也补了 @types/react / @types/react-dom，双保险）
+#   原则：**类型层依赖永不裁剪** —— @types/* 与 typescript/@typescript-eslint/* 体积很小，却是 tsc 的必需品。
+#   "非白名单就删"对它们是错的：类型层缺失只会表现为 TS2339 / TS7026 这类诡异报错。
+#   配套：白名单 extra 也补了 @types/react / @types/react-dom，双保险。
 def _keep_devdep(k):
     if k in whitelist:
         return True
@@ -184,21 +182,20 @@ build_src, white_file = sys.argv[1], sys.argv[2]
 white = json.load(open(white_file, encoding='utf-8'))
 pnpm = os.path.join(build_src, 'node_modules', '.pnpm')
 
-# ── 白名单 = 运行时闭包 + 构建工具闭包（2026-10-02）────────────────────────
-# 前置裁剪的难点：构建工具（tsx/tsdown/vite-tsconfig-paths…）自身依赖
-# esbuild / rollup / vite / postcss / oxc-resolver 等**传递依赖**——这些既不在运行时
-# lockfileDeps、也不在 extra 名单里，静态列举必漏（实测漏 esbuild →
-# build 报 Cannot find package 'esbuild'）。故改为**沿 .pnpm 依赖软链自动递归**：
-# 从白名单出发收集整棵依赖闭包，闭包内全部保留。
-# （pkg_name / pkg_deps / expand_closure 已抽到 build/prune_common.py，2026-10-03）
+# ── 白名单 = 运行时闭包 + 构建工具闭包 ────────────────────────────────────
+# 前置裁剪的难点：构建工具（tsx/tsdown/vite-tsconfig-paths…）自身还有传递依赖。
+# 例如 esbuild / rollup / vite / postcss / oxc-resolver，这些既不在运行时 lockfileDeps、也不在 extra 名单里。
+# 静态列举必漏（实测漏 esbuild → build 报 Cannot find package 'esbuild'）。
+# 故改为**沿 .pnpm 依赖软链自动递归**：从白名单出发收集整棵依赖闭包，闭包内全部保留。
+# 公共实现见 build/prune_common.py（pkg_name / pkg_deps / expand_closure），勿各自内联。
 
-# ── 构建期白名单（2026-10-02 修正）：以「所有 workspace 包声明的依赖」为根 ──
-# 教训：只从 extra（构建工具）出发会漏掉**源码构建依赖**——react/react-dom/electron/
-# electron-builder 等声明在各 workspace 包的 devDependencies（如 apps/desktop），
-# 不在运行时 lockfileDeps 中 → 被裁 → desktop 的 vite 构建报
+# ── 构建期白名单：以「所有 workspace 包声明的依赖」为根 ──
+# 教训：只从 extra（构建工具）出发会漏掉**源码构建依赖**。
+# 例：react/react-dom/electron/electron-builder 等声明在各 workspace 包的 devDependencies（如 apps/desktop）。
+# 它们不在运行时 lockfileDeps 中 → 被裁 → desktop 的 vite 构建报：
 # "Rollup failed to resolve import react/jsx-runtime"。
-# 正确口径：deps + devDeps + peerDeps + optionalDeps（全部 workspace 包 + 根
-# package.json）→ 沿 .pnpm 软链求闭包 → 闭包内全部保留。
+# 正确口径：deps + devDeps + peerDeps + optionalDeps（全部 workspace 包 + 根 package.json）。
+# 然后沿 .pnpm 软链求闭包 → 闭包内全部保留。
 def _collect_declared(root_dir):
     out = set()
     for dirpath, dirnames, filenames in os.walk(root_dir):
@@ -246,9 +243,9 @@ force_exclude = {'@openai/codex', 'claude-agent-sdk', '@anthropic-ai/claude',
 deleted = kept = 0
 hoist_broken = 0
 hoist_kept = 0
-# ⚠ 特殊目录：.pnpm/node_modules 是 pnpm 的**提升链接目录**（非包目录、目录名不带
-#    版本号），按包名逻辑会被误判为"非白名单"而删除 → 破坏依赖提升解析。
-#    2026-10-02 修复：显式保留，并清理其中指向已删包的悬空软链。
+# ⚠ 特殊目录：.pnpm/node_modules 是 pnpm 的**提升链接目录**（非包目录、目录名不带版本号）。
+#    按包名逻辑会被误判为"非白名单"而删除 → 破坏依赖提升解析。
+#    故显式保留，并清理其中指向已删包的悬空软链。
 SPECIAL_DIRS = {'node_modules'}
 if os.path.isdir(pnpm):
     for d in sorted(os.listdir(pnpm)):
@@ -272,10 +269,9 @@ if os.path.isdir(hoist):
         ep = os.path.join(hoist, entry)
         targets = [ep] if os.path.islink(ep) else (
             [os.path.join(ep, g) for g in os.listdir(ep)] if os.path.isdir(ep) and entry.startswith('@') else [])
-        # 2026-10-04 根因修：**白名单命中项的提升软链一律保留**，即便悬空。
-        #   背景：tsc/rollup 从**顶层** node_modules 解析（vite、@types/semver 等
-        #   传递依赖被 pnpm 提升到这里）。若此处按"悬空"删掉，构建期即报
-        #   TS2307 Cannot find module 'vite' / TS7016 semver（本地与 CI 同源复现）。
+        # 判据：**白名单命中项的提升软链一律保留**，即便悬空。
+        #   背景：tsc/rollup 从**顶层** node_modules 解析（vite、@types/semver 等传递依赖被 pnpm 提升到这里）。
+        #   若此处按"悬空"删掉，构建期即报 TS2307 Cannot find module 'vite' / TS7016 semver。
         #   悬空只说明对应 .pnpm 实体被裁；白名单包应随实体一起保留，故不删。
         _keep_name = entry if not entry.startswith('@') else None
         for tp in targets:
@@ -314,13 +310,12 @@ pnpm = os.path.join(target, 'node_modules', '.pnpm')
 # 只用运行时依赖（lockfileDeps + workspaceRuntimeDeps），不用 extra
 #（extra 里的类型检查包只在模式 A 保护 tsc，不需要进最终 target）
 whitelist = set(white.get('lockfileDeps', []))
-# ★ 2026-10-10 修复：并入 _autoLearned（学习器写、此前【无人读】）
-#   实证：otel 插件真机报 Cannot find module '@szmarczak/http-timer'；该包已在
-#   extra 与 _autoLearned，却不在 lockfileDeps，而模式 B 只读 lockfileDeps +
-#   workspaceRuntimeDeps → 出货被删。全仓库搜索证实没有任何代码读 _autoLearned
-#   （学习成果全落空），而 README 把它写成"手工补充的强制保留项"（文档与代码不符）。
-#   学习器职责正是把构建/运行期真正用到、但不在白名单的包学进来，出货形态应尊重它，
-#   否则学习等于白学（got@11.8.6 的运行时依赖就是这么丢的）。
+# ★ 必须并入 _autoLearned：学习器写入的强制保留项此前【无人读】，出货时被删掉。
+#   实证：otel 插件真机报 Cannot find module '@szmarczak/http-timer'。
+#   该包已在 extra 与 _autoLearned，却不在 lockfileDeps，而模式 B 只读 lockfileDeps + workspaceRuntimeDeps。
+#   全仓库搜索证实没有任何代码读 _autoLearned（学习成果全落空），README 却把它写成"手工补充的强制保留项"。
+#   学习器职责正是把构建/运行期真正用到、但不在白名单的包学进来，出货形态必须尊重它。
+#   否则学习等于白学（got 的运行时依赖就是这么丢的）。
 whitelist.update(white.get('_autoLearned', []))
 if white.get('workspaceRuntimeDeps'):
     pkgs_root = os.path.join(target, 'packages')
@@ -332,33 +327,22 @@ if white.get('workspaceRuntimeDeps'):
             except Exception:
                 pass
 
-# ── 依赖闭包（2026-10-03 修复：模式 B 此前完全没有闭包）────────────────────
-# 【症状】纯名字白名单只认「lockfileDeps 里列出的包名」+「workspace 包自己声明的依赖」，
-#   而**外部包自己的传递依赖两者都不属于**：
-#       @deepseek-ai/libreoffice-kit@0.1.1 → fontkit@2.0.4         （dsh-office-to-pdf 挂）
-#       got@14.6.6                         → @sindresorhus/is@^7.0.1（dsh-otel 挂）
-#       @modelcontextprotocol/client@2.0.0 → @modelcontextprotocol/core（acp-app 挂）
-#   于是它们被无条件删除，而消费者 `got` / `libreoffice-kit` 留下 → 目录里出现
-#   悬空软链（这正是本缺陷的指纹）。装完 DSH 启动报 "Cannot find package 'x'",
-#   内置插件 failed to import。实测 10.10.10.64 与 10.10.10.193 两台机器安装的
-#   同一个 SPK 全部中招（同源构建缺陷，非某台机器偶发）。
-# 【为何只漏模式 B】模式 C（build 前）早已有闭包，模式 B（最终 target）只做纯名单
-#   匹配 → 模式 C 保住的包在最后一步又被删掉。
-# 【修法】调公共 expand_closure，与模式 C 同款（见 build/prune_common.py）。
-# 【2026-10-03 二次修 → 当日回退】曾把这里改成 runtime_only=True（只沿 package.json 的
-#   dependencies 边展开）以压缩体积，结果**收过头**：target 778M 但装出来 DSH 起不来，
-#   启动日志报 ERR_MODULE_NOT_FOUND: fontkit / is-plain-obj / @sindresorhus/is。
-#   原因：目录列表包含 pnpm 为每个包放置的**全部运行期解析结果**（含 optional/peer/hoisted），
-#   而 package.json 的 dependencies 会漏掉它们。故**恢复目录列表口径**（语义正确：
-#   pnpm 不会把依赖的 devDependencies 放进它的 node_modules）。
-#   体积膨胀的真凶应在**种子侧**（workspaceRuntimeDeps 是否含 devDependencies）排查，而不是
-#   在闭包口径上动刀 —— 见 README「裁剪白名单」(#prune-whitelist) 与 learn-prune-whitelist.sh。
-# 【2026-10-03 最终结论】模式 B **不做依赖闭包**：只用纯白名单（lockfileDeps +
-#   workspaceRuntimeDeps，**不含 extra** —— extra 里的类型检查包只在模式 A 保护 tsc，
-#   不进最终 target；2026-10-04 审核修正此注释，原写"+ extra"与代码不符）。
-#   闭包会把 target 撑到 5.3G（实测：留 848 个 .pnpm
-#   目录 = 4.9G；纯白名单留 327 个 ≈ 778MB）。缺的运行期包由打包阶段的
-#   fix-runtime-deps.sh **运行时探测**补齐（那是它的职责，且已验证可用）。
+# ── 依赖闭包：模式 B 不做闭包（只用纯白名单）────────────────────────────────
+# 【症状】纯名字白名单只认「lockfileDeps 列出的包名」+「workspace 包自己声明的依赖」。
+#   而**外部包自己的传递依赖两者都不属于**，例如 fontkit / @sindresorhus/is / @modelcontextprotocol/core。
+#   于是它们被无条件删除，而消费者（got / libreoffice-kit）留下 → 目录里出现悬空软链（本缺陷的指纹）。
+#   装完 DSH 启动报 "Cannot find package 'x'"，内置插件 failed to import。
+# 【为何只漏模式 B】模式 C（build 前）早已有闭包，模式 B（最终 target）只做纯名单匹配。
+#   结果：模式 C 保住的包在最后一步又被删掉。
+# 【口径定论】模式 B **不做依赖闭包**：只用纯白名单（lockfileDeps + workspaceRuntimeDeps）。
+#   extra 里的类型检查包只在模式 A 保护 tsc，不进最终 target。
+#   ⚠ 别把 runtime_only=True 当解法：曾改成只沿 package.json 的 dependencies 边展开。
+#   target 降到 778M 但装出来 DSH 起不来（ERR_MODULE_NOT_FOUND: fontkit / is-plain-obj / @sindresorhus/is）。
+#   原因：目录列表才是 pnpm 的全部运行期解析结果（含 optional/peer/hoisted），package.json 会漏。
+# 【体积代价】闭包会把 target 撑到 5.3G（留 848 个 .pnpm 目录 = 4.9G）。
+#   纯白名单留 327 个 ≈ 778MB；缺的运行期包由 fix-runtime-deps.sh 运行时探测补齐（已验证可用）。
+# 【膨胀真凶的排查方向】在**种子侧**（workspaceRuntimeDeps 是否含 devDependencies），不在闭包口径。
+#   详见 README「裁剪白名单」(#prune-whitelist) 与 scripts/learn-prune-whitelist.sh。
 runtime_closure = set()   # 不再扩闭包
 
 # 强制排除（即使在白名单里也不保留：体积大 / disabled preset / 非目标平台）
@@ -370,8 +354,8 @@ deleted = 0
 kept = 0
 hoist_broken = 0
 hoist_kept = 0
-# ⚠ 特殊目录同模式 C：.pnpm/node_modules 是 pnpm 提升链接目录（名不带版本号），
-#    必须保留，否则依赖提升解析被破坏（2026-10-02 修复）。
+# ⚠ 特殊目录同模式 C：.pnpm/node_modules 是 pnpm 提升链接目录（目录名不带版本号）。
+#    必须保留，否则依赖提升解析被破坏。
 SPECIAL_DIRS = {'node_modules'}
 if os.path.isdir(pnpm):
     for d in sorted(os.listdir(pnpm)):
@@ -395,10 +379,9 @@ if os.path.isdir(hoist):
         ep = os.path.join(hoist, entry)
         targets = [ep] if os.path.islink(ep) else (
             [os.path.join(ep, g) for g in os.listdir(ep)] if os.path.isdir(ep) and entry.startswith('@') else [])
-        # 2026-10-04 根因修：**白名单命中项的提升软链一律保留**，即便悬空。
-        #   背景：tsc/rollup 从**顶层** node_modules 解析（vite、@types/semver 等
-        #   传递依赖被 pnpm 提升到这里）。若此处按"悬空"删掉，构建期即报
-        #   TS2307 Cannot find module 'vite' / TS7016 semver（本地与 CI 同源复现）。
+        # 判据：**白名单命中项的提升软链一律保留**，即便悬空。
+        #   背景：tsc/rollup 从**顶层** node_modules 解析（vite、@types/semver 等传递依赖被 pnpm 提升到这里）。
+        #   若此处按"悬空"删掉，构建期即报 TS2307 Cannot find module 'vite' / TS7016 semver。
         #   悬空只说明对应 .pnpm 实体被裁；白名单包应随实体一起保留，故不删。
         _keep_name = entry if not entry.startswith('@') else None
         for tp in targets:

@@ -5,7 +5,7 @@
 用法:
     ./scripts/check-fpk-payload.py <包.fpk> [--expect-pkg 名字]...
 
-为什么需要它（2026-10-09 血的教训）：
+为什么需要它：
   已有守卫全是**源码级**的（check-packaging-invariants 检查脚本文本、
   check-package-parity 要人工给两个包比对）—— 它们保证不了【构建出来的包】可用。
   于是反复出现同一类出货缺陷，每次都要装到真机才发现：
@@ -159,14 +159,14 @@ def main():
             if base in declared or True:
                 hard.append((n, t))
         # 先按"该链的消费者是不是工作区包"分级：links.tar 的路径含 packages/|vendor/|apps/
-        # ★ 2026-10-10 修正：vendor/ 与 apps/ 下挂的是【dev / 构建依赖】（vite、esbuild、
+        # ★ 定级修正：vendor/ 与 apps/ 下挂的是【dev / 构建依赖】（vite、esbuild、
         #   react-dom、http-server…），prune 的设计就是删 devDependencies（见 prune-target.sh
         #   头注释"纯白名单：不在白名单 = 删除"）→ 运行时不需要，属预期，不能判出货缺陷。
         #   真正要硬卡的是【顶层 node_modules/<包名>】这类运行时解析路径。
         hard = [(n, t) for (n, t) in bad
                 if re.match(r"^\.?/?node_modules/(?:@[^/]+/)?[^/]+$", n)]
         soft = [(n, t) for (n, t) in bad if (n, t) not in hard]
-        # ★ 2026-10-10 定级修正：悬空链一律【警告】，不再让构建失败。
+        # ★ 定级修正：悬空链一律【警告】，不再让构建失败。
         #   依据：prune-target.sh 是"纯白名单"语义（不在白名单 = 删除），而白名单刻意不含
         #   devDependencies → 根目录与各包的 dev/构建依赖（vite、esbuild、tsdown、tar、
         #   react-dom…）**必然**在载荷里留下悬空链，这是设计预期，不是缺陷（实测 490+ 条）。
@@ -200,7 +200,7 @@ def main():
         m = re.match(r"^node_modules/\.pnpm/([^/]+)/node_modules/((?:@[^/]+/)?[^/]+)$", n)
         if m:
             resolvable.add(m.group(2))
-    # ★ 2026-10-10 修正：工作区包是【以软链形式】解析的（node_modules/@deepseek-ai/cordis
+    # ★ 修正：工作区包是【以软链形式】解析的（node_modules/@deepseek-ai/cordis
     #   -> ../../vendor/cordis），而软链在 app.tgz 后处理时被删、存进 links.tar。
     #   原实现只从 app.tgz 条目建 resolvable → 必然把这类依赖误报成"解析不到"（实测误报 cordis）。
     #   这里把 links.tar 里每条软链的【名字】也计入可解析集合。

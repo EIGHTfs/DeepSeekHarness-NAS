@@ -5,7 +5,7 @@
 # 第一大类：全局默认配置（SPK 与 FPK 共用）
 # ============================================================================
 defaults:
-  # ── 目标架构（2026-10-15 新增，参数化改造）─────────────────────────────────
+  # ── 目标架构（参数化改造：唯一来源在此，脚本内不再写死 ✗）───────────────────
   #   取值: x86_64（默认）| arm64；别名也接受（x64/amd64 → x86_64，aarch64/armv8 → arm64）
   #   映射（由 build/build-lib.sh 的 resolve_arch() 统一解析，脚本内不再写死 ✗）:
   #     x86_64 → SPK arch="x86_64"  产物 ..._x86_64-<ver>.spk ；FPK platform=x86  产物 ..._x86-<ver>.fpk
@@ -42,12 +42,12 @@ defaults:
   os_min_ver: 7.0-40851
   # 名牌版本号优先级链：dsh 包（@deepseek-ai/dsh/package.json version）→ npm 包（客户端编译产物 localBuildVersion 串）
   brand_version_order: dsh,npm
-  # 打包体积门禁（MB；0 = 不检查）。任务① 验收口径 fpk≈100MiB，留余量设 200
+  # 打包体积门禁（MB；0 = 不检查）。fpk 实测约 100MiB，留余量设 200
   size_limit_mb: 200
 
   # ── 共享区（@appshare）目录名（fpk/spk 共用；禁止在脚本里写死路径） ──
-  #   共享区根路径由平台注入的变量自动推导（fpk: TRIM_PKGVAR 的 @appdata → @appshare；
-  #   spk: SYNOPKG_PKGVAR 所在的 @appstore 卷），不写卷号、不写应用名。
+  #   共享区根路径由平台注入的变量自动推导：fpk 取 TRIM_PKGVAR 的 @appdata → @appshare。
+  #   spk 取 SYNOPKG_PKGVAR 所在的 @appstore 卷。不写卷号、不写应用名。
   #   ⚠ 两个字段默认都留空 = 不创建任何共享目录（零副作用）。
   #     需要时填目录名即可，例如：
   #       share_workspace_dir: 工作区   → <共享区>/工作区（777，用户可见，放项目文件）

@@ -2,7 +2,7 @@
 #===============================================================================
 # test/safe-rm-rf.test.sh — 事故回归测试：**含挂载点的目录绝不能被删**
 #
-# 背景（2026-10-03 事故）：rm -rf /volume1/@appdata/<PKG> 递归进入其下的 NFS 挂载点，
+# 背景：rm -rf /volume1/@appdata/<PKG> 递归进入其下的 NFS 挂载点，
 #   在**源端**删光用户工作区，不可恢复。修复为 scripts/lib/common.sh 的
 #   has_mount_under() + safe_rm_rf()（强制 --one-file-system + 显式挂载点检测）。
 #

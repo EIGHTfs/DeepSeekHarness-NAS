@@ -1,7 +1,7 @@
 #===============================================================================
 # .github/actions/build-target/action.yml — **唯一构建**公共 action
 #
-# 2026-10-04 在线构建重设计（用户批准方案第 8 步）：
+# 在线构建重设计（第 8 步）：
 #   原先 `build-spk` 与 `build-fpk-source` **各自逐字重复**一遍
 #   「setup-node-env → fetch-latest → ci-clean → build-common.sh」，
 #   等于把同一套 install+build+裁剪跑两遍（每次约 20 分钟）。
@@ -23,7 +23,7 @@ inputs:
     required: false
     default: ${{ github.token }}
   dsh_tag:
-    description: 指定官方 tag（如 dsh-v0.1.5-rc.2）；留空 = 官方最新
+    description: 指定官方 tag（如 dsh-v<版本>）；留空 = 官方最新
     required: false
     default: ""
   arch:
@@ -103,7 +103,7 @@ runs:
         echo "pnpm store 缓存命中: ${{ steps.cache-pnpm-store.outputs.cache-hit }}"
         du -sh assets/pnpm-store 2>/dev/null || echo "（store 目录尚未创建，本次为冷启动）"
 
-    # ── 缓存：**已构建好的 target**（真正的"旧产物复用"，2026-10-04 补）──
+    # ── 缓存：**已构建好的 target**（真正的"旧产物复用"）──
     #   为什么之前每次都重编 20 分钟：只缓存了输入（源码镜像 / pnpm store），**没缓存 target**，
     #   runner 每次是空的 → build-common.sh 的 SKIP_BUILD（缺省即复用）无物可复用。
     #   key 用**官方 tag**（源码变了必须重编）+ 构建逻辑指纹（这些文件变了也重编）。
@@ -164,13 +164,13 @@ runs:
         [ -f "$T/build-meta.env" ] || { echo "✗ 缺少 build-meta.env（构建未完成）"; exit 1; }
         echo "✓ target: $(du -sh "$T/target" | cut -f1)"
         echo "✓ meta  : $(wc -c < "$T/build-meta.env") 字节"
-        # 2026-10-04（用户方案）：upload-artifact@v4 的 OOM 多因"目录太大/文件太多"——
+        # upload-artifact@v4 的 OOM 多因"目录太大/文件太多"——
         #   它逐文件处理，745M+ 海量文件会爆 4GB 堆。改为**先 tar 成单文件再上传**：
         #   一个文件几乎不占内存，问题直接消失；不去调 NODE_OPTIONS（对官方 action 无效）。
         TAR="$RUNNER_TEMP/build-target.tar.gz"
         # ⚠ 必须带上 .build-done：build-common.sh 的复用判据是
         #   [ -f "$WORK/.build-done" ] && [ -d "$TARGET" ] && [ -f "$TARGET/package.json" ]
-        #   漏了它 → 解包后判据不成立 → 依旧完整重编（2026-10-04 自查发现）。
+        #   漏了它 → 解包后判据不成立 → 依旧完整重编（自查发现）。
         tar -czf "$TAR" -C "$T" target build-meta.env .build-done
         echo "✓ 已打包单文件: $TAR（$(du -h "$TAR" | cut -f1)）"
         echo "  上传后 pack-* job 解包即得同样的 target/ 与 build-meta.env"

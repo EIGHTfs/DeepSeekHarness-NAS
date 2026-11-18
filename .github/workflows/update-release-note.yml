@@ -1,6 +1,6 @@
 name: Update release note
 
-# 独立刷新某个 Release 的正文（用户 2026-10-15 定）：
+# 独立刷新某个 Release 的正文：
 #   文案改动不必跑完整构建 ✓ —— 复用 build/release-note.sh 同一模板，保证与构建时逐字一致 ✓
 on:
   workflow_dispatch:

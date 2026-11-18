@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-#  DSH 实例启动脚本 (dsh-v0.1.2-alpha.4) —— 自包含版
+#  DSH 实例启动脚本 —— 自包含版
 #  数据区: <DSH_DIR>/.dsh-home/.dsh (自动定位)
 #  用法:   ./start.sh [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store|self-check]
 #
@@ -17,7 +17,7 @@
 #          → check 只读自检（属主 / 凭据权限 / ACL / 端口 / 缺包）；fix-owner 修属主漂移（仅 root）
 #  PID/日志/临时文件一律落应用版本数据目录（禁止 /tmp：fnOS /tmp 属 root 无 sticky，应用用户不可写）
 #
-#  【2026-10-03 可诊断化】权限收紧不再静默吞 EPERM：
+#  【权限收紧改为可诊断】不再静默吞 EPERM：
 #  背景：从旧版本迁移/共享文件夹场景下，数据区条目属主可能是管理员用户而非服务用户，
 #        chmod 全部 EPERM。旧实现内层 catch{} 把失败全丢掉，只有 .credentials.yaml 卡在 622，
 #        DSH 三秒后以 "1 required plugin did not activate" 崩溃，日志里零线索（193 实机）。
@@ -78,7 +78,7 @@ find_dsh_dir() {
 #   npm  —— 客户端编译产物 localBuildVersion() 的完整串（含 commit，如 0.1.5-rc.2-449af19）
 #   top  —— 顶层 package.json 的 version（外壳兜底）
 # ⚠ 不可只读顶层 package.json：npm 链路该文件是外壳（dsh-web/1.0.0），
-#   会把数据目录错建成 <var>/1.0.0（2026-09-13 实测）。
+#   实测：会把数据目录错建成 <var>/1.0.0。
 BRAND_VERSION_ORDER="__BRAND_VERSION_ORDER__"
 
 _version_from() {
@@ -128,7 +128,7 @@ find_node() {
   done
   command -v node 2>/dev/null
 }
-# ---------- 首启构建（已抽离留档 2026-09-13） ----------
+# ---------- 首启构建（已抽离留档，见 scripts/first-build-logic.sh） ----------
 # 完整预构建包（-dist）已含 node_modules 与构建产物，装完即用、免首启构建。
 # 如需精简包首启构建逻辑（ensure_built + 构建进度占位页），
 # 见同级 scripts/first-build-logic.sh（抽离留档，实际打包不使用）。
@@ -158,7 +158,7 @@ _tmp_exec_ok() {
   rm -f "$_probe" 2>/dev/null
   return $_rc
 }
-# 【2026-10-03】目录创建推迟到 cmd_start：原先写在顶层，会让只读的 `check` 也产生副作用
+# 【目录创建推迟到 cmd_start】原先写在顶层，会让只读的 `check` 也产生副作用
 # （凭空建出数据目录/ tmp），且 status/stop 本就不该创建目录。只读子命令必须真的只读。
 ensure_pid_dirs() {
   mkdir -p "$PID_DIR" 2>/dev/null || true
@@ -200,7 +200,7 @@ else
   # 手动启动（无 TRIM_PKGVAR / SYNOPKG_PKGVAR / PKG_VAR 注入，如 SSH 直跑 ./start.sh）：
   # 优先复用群晖套件标准数据目录（/var/packages/<APP>/var → 真实数据卷，或 /volume*/@appdata/<APP>），
   # 使手动启动与套件启动落到同一 DSH_HOME（同一 PID 文件），避免「两套实例」——否则
-  # is_running 各读各的 PID 文件互不感知，AI/手动 restart 会操作错误实例（2026-09-22 实测分叉）。
+  # is_running 各读各的 PID 文件互不感知，AI/手动 restart 会操作错误实例（实测出现实例分叉）。
   # 探测不到（非群晖部署：fnOS 走 TRIM_PKGVAR 分支不受影响；纯目录部署）则回退 .dsh-home 保持原行为。
   # ⚠ 包名不能只取 basename "$DSH_DIR"：DSH_DIR 通常是 <包根>/target，
   #   basename 会得到字面量 "target"，于是探测 /var/packages/target/var 必然失败、
@@ -222,12 +222,12 @@ else
   fi
 fi
 
-# ---------- 显式指定 DSH_HOME（2026-09-17）----------
+# ---------- 显式指定 DSH_HOME ----------
 # dsh 按 $DSH_HOME/profiles/<name> 定位 profile（见 dsh --help）。不导出时 dsh 走默认
 # 规则（$HOME 下）：群晖 SSH 里 root 裸跑会落到 /root/.dsh，与服务实际使用的
 # <PKG_VAR>/<version>/.dsh 不是同一个 home → `dsh plugin add` 装到服务读不到的地方，
 # 表现为「插件装完不生效 / 插件市场报错」。
-#   2026-09-17 实机复现：dsh plugin --profile web list
+#   实机复现：dsh plugin --profile web list
 #     → "dsh: initialized profile web at /root/.dsh/profiles/web"
 # 【强制覆盖，不继承外部残留值】服务必须使用自己的 home：若此处改成「已有 DSH_HOME
 #   则不覆盖」，当服务进程从父环境继承到陈旧/无关的 DSH_HOME（实测：在已设 DSH_HOME
@@ -249,7 +249,7 @@ APP_NAME="__APP_NAME__"
 
 # ── PID / 日志文件位置（禁止 /tmp）──
 # fnOS 的 /tmp 属 root、无 sticky，应用用户（run-as=package）不可写：
-#   /tmp/dsh-repair-<uid>.log: 权限不够 → 启动直接失败（2026-09-13 实机实测）。
+#   /tmp/dsh-repair-<uid>.log: 权限不够 → 启动直接失败（实机实测）。
 # 统一放应用自己的版本数据目录（DSH_HOME_PARENT，安装期 chown 给应用用户）：
 #   <PKG_VAR>/<version>/<APP_NAME>.pid 与 .log
 PID_DIR="${DSH_HOME_PARENT:-$DSH_HOME_DIR}"
@@ -262,14 +262,14 @@ LOG_FILE="${PID_DIR}/${APP_NAME}.log"
 CRASH_FILE="${PID_DIR}/${APP_NAME}-crash.log"
 LOG_MAX_BYTES=$((5 * 1024 * 1024))   # 单次运行日志上限 5MB，超出先轮转到 .1 再追加
 # node 的临时文件走 TMPDIR；fnOS /tmp 不可写会让 mkdtemp EACCES → 启动崩溃
-# 【2026-10-09 用户口径】临时目录**不再落在应用数据目录里**（<PKG_VAR>/<version>/tmp ✗）：
+# 【临时目录不再落在应用数据目录里】不走 <PKG_VAR>/<version>/tmp ✗：
 #   优先用平台自带的按应用临时目录 ——
 #     fnOS : $TRIM_PKGTMP，或 /var/apps/<app>/tmp（-> /vol2/@apptemp/<app>，安装时由 fnOS 建）
 #     群晖 : /var/packages/<app>/tmp（套件自己的临时目录）
 #   都没有才回退到版本数据目录下的 tmp（保持旧行为可用）。
 # ⚠ 顶层只【选路径】不建目录：只读子命令（check）必须真的只读，见下方 ensure_pid_dirs 注释。
 DSH_TMP_DIR=""
-# ★ 2026-10-10 真机实证（DSM 7.4.1）：TMPDIR 还必须是【可执行】目录 ✗
+# ★ 真机实证（DSM 7.4.1）：TMPDIR 还必须是【可执行】目录 ✗
 #   node-addon-require-builtin 的 loader 会把原生 .node 复制到 os.tmpdir() 再 require；
 #   而群晖 /tmp 是 tmpfs(noexec) → 复制过去也 dlopen 失败 →
 #   "No usable prebuilt binary found in linux-x64-gnu" → DSH host 准备失败 →
@@ -390,7 +390,7 @@ function readMountPoints() {
 }
 
 // 权限收紧结果汇报：把「谁没改成功 / 为什么 / 怎么修」一次说清。
-// 2026-10-03 实测教训：迁移后 .dsh 内 76 个条目属主是管理员用户而非服务用户，
+// 实测教训：迁移后 .dsh 内 76 个条目属主是管理员用户而非服务用户，
 // chmod 全部 EPERM 却被内层 catch{} 丢弃，只有 .credentials.yaml 卡在 622 →
 // DSH 三秒后以 "1 required plugin did not activate" 崩溃，现场零线索。
 function reportHarden(dir, myUid, denied, failed) {
@@ -490,7 +490,7 @@ function killOldProcesses() {
       } catch {}
     }
   } catch {}
-  // 按【端口】清理残留（2026-11-06 新增）：
+  // 按【端口】清理残留：
   //   旧实例父进程是 `node -e '<内联脚本>'`，按名字（start.sh / bin.js）都匹配不到 ✗，
   //   残留进程继续占着 dsh/容器端口 → 下次启动 dsh 的 webserver 插件报
   //   `listen EADDRINUSE 127.0.0.1:<dshPort>`，连带 web-runtime(required) 激活失败，
@@ -628,7 +628,7 @@ document.write('<iframe src="http://' + host + ':' + ${proxyPort} + '/" id="dshF
 </html>`;
 }
 
-// ── 启动期自愈兜底（2026-10-09）───────────────────────────────────────────────
+// ── 启动期自愈兜底 ─────────────────────────────────────────────────────────────
 //   病根：DSH 运行时按 node_modules/<包名> 解析依赖，而 pnpm 的链接分三层：
 //     ① 顶层  node_modules/<包名>
 //     ② 提升  node_modules/.pnpm/node_modules/<包名>
@@ -693,7 +693,7 @@ function selfHealWorkspaceLinks(root) {
   //   → dsh-plugin-manager failed to import。此处必须与 python 侧一致。
   const entDirs = {};
   const verKey = (d) => { const m = String(d).match(/@(\d+)\.(\d+)\.(\d+)/); return m ? [+m[1], +m[2], +m[3]] : [0, 0, 0]; };
-  // ★ 2026-10-10 真机实证（DSM 7.4.1）：多版本【不能一律取最高】✗
+  // ★ 真机实证（DSM 7.4.1）：多版本【不能一律取最高】✗
   //   compression@1.8.2 声明 negotiator "~0.6.4"，但被指到提升层的 1.1.0（Express 5 那份）
   //   → negotiator@1.1 在 encoding 路径上用 content-type.parse('gzip')
   //     → TypeError: invalid media type ✗
@@ -757,13 +757,13 @@ function selfHealWorkspaceLinks(root) {
   let nTop = 0, nDep = 0;
   // ② 提升目录：每个实体一条
   for (const name of Object.keys(ent)) { const _t = pickEnt(name); if (_t && mk(path.join(pnpm, 'node_modules', name), _t)) nTop++; }
-  // ① 顶层 node_modules/<包名>：★ 2026-10-10 真机验收发现原来【从未补过这一层】。
+  // ① 顶层 node_modules/<包名>：★ 真机验收发现原来【从未补过这一层】。
   //   Node 从 apps/cli/lib/ 往上找依赖，命中的正是 <应用体>/node_modules/<包名>；
   //   而 prune 只留 .pnpm 实体、顶层链被清 → 装完 commander/js-yaml/cordis 全缺
   //   （实测：补 661 条顶层链后应用立刻 running、套件打开 200）。
   for (const name of Object.keys(ent)) { const _t = pickEnt(name); if (_t && mk(path.join(nm, name), _t)) nTop++; }
   for (const name of Object.keys(ws)) if (mk(path.join(nm, name), ws[name])) nTop++;
-  // ★ 纠正已存在的错链（2026-10-10 真机实测）：pnpm 可能把提升/顶层链指向【旧版本】实体，
+  // ★ 纠正已存在的错链（真机实测）：pnpm 可能把提升/顶层链指向【旧版本】实体，
   //   实例：execa@10.0.1 声明 get-stream ^9.0.1，而 .pnpm/node_modules/get-stream 指向
   //   5.2.0（CJS）→ "Named export 'getStreamAsArray' not found"；mk() 只补缺、从不纠正
   //   → 错链永远错。这两层一律纠正为最高版本（与 python 侧 relink 同规则）。
@@ -781,7 +781,7 @@ function selfHealWorkspaceLinks(root) {
     fixLink(path.join(pnpm, 'node_modules', name), _t);
     fixLink(path.join(nm, name), _t);
   }
-  // ★ 2026-10-10 新增：.pnpm 里【每个包自己的 node_modules】也要按声明范围补齐/纠正。
+  // ★ .pnpm 里【每个包自己的 node_modules】也要按声明范围补齐/纠正。
   //   原 fixDeps 只走工作区根（apps/、packages/），**从不进 node_modules/.pnpm**
   //   → compression 这类第三方包的包内依赖永远缺 → Node 向上走到提升层拿到错版本 ✗
   //   （实测就是 negotiator 1.1.0 导致全部响应 400 ✗）
@@ -878,7 +878,7 @@ async function main() {
 
   // 启动期自愈兜底（见上方 selfHealWorkspaceLinks / selfHealLinksTar 的说明）：
   // 必须在 spawn DSH 之前跑，否则缺链会直接 ERR_MODULE_NOT_FOUND → 退出重试 → "启动卡很久"
-  // ★ 2026-10-10 真机实证（DSM 7.4.1）：异常退出会残留 <DSH_HOME>/.credentials.yaml.lock，
+  // ★ 真机实证（DSM 7.4.1）：异常退出会残留 <DSH_HOME>/.credentials.yaml.lock，
   //   下次启动 atomic-write 等锁超时 → 必需插件 connection 不激活 → 报
   //   "connection (required) … timed out waiting for the writer lock" → DSH 退出 code=1
   //   → 反代起不来 → 门户打不开（用户观感"装完打不开"）。清掉残留锁后立即恢复正常。
@@ -899,7 +899,7 @@ async function main() {
   console.log(`[√] 端口: DSH=${dshPort}, 反代=${proxyPort}, 容器=${containerPort}`);
 
   console.log(`[>] 启动 DSH (127.0.0.1:${dshPort})`);
-  // 【修复 2026-09-16】V8 默认堆上限约 2GB，DSH 长时间运行堆涨到上限即
+  // 【V8 堆上限修复】V8 默认堆上限约 2GB，DSH 长时间运行堆涨到上限即
   // "FATAL ERROR: Ineffective mark-compacts near heap limit ... JavaScript heap out of memory"
   // → SIGABRT 自杀（系统内存充足时非资源受限）。自适应：物理内存 40% 给 V8 堆，
   // 下限 2GB 保底、上限 8GB 防过度分配（与正式 start.sh 同款逻辑）。
@@ -943,7 +943,7 @@ async function main() {
     setTimeout(() => process.exit(code || 0), 1000);
   });
 
-  // 2026-10-03 新增：spawn 自身失败（如入口/cwd 不存在 → ENOENT）会触发未处理的
+  // spawn 自身失败（如入口/cwd 不存在 → ENOENT）会触发未处理的
   // 'error' 事件，直接把守护进程崩栈、日志只剩一段 Node 堆栈。这里收敛成一行结论。
   dshProcess.on('error', (err) => {
     console.error(`[!] 无法启动 DSH 进程: ${err && err.message}`);
@@ -1073,7 +1073,7 @@ code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
   // DSM 门户（桌面套件图标）承担登录墙：只有登录 DSM 的用户才进得了门户、点得到套件。
   // 门户打开＝携带 token 的唯一入口：请求无 dsh 会话时 302 到 ?token=...，
   // dsh 收到 token 会自行 303 到干净 URL 并种下 dsh-auth cookie，地址栏 token 随即自动隐藏。
-  // 静态资源判定（2026-11-06 新增）：反代的「未认证 → 302 补 token」只应对【文档导航】生效。
+  // 静态资源判定：反代的「未认证 → 302 补 token」只应对【文档导航】生效。
   //   原来对所有 GET 生效 ✗ → /favicon.svg、/favicon-dark.svg、/apple-touch-icon.png 等
   //   也被 302 成 HTML 页（实测 HTTP 302 + 0 字节）→ 浏览器把 HTML 当图标 →
   //   标签页显示成默认白底 ✗（首次访问、清 cookie、隐私窗口时最明显）
@@ -1107,7 +1107,7 @@ code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
     // ② 已持 dsh-auth cookie → 直连也放行（带过 token 即免密）
     const hasAuth = cookieHeader.includes('dsh-auth');
     // ① 门户/套件打开（无 cookie、无 token）→ 302 无条件带 token 自动登录
-    //   ★ 2026-10-09 实测修正：fnOS 套件图标打开与「地址栏直连」**都会**发
+    //   ★ 实测修正：fnOS 套件图标打开与「地址栏直连」**都会**发
     //     sec-fetch-site=none，二者无法区分 → 原先先判 isDirectAccess 直接 403，
     //     导致用户「明明从套件图标打开，却看到 403 请从套件图标打开」。
     //     上面 ⓪ 的局域网硬闸已经限定了来源，因此这里改为：
@@ -1126,7 +1126,7 @@ code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
       clientRes.end(FORBIDDEN_PAGE);
       return;
     }
-    // ①b 陈旧 token 兜底（2026-10-09 实测必需）：URL 里带了 token，但【不是当次 token】。
+    // ①b 陈旧 token 兜底（实测必需）：URL 里带了 token，但【不是当次 token】。
     //   fnOS 桌面/套件缓存的是【上次安装或上次启动时的 URL】，应用一重启 token 就变了 →
     //   按钮带着过期 token 进来 → 直接透传给 DSH → DSH 401 → 用户观感"套件打不开"，
     //   且**每次重启都会复发**（这正是反复出现的那类报告）。
@@ -1242,7 +1242,7 @@ code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
     console.log(`[√] 反代: http://0.0.0.0:${proxyPort} -> http://127.0.0.1:${dshPort}`);
   });
 
-  // 反代端口绑定失败必须显式报错退出（2026-11-06 新增）：
+  // 反代端口绑定失败必须显式报错退出：
   //   不接 'error' 事件时 node 抛未捕获异常 → 整个父进程崩溃 →
   //   已经绑好的其它端口一起消失，对外表现为「套件显示 running，但一个端口都没监听」✗
   //   反代是唯一门户入口，绑不上就没有可用形态，故这里明确失败（而不是静默半死）。
@@ -1277,7 +1277,7 @@ code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
     console.log(`[√] 容器: http://0.0.0.0:${containerPort}/`);
   });
 
-  // 容器页是【可选入口】：绑定失败只告警，绝不让它拖垮整个实例（2026-11-06 新增）
+  // 容器页是【可选入口】：绑定失败只告警，绝不让它拖垮整个实例。
   //   实测踩过：30802 被残留实例占住 → 未捕获 error → 父进程崩溃 →
   //   明明反代已绑好 30800，用户却完全打不开 ✗
   containerServer.on('error', (err) => {
@@ -1324,7 +1324,7 @@ main().catch(err => {
   process.exit(1);
 });
 
-// 守护进程级兜底（2026-11-06 新增）：
+// 守护进程级兜底：
 //   之前没有任何 uncaughtException/unhandledRejection 处理 ✗ →
 //   父进程（反代/容器页宿主）一旦抛出未捕获异常就直接崩栈，日志被截断、
 //   用户只看到"页面打不开"，且下一次启动把现场覆盖掉 ✗
@@ -1354,14 +1354,14 @@ get_token() {
   grep -o 'token=[A-Za-z0-9_-]*' "$LOG_FILE" 2>/dev/null | tail -1 | cut -d= -f2
 }
 
-# ---------- 门户 url 同步（2026-10-05 新增）----------
+# ---------- 门户 url 同步 ----------
 # 把当次运行的 token 写进门户 ui/config 的 url 字段（"/?token=…"），使 DSM 套件图标「打开」时
 # URL 本就带 token=，反代走「已带 token 放行」直达 DSH 认证 —— 不再依赖 Sec-Fetch-Site 判定。
 #
 # 为什么需要：浏览器「新开标签页」（= DSM 门户打开的方式）与「地址栏手输」的
 # Sec-Fetch-Site 都是 none，旧判定无法区分 → 从套件打开却被当成直连拦下（403 请从套件图标打开）。
 #
-# ★ 2026-10-10 实测结论（勿回退）：门户 url 必须【固定 "/"】。
+# ★ 实测结论（勿回退）：门户 url 必须【固定 "/"】。
 #   曾经在启动期把 token 写进 url（"/?token=…"），导致飞牛应用中心「打开」按钮
 #   点不开 —— 对照能正常打开的 1Panel：它的 .url 条目里根本没有 url 字段，
 #   而我们【包内原版】的 url 就是 "/"，装上就能打开。带 token 的免密由反代完成：
@@ -1400,7 +1400,7 @@ sync_portal_token() {
   done
 }
 
-# ---------- check（只读自检；2026-10-03 新增）----------
+# ---------- check（只读自检）----------
 # 一条命令给出「起不来」的根因：属主漂移 / 凭据权限 / ACL / 端口 / 运行时缺包。
 # 只读：不写文件、不改权限、不启动服务。退出码 0=无致命项，1=有致命项（⚠ 不计入）。
 #
@@ -1435,7 +1435,7 @@ cmd_check() {
   [ "$me" != "$(id -un)" ] && echo "            （基准取服务用户 $me；可用 --owner 覆盖）"
   echo
 
-  # ① 属主一致性：非本用户的条目 chmod 会 EPERM（2026-10-03 实机故障根因）
+  # ① 属主一致性：非本用户的条目 chmod 会 EPERM（实机故障根因）
   #    两个根分别扫描：.dsh 可能是独立子卷/绑定挂载，单次 -xdev 会把它整个剪掉
   echo "① 属主一致性（非本用户的条目 chmod 会 EPERM）"
   local d n
@@ -1629,7 +1629,7 @@ cmd_start() {
   # 注：DSM 的 synopkg 服务以套件用户（非 root）运行本脚本，/usr/bin、/usr/local/bin
   #   均不可写；此时兜底建到 $HOME/.local/bin（须先 mkdir -p，ln 不自动建父目录）。
   #
-  # 【2026-09-17 改为 wrapper】原先只做软链，用户 SSH 进去敲 `dsh` 时环境里没有
+  # 【改为 wrapper】原先只做软链，用户 SSH 进去敲 `dsh` 时环境里没有
   # DSH_HOME，dsh 会按默认规则落到 $HOME/.dsh（群晖 root → /root/.dsh），与服务使用的
   # home 不一致 → 插件装到服务读不到的地方。改为写一个注入 DSH_HOME 的 wrapper，
   # 使任何方式调用的 dsh 都指向本实例 home（幂等重写；版本升级后 home 变化自动更新）。
@@ -1644,7 +1644,7 @@ cmd_start() {
     rm -f "$target" 2>/dev/null || true
     cat > "$target" <<DSH_WRAPPER_EOF
 #!/bin/sh
-# DSH CLI wrapper —— 由 start.sh 生成（2026-09-17），请勿手改：
+# DSH CLI wrapper —— 由 start.sh 生成，请勿手改：
 # 注入本实例的 DSH_HOME，避免 dsh 落到 \$HOME/.dsh 导致插件装错位置。
 if [ -z "\${DSH_HOME:-}" ] && [ -d "$DSH_HOME_DIR" ]; then
   DSH_HOME="$DSH_HOME_DIR"
@@ -1742,7 +1742,7 @@ DSH_WRAPPER_EOF
     fi
   done
   echo "! 端口未就绪，请查看日志: $LOG_FILE"
-  # 2026-10-03 新增：直接把日志里的致命原因抛出来，不让用户自己翻大日志
+  # 直接把日志里的致命原因抛出来，不让用户自己翻大日志
   # （旧行为只有一句"请查看日志"，193 那次的真因是 credentials 权限，藏在几千行之后）
   local hit
   hit=$(grep -m1 -E "startup failed|required plugin did not activate|readable beyond its owner|Cannot find package|EADDRINUSE" "$LOG_FILE" 2>/dev/null || true)
@@ -1752,7 +1752,7 @@ DSH_WRAPPER_EOF
     grep -m1 -B1 -A3 "readable beyond its owner" "$LOG_FILE" 2>/dev/null | sed 's/^/    /' || true
     echo "  自检: $0 check"
   fi
-  # 2026-10-03 新增：缺包兜底 —— 只补日志点名的那几个包，补完重试一次启动。
+  # 缺包兜底 —— 只补日志点名的那几个包，补完重试一次启动。
   #   打包阶段本应离线带全，这里是最后一道防线；DSH_DEPS_RETRIED 防止重试递归。
   local miss
   miss="$(missing_from_log)"
@@ -1771,7 +1771,7 @@ DSH_WRAPPER_EOF
 # ---------- stop ----------
 cmd_stop() {
   if ! is_running; then
-    # ★ 2026-10-10：卸载流程里这句会以弹窗形式弹给用户，观感像"出错" ✗
+    # ★ 卸载流程里这句会以弹窗形式弹给用户，观感像"出错" ✗
     #   卸载钩子会先置 DSH_UNINSTALLING=1 或写 .uninstalling 标记 →
     #   此时说"已卸载"（符合事实 ✓）；普通手动 stop 仍说"DSH 未运行"（便于排障 ✓）。
     if [ -n "${DSH_UNINSTALLING:-}" ] || [ -f "${PID_DIR:-/tmp}/.uninstalling" ]; then
@@ -1828,7 +1828,7 @@ cmd_status() {
   # 退出码遵循 LSB init 约定：0=运行中，3=未运行。
   # ⚠ 必须给出退出码：调用方（fnOS cmd/main、群晖 start-stop-status）靠它判状态，
   #   只 echo 不返回 → 恒为 0 → 系统误判「运行中」而不再真正拉起服务
-  #   （2026-09-13 实机实测：装完 status 报 running 但无进程、无端口）。
+  #   （实机实测：装完 status 报 running 但无进程、无端口）。
   local running=0
   if is_running; then
     running=1
@@ -2223,7 +2223,7 @@ if [ "${1:-}" = "gen-portal" ]; then
     esac
   done
   _gp_url_line=""
-  # ★ 2026-10-10 实测：fnOS 桌面/套件入口的 url 必须【不带参数】（对照能正常打开的
+  # ★ 实测：fnOS 桌面/套件入口的 url 必须【不带参数】（对照能正常打开的
   #   1Panel，它的 .url 条目里根本没有 url 字段，只有 protocol+port）。此前写
   #   "/?token=…" 会让「打开」按钮失效；免密改由反代自动完成（⓪局域网硬闸 → ①无 token
   #   自动带 token → ①b 陈旧 token 换成当次），实测三种方式都 200。

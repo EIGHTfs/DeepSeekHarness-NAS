@@ -1,7 +1,7 @@
 name: Build SPK + FPK (DeepSeekHarness-NAS)
 
 on:
-  # 2026-10-09：删除「每日 04:00 UTC」定时触发（用户口径）。
+  # 已删除「每日 04:00 UTC」定时触发。
   #   原因：看门狗 watch-official.yml 每 30 分钟比对官方 tag，且**成功后暂停 6 小时**；
   #   而每日 cron 是【无条件】构建 → 若上次成功在 1 小时前，它照样跑 → 直接破坏 6 小时规则。
   #   看门狗本身就是 48 次/天的兜底，cron 的兜底价值已归零；且同一 tag 重建只会浪费 20 分钟。
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:          # 手动触发（Actions 页点按钮）
     inputs:
       dsh_tag:
-        description: '指定官方 tag（如 dsh-v0.1.5-rc.2）；留空 = 官方最新。用于补全历史版本的 FPK/SPK'
+        description: '指定官方 tag（如 dsh-v<版本>）；留空 = 官方最新。用于补全历史版本的 FPK/SPK'
         required: false
         default: ''
       arch:
@@ -28,7 +28,7 @@ on:
   workflow_call:
     inputs:
       dsh_tag:
-        description: '官方 tag（如 dsh-v0.2.2-rc.3）；留空 = 官方最新'
+        description: '官方 tag（如 dsh-v<版本>）；留空 = 官方最新'
         required: false
         type: string
         default: ''
@@ -41,10 +41,10 @@ on:
 # 创建/更新 Release 需要写权限
 permissions:
   contents: write
-  # 方案 B（2026-10-09 用户定）：构建失败时自动学习缺失依赖并【入库】，随后 dispatch 一次重建。
+  # 方案 B：构建失败时自动学习缺失依赖并【入库】，随后 dispatch 一次重建。
   # dispatch workflow 需要 actions: write。
   actions: write
-# 用户口径（2026-10-04）：同一份构建不重复跑 —— 新运行主动停掉还在跑的同一个。
+# 同一份构建不重复跑 —— 新运行主动停掉还在跑的同一个。
 # 但「同一个」的粒度必须含 tag：不同官方 tag 是不同产物，曾经因为 group 只有 arch，
 #   批量重建多个 tag 时后来的直接把前面的取消掉（实测：连发两个 tag，只剩最后一个）。
 # 故 group 里加入 tag（dispatch 用 inputs.dsh_tag；push/tag 触发用 ref_name 兜底）。
@@ -58,11 +58,11 @@ concurrency:
 #   BUILD_SPK = 'false'   关闭 SPK 构建（不设置或 'true' = 构建）
 #   BUILD_FPK = 'false'   关闭 FPK 构建
 #   PRUNE_OLD_ASSETS = 'false'  关闭「清理 Release 里改名后残留的旧产物资产」
-#       （不设置或 'true' = 清理，即**默认启用**，用户口径 2026-10-05）。
+#       （不设置或 'true' = 清理，即**默认启用**）。
 #       背景：action-gh-release 只替换同名资产，产物改名后旧名字会残留（实测同一 Release
 #       挂过新旧两个 SPK）。清理规则见 scripts/prune-release-assets.py 头部注释：
 #       只清理「本次确实产出过的类别」，未产出的类别一律不动（BUILD_FPK=false 时不会误删 FPK）。
-#   FPK 链路：**源码构建 + npm 链路一律都构建**（2026-10-03 起）
+#   FPK 链路：**源码构建 + npm 链路一律都构建**
 #       原先由 vars.FPK_MODE（both/source/npm）选择，现取消该参数：
 #       两条链路产物用途不同（源码版验证完整链路；npm 版体积小、装得快），
 #       单链路开关只会让 Release 缺项、文案出现"跳过"，故固定都构建。
@@ -129,8 +129,8 @@ jobs:
           ls -1 "$target_dir/native/system/packages" 2>/dev/null || echo "（无 native/system/packages）"
           python3 scripts/check-target-arch.py "$target_dir" --arch "${{ inputs.arch }}"
 
-      # ── 方案 B：构建失败时自动学习缺失依赖并入库（用户 2026-10-09 定）──────────────
-      # 为什么需要：官方新增构建期脚本可能 import 被裁剪剥掉的根 devDep（实测 alpha.2 的
+      # ── 方案 B：构建失败时自动学习缺失依赖并入库 ──────────────
+      # 为什么需要：上游新增构建期脚本可能 import 被裁剪剥掉的根 devDep（实测某 alpha 版的
       #   scripts/primary-runtime/prune-python-tests.ts → papaparse → TS2307 构建挂掉），
       #   而学习器此前只靠人工调用。这里接上闭环：学 → 入库 → 自动重建一次。
       # 边界：只从【真实失败日志】学（--log 模式，抓 Cannot find module 'X'），不猜；
@@ -163,7 +163,7 @@ jobs:
           git add build/build-prune-whitelist.json
           git commit -q -m "chore(prune): CI 自动学习并入构建必需包（方案 B）"
           git --no-pager diff --stat HEAD~1 -- build/build-prune-whitelist.json || true
-          # ★ 先写输出再推送（2026-10-09 实测教训）：原顺序是 push 在前，一旦 push 被拒
+          # ★ 先写输出再推送（实测教训）：原顺序是 push 在前，一旦 push 被拒
           #   （并发提交很正常：人手推的修复可能刚落到 main），本步被标 failure →
           #   changed 从未写出 → "入库后自动重建"那步的 if 不成立 → 直接 skipped，
           #   学到的白名单条目随被拒的提交一起丢失。
@@ -177,7 +177,7 @@ jobs:
           exit 0
 
       - name: 入库后自动重建一次
-        # ★ 必须用 always()（2026-10-09 实测教训）：只用 failure() 时，一旦上一步自身被判失败，
+        # ★ 必须用 always()（实测教训）：只用 failure() 时，一旦上一步自身被判失败，
         #   这一步会被 skipped（实测 #84：自学步 failure → 重建步 skipped → 白名单条目丢失）。
         #   always() 保证"只要自愈确实改了白名单"就一定重建。
         if: always() && steps.selfheal.outputs.changed == 'yes'
@@ -242,7 +242,7 @@ jobs:
           DS_FETCH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # 按链路分别下载到各自目录：两条链路产物不再共用一个 artifact、也不再靠
-      # 文件名（*-npm.fpk）分拣（2026-10-03）
+      # 文件名（*-npm.fpk）分拣
       - name: 检查产物 + 记录状态 + 计算 SHA256
         id: check
         run: |
@@ -260,10 +260,10 @@ jobs:
           fi
           # 状态徽标数据：拆分后每条链各自 job 的结果，互不牵连
           _status() { case "$1" in success) echo success ;; skipped) echo skipped ;; *) echo fail ;; esac; }
-          # 2026-10-04 修正：job 重构后已无 build-spk/build-fpk-source 等旧 job，
+          # 修正：job 重构后已无 build-spk/build-fpk-source 等旧 job，
           #   needs.*.result 求值为空 → _status 落到 *) fail → 正文被写成"❌ 缺失"。
           #   本 job 依赖 build-target 成功才会运行，故源码链路两个产物即 success；
-          #   npm 链路按用户口径留档不执行 → skipped。
+          #   npm 链路按设计留档不执行 → skipped。
           echo "SPK_STATUS=success" >> "$GITHUB_ENV"
           echo "SPK_DESC=源码链路" >> "$GITHUB_ENV"
           echo "FPK_SOURCE_STATUS=success" >> "$GITHUB_ENV"
@@ -295,7 +295,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # ★ 构建时间必须【每次运行现取】+ 必须【内联】传给本条命令 ✗
-          #   2026-10-18 真机 bug：写成 `echo BUILD_TIME=… >> $GITHUB_ENV` 却与 release-note.sh
+          #   真机 bug：写成 `echo BUILD_TIME=… >> $GITHUB_ENV` 却与 release-note.sh
           #   在【同一个 step】→ $GITHUB_ENV 只对后续 step 生效 ✗ → 正文里打印成 "构建时间: ?" ✗
           #   另：原用 UTC（date -u）→ 北京时间凌晨的构建会显示成【前一天】✗ → 改用北京时间 ✓
           BUILD_TIME="$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S +08:00')" \

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """README 覆盖度守卫：代码里出现的「脚本名 / 开关名」必须在 README 里出现。
 
-【为什么需要】2026-10-03 机械审计实测：代码中出现的 63 个机制标识里，**35 个在 README
+【为什么需要】机械审计实测：代码中出现的 63 个机制标识里，**35 个在 README
 出现 0 次**（`build-lib.sh`、`learn-prune-whitelist.sh`、`fix-runtime-deps.sh`、
 `PRUNE_BEFORE_INSTALL/BUILD`、`NPM_MODE`、`PRUNE_COMMON_DIR`、`DRY_RUN` …）。
 机制只活在代码注释或数据文件（如 `build-prune-whitelist.json` 的 `_extraNote`）里 ——
@@ -38,7 +38,6 @@ EXEMPT = {
     'DSH_REPAIR_CONTAINER_PORT', 'DSH_REPAIR_PID_FILE', 'DSH_REPAIR_TMPDIR',
     # ↑ dsh-repair 内联脚本的一次性传参，由 start.sh 自己拼装
     'FORCE_EXCLUDE',        # 白名单数据结构内的字段名，非用户开关
-    'DSH_INSTALL_ROOT',     # migrate-session 内部：目标安装根
     'DSH_PROBE_NAMES',      # fix-runtime-deps 内部：待探测包名列表
     'DSH_PKG_JSON',         # fix-runtime-deps 内部：package.json 路径
     'PRUNE_SCRIPT',         # build-common 内部：prune-target.sh 路径

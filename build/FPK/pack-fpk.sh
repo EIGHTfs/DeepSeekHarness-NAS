@@ -2,12 +2,12 @@
 #===============================================================================
 # DeepSeek Harness NAS — FPK 打包脚本（飞牛 fnOS x86）
 #===============================================================================
-# 【三脚本分工】2026-09-13 从原 build.sh（spk+fpk 混合 1216 行）拆分：
+# 【三脚本分工】由原 build.sh（spk+fpk 混合 1216 行）拆分而来：
 #   build-common.sh  公共：pnpm install + build + 黑白名单裁剪 → target 整树 + build-meta.env
 #   pack-spk.sh     消费 target → 群晖 .spk 安装包
 #   pack-fpk.sh     【本脚本】消费 target → 飞牛 .fpk 安装包
 #
-# 【双链路】（2026-09-13 新增；默认行为不变）:
+# 【双链路】（默认行为不变；--npm 走 npm 装的官方包）:
 #   ./pack-fpk.sh          默认：消费 build-common.sh 的 target（源码 monorepo 编译产物）
 #   ./pack-fpk.sh --npm    新增：消费 build-npm-app.sh 的 app_root（npm 装官方包，~100MiB）
 #                           前置：先运行 ./build/build-npm-app.sh [VERSION]
@@ -20,16 +20,15 @@
 #   build/staging/<APP_NAME>_x86-<FPK_VERSION>.fpk
 #
 # 关键设计（注释按本脚本职责重新整理）:
-#   - 端口: proxy/dsh/container 读 build-config.yaml fpk: 段（默认 3080/3081/3082，
-#     与 SPK 的 30800 段隔离）
-#   - start.sh: 本脚本按 FPK 端口段生成（gen_start_sh，母版 build/start.sh.example；
-#     首启构建逻辑已抽离 scripts/first-build-logic.sh 留档，完整预构建包免构建）
+#   - 端口: proxy/dsh/container 读 build-config.yaml fpk: 段（默认 3080/3081/3082，与 SPK 的 30800 段隔离）
+#   - start.sh: 本脚本按 FPK 端口段生成（gen_start_sh，母版 build/start.sh.example）。
+#     首启构建逻辑已抽离 scripts/first-build-logic.sh 留档，完整预构建包免构建。
 #   - app.tgz: gzip + --hard-dereference（硬链展开；软链保留，fnpack 官方支持 symlink）
 #     ⚠ 条目无 ./ 前缀（用 find 顶层列表，避免顶层结构与预期对不上）
 #   - 外层 .fpk: gzip；条目只列文件/软链不列目录（避免 GNU tar 给目录补尾斜杠）
 #   - 门户 ui/ 内外两份都要（app.tgz 内供门户「打开」按钮取图标；外层供 install_start 安全扫描枚举 dir:ui）
 #   - 外层 <appname>.sc 协议文件声明端口（manifest service_port 对应）
-#   - manifest: version=官方完整版本；checksum=app.tgz 的 MD5（实测）
+#   - manifest: version=官方完整版本；checksum=app.tgz 的 MD5
 #   - cmd 生命周期: 启停全代理到 bin/start.sh；username/groupname 必须小写
 #===============================================================================
 set -euo pipefail
@@ -132,8 +131,8 @@ CFG_BRAND_VERSION_ORDER="${FPKCFG_BRAND_VERSION_ORDER:-dsh,npm}"
 # 体积门禁（MB；0 = 不检查。任务① 验收口径 fpk≈100MiB，留余量设 200）
 CFG_SIZE_LIMIT_MB="${FPKCFG_SIZE_LIMIT_MB:-200}"
 # 共享区（@appshare）目录名：根路径由 TRIM_PKGVAR 自动推导，此处只定根下目录名
-# ⚠ 必须用 "-" 而非 ":-"：:- 会把配置里的空串当成"未设置"而回退成默认值，
-#   导致「配置留空=不创建」失效（实测踩过）。空 = 不创建，故默认就是空。
+# ⚠ 必须用 "-" 而非 ":-"：:- 会把配置里的空串当成"未设置"而回退成默认值。
+#   后果：「配置留空=不创建」失效（实测踩过）。空 = 不创建，故默认就是空。
 CFG_SHARE_WORKSPACE_DIR="${FPKCFG_SHARE_WORKSPACE_DIR-}"
 CFG_SHARE_DATA_DIR="${FPKCFG_SHARE_DATA_DIR-}"
 
@@ -207,8 +206,8 @@ echo "▶ 复制 target → fpk 应用体"
 echo "▶ 生成 fpk start.sh（端口 $FPK_PROXY_PORT/$FPK_DSH_PORT/$FPK_CONTAINER_PORT）"
 gen_start_sh "$FPK_APP/bin/start.sh" "$FPK_PROXY_PORT" "$FPK_DSH_PORT" "$FPK_CONTAINER_PORT" "${CFG_DESC_SHORT:-$CFG_DISPLAY_NAME Web UI}"
 
-# var/ports 重写为 FPK 端口段（target 里可能是 SPK 段残留的 30800，必须覆盖；
-# npm 布局 app_root 可能无 var/，先建目录保证可写）
+# var/ports 重写为 FPK 端口段（target 里可能是 SPK 段残留的 30800，必须覆盖）。
+# npm 布局 app_root 可能没有 var/，先建目录保证可写。
 mkdir -p "$FPK_APP/var"
 echo "▶ 重写 fpk var/ports（$FPK_PROXY_PORT/$FPK_DSH_PORT/$FPK_CONTAINER_PORT）"
 cat > "$FPK_APP/var/ports" <<PORTS_EOF
@@ -220,9 +219,9 @@ PORTS_EOF
 echo "  ✓ fpk var/ports 已按 FPK 端口段重写"
 
 # 飞牛门户 ui —— 两份都必须有，缺一不可：
-#   ① app.tgz 内 <APPDIR>/ui：门户「打开」按钮与桌面图标按
-#      /app-center-static/serviceicon/<APP>/ui/images/icon_{0}.png 从【应用目录】取，
-#      app 体内没有 ui/ → 桌面图标空白且不出现「打开」按钮（2026-09-13 实机实测）。
+#   ① app.tgz 内 <APPDIR>/ui：门户「打开」按钮与桌面图标从【应用目录】取，路径为
+#      /app-center-static/serviceicon/<APP>/ui/images/icon_{0}.png。
+#      所以 app 体内没有 ui/ → 桌面图标空白且不出现「打开」按钮（实机实证）。
 #   ② fpk 外层 ui/：install_start 安全扫描会枚举外层 dir:ui。
 #   type=url：门户点击直接跳转 URL 打开（非 iframe 内嵌）。
 #   --key-id APP_NAME：FPK 键名须带连字符与 manifest desktop_applaunchname 对齐。
@@ -230,11 +229,10 @@ mkdir -p "$FPK_SRC/ui/images" "$FPK_APP/ui/images"
 cp "$D_ASSETS/ui/images/"*.png "$FPK_SRC/ui/images/" 2>/dev/null || true
 cp "$D_ASSETS/ui/images/"*.png "$FPK_APP/ui/images/" 2>/dev/null || true
 
-# ── 门户图标命名归一化（2026-10-10 实测必需）──────────────────────────────────
-#   fnOS/群晖的门户条目用 "icon": "images/icon-{0}.png" 模板（【短横线】），
-#   而仓库里的图标资产是 icon_256.png / 64.png 这种命名 → 模板指空 → 桌面入口
-#   的图标取不到，应用中心「打开」按钮点不开（对照能正常打开的 1Panel：
-#   它的 ui/images 里就是 icon-32/64/128/256.png + icon.png）。
+# ── 门户图标命名归一化（必需）：门户模板只认短横线命名 ────────────────────────
+#   fnOS/群晖的门户条目用 "icon": "images/icon-{0}.png" 模板（【短横线】），而仓库里的图标资产是 icon_256.png / 64.png。
+#   命名对不上 → 模板指空 → 桌面入口的图标取不到，应用中心「打开」按钮点不开。
+#   对照能正常打开的 1Panel：它的 ui/images 里就是 icon-32/64/128/256.png + icon.png。
 #   这里统一补齐短横线命名（幂等；源取现有任一图标）。
 _normalize_portal_icons() {
   local dir="$1"
@@ -273,14 +271,12 @@ src.ports="${FPK_PROXY_PORT}/tcp,${FPK_DSH_PORT}/tcp,${FPK_CONTAINER_PORT}/tcp"
 dst.ports="${FPK_PROXY_PORT}/tcp,${FPK_DSH_PORT}/tcp,${FPK_CONTAINER_PORT}/tcp"
 SC_EOF
 
-# ── 运行时精准补包（2026-10-09 补上；SPK 早就有，FPK 一直缺 ✗）──────────────
-#   背景（prune-target.sh 模式 B 的既定口径）：模式 B 不做依赖闭包（否则 target 撑到 5.3G），
-#   只用纯白名单 lockfileDeps + workspaceRuntimeDeps，**不含 extra**；缺的运行时传递依赖
-#   由 build/fix-runtime-deps.sh「探测驱动精准补包」在打包阶段补齐。
-#   SPK 在 pack-spk.sh:580 调用了它 ✓，**FPK 从未调用** ✗ → 实测后果：
-#     .pnpm/execa@10.0.1/node_modules/is-plain-obj 指向的实体被裁掉 →
-#     import 报 Cannot find package 'is-plain-obj' / 'jsbi' →
-#     DSH 内置插件 plugin-manager / otel / schedule / office-to-pdf failed to import →
+# ── 运行时精准补包（两个打包器都必须调用；漏掉则内置插件 failed to import ✗）────
+#   背景（prune-target.sh 模式 B 的既定口径）：模式 B 不做依赖闭包（否则 target 撑到 5.3G）。
+#   只用纯白名单 lockfileDeps + workspaceRuntimeDeps，**不含 extra**；缺的运行时传递依赖由 fix-runtime-deps.sh 在打包阶段补齐。
+#   SPK 在 pack-spk.sh:580 调用了它 ✓，**FPK 从未调用** ✗ → 实测后果如下：
+#     .pnpm/execa@10.0.1/node_modules/is-plain-obj 指向的实体被裁掉 → import 报 Cannot find package 'is-plain-obj' / 'jsbi'。
+#     进而 DSH 内置插件 plugin-manager / otel / schedule / office-to-pdf failed to import。
 #     用户可见：tool-schedule never started、新建会话失败。
 #   ⚠ 必须在 app.tgz 生成【之前】跑，补回的包才会进包。
 _FIX_SCRIPT="$BUILD_ROOT/fix-runtime-deps.sh"
@@ -306,7 +302,7 @@ _FPK_TOPLIST="$(platform_tmp_file fpk-toplist)" || { echo "✗ 无法创建临�
   tar -czf "$FPK_SRC/app.tgz" --hard-dereference "${_FPK_EXCLUDES[@]}" --files-from="$_FPK_TOPLIST" 2>/dev/null; \
   rm -f "$_FPK_TOPLIST" )
 
-# ── app.tgz 后处理（2026-10-09，用户查证后的定论，勿回退）─────────────────────
+# ── app.tgz 后处理（三步定论，勿回退）─────────────────────────────────────────
 #   病根：npm/pnpm 生成的软链（5863 条，全是 node_modules/.pnpm 的相对链接）打包后
 #     成为自引用/损坏链接 → fnOS 解压 app.tgz 时逐个条目设权限 → acl_get_file failed
 #     → 安装报「set app dir permissions failed: … acl_get_file failed」（appcenter error.log 原文）。
@@ -404,9 +400,9 @@ fi
 
 # ── 运行检测：DSH 端口在听 或 start.sh 进程在（两者其一即视为运行）──
 
-# ★ 2026-10-10 修复【反复十几次的真因】：生成物【调用了 running_dsh，却没有定义它】。
-#   实测（飞牛真机）：cmd/main status → "行 89: running_dsh: 未找到命令"，rc=3；
-#   fnOS 应用中心据此把启动判为失败（error log: start app error 10330），
+# ★ 必须定义 running_dsh：生成物曾【调用它却没有定义】，fnOS 因此把启动判为失败。
+#   实测（飞牛真机）：cmd/main status → "行 89: running_dsh: 未找到命令"，rc=3。
+#   fnOS 应用中心据此把启动判为失败（error log: start app error 10330）。
 #   而应用其实被 start.sh 拉起来了（端口在听）→ 应用中心「打开」按钮因此不出现。
 #   下面这份实现与 scripts/lib/common.sh 的同名函数逐字一致（照抄，勿改语义）：
 running_dsh() {
@@ -439,13 +435,13 @@ start_process() {
     --container-port "$CONTAINER_PORT" >> "${LOG_FILE}" 2>&1
   local rc=$?
   log_msg "start.sh rc=${rc}"
-  # ── 就绪等待（2026-10-10 修复）──
-  #   原实现只 sleep 3 秒就判定，而 DSH 冷启动约 10 秒（启动期自愈要补近 2000 条链接），
-  #   → running_dsh 失败 → cmd/main start 返回 1 → fnOS 记"启动失败"(10330)
-  #   → 「打开」按钮不出现（这就是反复复现十几次的真因）。
-  #   改为：有界轮询（最多 10 秒，每秒一次，命中即返回）；
-  #   超时但 start.sh 已成功 spawn（rc=0）也返回 0 —— 让 fnOS 自己的 status 轮询判定，
-  #   绝不把"还在启动中"误报成"启动失败"。
+  # ── 就绪等待：有界轮询，超时交给 fnOS status 判定 ──
+  #   反例：原实现只 sleep 3 秒就判定，而 DSH 冷启动约 10 秒（启动期自愈要补近 2000 条链接）。
+  #   后果：running_dsh 失败 → cmd/main start 返回 1 → fnOS 记"启动失败"(10330)。
+  #   连带「打开」按钮不出现（这就是反复复现十几次的真因）。
+  #   现改为：有界轮询（最多 10 秒，每秒一次，命中即返回）。
+  #   超时但 start.sh 已成功 spawn（rc=0）也返回 0 —— 让 fnOS 自己的 status 轮询判定。
+  #   判据：绝不把"还在启动中"误报成"启动失败"。
   local _w=0
   while [ "$_w" -lt 10 ]; do
     running_dsh "${DSH_PORT:-$FPK_DSH_PORT}" "${TRIM_APPDEST}/bin/start.sh" && break
@@ -545,7 +541,7 @@ service_postinst(){
   mkdir -p "\${TRIM_PKGVAR}/config" "\${TRIM_PKGVAR}/tmp" 2>/dev/null || true
   # ── 共享区（@appshare）映射：默认关闭，配置为空则整段不执行（零副作用）──
   # 开启方式：build-config.yaml 的 share_workspace_dir / share_data_dir 填目录名。
-  # 路径全自动推导：TRIM_PKGVAR 形如 /vol2/@appdata/<APP>（fnOS 注入，卷随安装位置变），
+  # 路径全自动推导：TRIM_PKGVAR 形如 /vol2/@appdata/<APP>（fnOS 注入，卷随安装位置变）。
   # 把其中的 @appdata 换成 @appshare 即共享区根 —— 不写卷号、不写应用名。
   SHARE_WORKSPACE="\${TRIM_PKGVAR/@appdata/@appshare}"
   SHARE_VOL="\${SHARE_WORKSPACE%%/@appshare*}"
@@ -605,7 +601,7 @@ call_func "initialize_variables" install_log
 EOF
 
 # 生命周期钩子：官方薄壳结构（fnOS 只执行薄壳，自包含大脚本实测不被执行——
-#   2026-09-13 skill 实测铁证 + 2026-09-22 飞牛真机复验：数据保留但无 trace）。
+#   实测铁证（含飞牛真机复验）：数据保留但无 trace）。
 # 每个钩子 = source config/common/package + 调同名函数（函数定义在 package）。
 for hook in install_init install_callback uninstall_init upgrade_init config_init config_callback uninstall_callback upgrade_callback; do
   cat > "$FPK_SRC/cmd/$hook" <<'SHELL'
@@ -620,8 +616,8 @@ done
 
 # cmd/package：生命周期同名函数框架（官方薄壳链的第三层，钩子第二行调这里）
 #   install_callback：预建版本数据目录（/vol1/@appdata 属 root，应用用户无权限自建）
-#   uninstall_callback：消费 wizard/uninstall 的 wizard_delete_data —— true=彻底删除，
-#                        false/缺省=保留数据（2026-09-22 修复：旧自包含版本不被执行）
+#   uninstall_callback：消费 wizard/uninstall 的 wizard_delete_data —— true=彻底删除，false/缺省=保留数据。
+#                       旧自包含版本不被 fnOS 执行，故选项必须写在这里。
 cat > "$FPK_SRC/cmd/package" <<'SHELL'
 #!/bin/bash
 
@@ -632,7 +628,7 @@ load_variables_from_file() {
 }
 
 # 版本号：与 bin/start.sh 的 resolve_pkg_version 一致（dsh 包 → npm 产物 → 顶层）
-#   ⚠ APP_DIR 不得依赖 TRIM_APPDEST 注入（fnOS 安装/卸载期实测为空→回退 /vol1 错位）；
+#   ⚠ APP_DIR 不得依赖 TRIM_APPDEST 注入（fnOS 安装/卸载期实测为空 → 回退 /vol1 错位）。
 #     必须像 cmd/main 一样经 /var/apps/<APP>/target 软链解析真实安装位置（实测 /vol2）。
 _app_dir() {
   if [ -n "${TRIM_APPDEST:-}" ]; then
@@ -690,12 +686,12 @@ install_callback() {
   if [ -n "$VERSION" ]; then
     mkdir -p "${TRIM_PKGVAR:-/vol1/@appdata/${APPNAME}}/${VERSION}" 2>/dev/null || true
   fi
-  # ── 重建打包期移除的软链（2026-10-09 实测必需，勿删）────────────────────────
-  #   app.tgz 后处理会删掉全部 npm/pnpm 软链（不删则 fnOS 解压设 ACL 报
-  #   acl_get_file failed，前端显示「设置目录权限失败」）；但 Node 靠这些链解析模块，
-  #   实测不补回来启动会 ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/dsh-app-boot'。
-  #   清单 links.tar 由打包期写在外层（只含软链条目），安装期原样解回 —— 精确还原，
-  #   不要改成逐行 ln -s（文本解析不可靠，实测 5863 条里会错 542 条）。
+  # ── 重建打包期移除的软链（实测必需，勿删）────────────────────────────────────
+  #   app.tgz 后处理会删掉全部 npm/pnpm 软链（不删则 fnOS 解压设 ACL 报 acl_get_file failed）。
+  #   后果：前端显示「设置目录权限失败」，但 Node 恰恰靠这些链解析模块。
+  #   实测：不把链补回来，启动会 ERR_MODULE_NOT_FOUND: Cannot find package '@deepseek-ai/dsh-app-boot'。
+  #   清单 links.tar 由打包期写在外层（只含软链条目），安装期原样解回 —— 精确还原。
+  #   ⚠ 不要改成逐行 ln -s：文本解析不可靠，实测 5863 条里会错 542 条。
   _LK=""
   for _cand in "/var/apps/${APPNAME}/links.tar" "${TRIM_APPDEST:-}/links.tar" \
                "$(dirname "$APP_DIR" 2>/dev/null)/links.tar"; do
@@ -706,14 +702,14 @@ install_callback() {
     echo "[install_callback] 按 links.tar 还原软链（清单 ${_LK}，$(tar -tf "$_LK" 2>/dev/null | wc -l) 条）" \
       >> "${TRIM_PKGVAR:-/vol1/@appdata/${APPNAME}}/install-callback.trace" 2>/dev/null || true
   fi
-  # ── 尽力补齐 /var/apps/<app>/ui（非必需；2026-10-10 复核后更正）─────────────
+  # ── 尽力补齐 /var/apps/<app>/ui（非必需，仅兜底）──────────────────────────────
   #   【已被真机推翻的旧结论，勿再据此排查】曾据"有它=按钮可用 / 删它=按钮消失"认定必需。
-  #   2026-10-10 复核（全机 5 个应用 + 1Panel 对照）：所有应用在 /var/apps/<app>/ 下都没有 ui/，
-  #   而它们的入口正常 → 说明 fnOS 读的是【应用目录】里的 ui/config（经 /var/apps/<app>/target），
+  #   复核（全机 5 个应用 + 1Panel 对照）：所有应用在 /var/apps/<app>/ 下都没有 ui/，而入口正常。
+  #   说明 fnOS 读的是【应用目录】里的 ui/config（经 /var/apps/<app>/target）。
   #   按钮真正依赖的是【应用中心认定启动成功】。
-  #   「打开」按钮反复消失的真因是：生成的 cmd/main 缺 running_dsh 定义 + 端口变量用错
-  #   → fnOS 记 start app error 10330 → 按钮不出现（详见 pack-fpk.sh 生成物内的注释与 CHANGELOG）。
-  #   本段保留为【尽力而为】：回调以包用户身份运行，而 /var/apps/<app> 属 root:root，
+  #   「打开」按钮反复消失的真因：生成的 cmd/main 缺 running_dsh 定义 + 端口变量用错。
+  #   后果：fnOS 记 start app error 10330 → 按钮不出现（详见本脚本生成物内注释与 CHANGELOG）。
+  #   本段保留为【尽力而为】：回调以包用户身份运行，而 /var/apps/<app> 属 root:root。
   #   写入会因权限失败（已实测），故此段实际不会生效，也不会造成任何损害。
   if [ -d "$APP_DIR/ui" ]; then
     mkdir -p "/var/apps/${APPNAME}/ui" 2>/dev/null || true
@@ -723,8 +719,8 @@ install_callback() {
 }
 
 uninstall_init() {
-  # ★ 2026-10-10：先写"卸载中"标记（跨进程传不过环境变量，用文件 ✓）
-  #   → 随后 cmd/main stop → start.sh cmd_stop 输出"已卸载"（而不是"DSH 未运行" ✗ 弹窗）
+  # ★ 先写"卸载中"标记：跨进程传不过环境变量，只能用文件 ✓
+  #   随后 cmd/main stop → start.sh cmd_stop 输出"已卸载"，而不是"DSH 未运行"（避免弹窗 ✗）
   mkdir -p "${TRIM_PKGVAR:-/var/apps/${APPNAME}}" 2>/dev/null || true
   : > "${TRIM_PKGVAR:-/var/apps/${APPNAME}}/.uninstalling" 2>/dev/null || true
   exit 0
@@ -858,9 +854,9 @@ sed -i "s|__SHARE_WORKSPACE_DIR__|${CFG_SHARE_WORKSPACE_DIR}|g; s|__SHARE_DATA_D
 if grep -rl "__APP_NAME__\|__BRAND_VERSION_ORDER_COMMA__\|__FPK_VERSION__\|__SHARE_WORKSPACE_DIR__\|__SHARE_DATA_DIR__" "$FPK_SRC/cmd/" 2>/dev/null | grep -q .; then
   echo "[!] cmd 占位符未全部替换" >&2; exit 1
 fi
-# 双链路产物命名（2026-10-03）：源码链路无后缀；npm 链路加 -npm，避免与源码版覆盖
-#   （build.yml 双链都构建时，release 同时收 DeepSeekHarness-NAS_x86-<ver>.fpk 与
-#     DeepSeekHarness-NAS_x86-<ver>-npm.fpk，文案由 release-note.sh 分别展示）
+# 双链路产物命名：源码链路无后缀；npm 链路加 -npm，避免与源码版覆盖
+#   build.yml 双链都构建时，release 同时收 DeepSeekHarness-NAS_x86-<ver>.fpk 与 DeepSeekHarness-NAS_x86-<ver>-npm.fpk。
+#   两者文案由 release-note.sh 分别展示。
 _FPK_SUFFIX=""
 [ "$NPM_MODE" = "1" ] && _FPK_SUFFIX="-npm"
 OUT_FPK="$D_STAGING/${APP_NAME}_${FPK_ARCH}-${FPK_VERSION}${_FPK_SUFFIX}.fpk"

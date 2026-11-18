@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """check-build-config.py — 断言 build/build-config.yaml 的端口段是【映射】（不是标量）
 
-【为什么需要】（2026-10-05 发现，属真实隐患）
+【为什么需要】（属真实隐患，不是理论风险）
 端口段的读取方全部按【对象】取值，例如：
 
     sec = cfg.get('spk') or {}          # 端口段读取方（打包脚本、远端安装脚本）

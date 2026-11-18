@@ -22,7 +22,7 @@ SKIP_DIRS = {".git", "node_modules", "dist", ".trash"}
 # 显式豁免（**同名但语义不同**，非分叉；每项必须写明理由）
 # 当前为空：原先 3 条都指向 scripts/diagnose/ 下的历史诊断脚本，
 #   那些脚本已整体删除（其针对的「/vol2 下 pnpm store 沙盒不可写」环境已不存在，
-#   现由 scripts/fix-pnpm-store.sh 与 start.sh 的 fix_pnpm_store 承担），故豁免项一并清空。
+#   现由 start.sh 的 fix_pnpm_store 承担），故豁免项一并清空。
 EXEMPT = {
 }
 

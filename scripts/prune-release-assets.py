@@ -3,7 +3,7 @@
 
 【为什么需要】
 发布用的是 softprops/action-gh-release，它只**替换同名资产**；一旦产物**改名**
-（例如 SPK 从 `DeepSeekHarness-NAS_x86_64-0.2.1.spk` 改成 `…-0.2.1-alpha.1.spk`），
+（例如 SPK 从 `DeepSeekHarness-NAS_x86_64-<版本>.spk` 改成 `…-<版本>.spk`），
 旧名字的资产就会一直留在 Release 里，让下载者选错包。实测遇到过：同一个 Release 同时
 挂着新旧两个 SPK。
 
@@ -18,7 +18,7 @@
 
 【用法】
     GH_TOKEN=… GITHUB_REPOSITORY=owner/repo \\
-      python3 scripts/prune-release-assets.py --tag dsh-v0.2.1-alpha.1 --keep-from dist-main
+      python3 scripts/prune-release-assets.py --tag dsh-v<版本> --keep-from dist-main
 
     先看效果（不删）：  … --dry-run
     换仓库/前缀：      … --repo owner/repo --prefix 'MyPkg_'
@@ -81,7 +81,7 @@ def _api(method, path, token, body=None):
 def classify(name, prefix):
     """把资产名归成「类别」= (格式/链路, 架构)。
 
-    ★ 2026-10-15 真机事故（架构参数化引入）：原实现只按 `.spk` / `.fpk` / `-npm.fpk` 分类，
+    ★ 真机事故（架构参数化引入）：原实现只按 `.spk` / `.fpk` / `-npm.fpk` 分类，
       **不含架构** ✗ → 构建 ARM 时，dist-main 里只有 ARM 产物，脚本就把【同版本同格式的
       x86 产物】当成"改名后残留"删掉了 ✗（实测 Release 里 x86 的两个资产被清空 ✗）。
       类别必须含架构：spk/fpk/fpk-npm 各自 × {x86_64, armv8, x86, arm, …}。

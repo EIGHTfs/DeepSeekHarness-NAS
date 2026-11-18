@@ -3,8 +3,8 @@
 # build/build-lib.sh — **薄转发**（唯一公共库是 scripts/lib/common.sh）
 #
 # 【为什么会有这个文件】
-#   用户口径：「此次一鼓作气把所有能公共的都公共」。原先 gen_start_sh() 等函数定义在本文件里，
-#   已全部迁入 scripts/lib/common.sh。但历史上多个打包脚本写的是
+#   原先 gen_start_sh() 等函数定义在本文件里，现已全部迁入 scripts/lib/common.sh。
+#   但历史上多个打包脚本写的是
 #       . "$BUILD_ROOT/build-lib.sh"
 #   为了**不改动这些调用点**（少一次改动就少一次坏包风险），本文件保留为**转发壳**：
 #   它只 source 公共库，自身不再提供任何实现。
@@ -34,8 +34,8 @@ fi
 # shellcheck disable=SC1090
 . "$_DSH_COMMON_LIB"
 
-# ── 架构解析（2026-10-15 参数化改造）──────────────────────────────────────────
-# 目标架构只允许在 build-config.yaml 的 defaults.arch 里配（或环境变量覆盖），
+# ── 架构解析（参数化，唯一来源 build-config.yaml defaults.arch）──────────────
+# 目标架构只允许在 build-config.yaml 的 defaults.arch 里配（或环境变量覆盖）。
 # 打包脚本内一律用下面导出的三个变量，不得再写死 x86_64 ✗。
 #   BUILD_ARCH  规范名: x86_64 | arm64
 #   SPK_ARCH    DSM 的 arch 值: x86_64 | armv8

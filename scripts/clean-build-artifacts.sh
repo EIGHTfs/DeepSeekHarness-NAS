@@ -11,7 +11,7 @@
 #   ./scripts/clean-build-artifacts.sh --age 3           # 存活 3 天以上才清
 #   ./scripts/clean-build-artifacts.sh --all             # 清空全部回收站（忽略存活天数）
 #   ./scripts/clean-build-artifacts.sh --caches          # 连带清理 pnpm-store / tmp-home 缓存
-#   ./scripts/clean-build-artifacts.sh --force           # 首次清空用 rm -rf（磁盘告急；用户确认过）
+#   ./scripts/clean-build-artifacts.sh --force           # 首次清空用 rm -rf（磁盘告急时用，危险）
 #   ./scripts/clean-build-artifacts.sh --dry-run         # 只打印将删清单，不动文件（推荐先跑这个）
 #
 # 安全说明:

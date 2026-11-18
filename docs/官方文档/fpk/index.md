@@ -1,7 +1,6 @@
 # 飞牛 fnOS 应用开放平台文档（官方文档存档）
 
-> 本目录由 `scripts/fetch-official-docs.py` 自动抓取，**请勿手工编辑**。
-> 重新抓取：`python3 scripts/fetch-official-docs.py`
+> 本目录是飞牛官方开发者文档的存档快照，**请勿手工编辑**。
 
 - 来源站点：https://developer.fnnas.com
 - 抓取时间：2026-09-11 01:46:41

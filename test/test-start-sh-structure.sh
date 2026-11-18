@@ -5,31 +5,31 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/build/start.sh.example"
 PASS=0; FAIL=0
-ok()   { echo "  ✓ $1"; PASS=$((PASS+1)); }
-bad()  { echo "  ✗ $1"; FAIL=$((FAIL+1)); }
+chk_ok()  { echo "  ✓ $1"; PASS=$((PASS+1)); }
+chk_bad() { echo "  ✗ $1"; FAIL=$((FAIL+1)); }
 
 echo "═══ 启动脚本分区纪律测试 ═══"
 # ① 四要素存在
-grep -q '^resolve_environment() {' "$SRC" && ok "resolve_environment 已定义" || bad "resolve_environment 缺失"
-grep -qF 'if [ "${BASH_SOURCE[0]}" = "$0" ]; then' "$SRC" && ok "source 保护存在" || bad "source 保护缺失"
-grep -q '^cmd_self_check() {' "$SRC" && ok "cmd_self_check 已定义" || bad "cmd_self_check 缺失"
-grep -q 'self-check) cmd_self_check ;;' "$SRC" && ok "self-check 已进 main 分发" || bad "self-check 未进 main"
+grep -q '^resolve_environment() {' "$SRC" && chk_ok "resolve_environment 已定义" || chk_bad "resolve_environment 缺失"
+grep -qF 'if [ "${BASH_SOURCE[0]}" = "$0" ]; then' "$SRC" && chk_ok "source 保护存在" || chk_bad "source 保护缺失"
+grep -q '^cmd_self_check() {' "$SRC" && chk_ok "cmd_self_check 已定义" || chk_bad "cmd_self_check 缺失"
+grep -q 'self-check) cmd_self_check ;;' "$SRC" && chk_ok "self-check 已进 main 分发" || chk_bad "self-check 未进 main"
 # ② 无重复函数定义
 DUP=$(grep -E '^[A-Za-z_][A-Za-z0-9_]*\(\)' "$SRC" | sed 's/().*//' | sort | uniq -d)
-[ -z "$DUP" ] && ok "无重复函数定义" || bad "重复定义: $DUP"
+[ -z "$DUP" ] && chk_ok "无重复函数定义" || chk_bad "重复定义: $DUP"
 # ③ 语法
-bash -n "$SRC" && ok "bash -n 通过" || bad "bash -n 失败"
+bash -n "$SRC" && chk_ok "bash -n 通过" || chk_bad "bash -n 失败"
 # ④ 占位符数量不减（注入链安全）
 for p in __PROXY_PORT__ __DSH_PORT__ __CONTAINER_PORT__ __APP_NAME__ __FPK_VERSION__; do
-  grep -q "$p" "$SRC" && ok "占位符 $p 保留" || bad "占位符 $p 丢失"
+  grep -q "$p" "$SRC" && chk_ok "占位符 $p 保留" || chk_bad "占位符 $p 丢失"
 done
-# ⑤ source 时不执行 main：母版在测试目录，find_dsh_dir 会失败，若执行 main 会污染 DSH_CMD
-unset DSH_CMD
-bash -c 'source "$1" 2>/dev/null; [ -z "${DSH_CMD:-}" ]' _ "$SRC" \
-  && ok "source 不执行 main（DSH_CMD 未污染）" || bad "source 执行了 main"
+# ⑤ source 时不执行 main：若执行了 main，会打印用法或因参数校验非零中止
+out=$(bash -c 'source "$1" 2>/dev/null; echo SOURCED_OK' _ "$SRC" 2>&1)
+printf '%s' "$out" | grep -q 'SOURCED_OK' && chk_ok "source 后可继续执行（未提前退出）" || chk_bad "source 途中退出"
+printf '%s' "$out" | grep -q '用法:' && chk_bad "source 触发了 main 的用法输出" || chk_ok "source 未触发 main"
 # ⑥ source 后函数可用
 bash -c 'source "$1" 2>/dev/null; declare -F resolve_environment >/dev/null && declare -F cmd_self_check >/dev/null' _ "$SRC" \
-  && ok "source 后解析/自检函数可用" || bad "source 后函数不可用"
+  && chk_ok "source 后解析/自检函数可用" || chk_bad "source 后函数不可用"
 
 echo "═══ 结果: $PASS 通过 / $FAIL 失败 ═══"
 [ "$FAIL" -eq 0 ]

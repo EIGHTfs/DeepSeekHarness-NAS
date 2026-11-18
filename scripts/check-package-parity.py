@@ -7,7 +7,7 @@
     ./scripts/check-package-parity.py <基准包> <候选包> --baseline-self   # 只体检基准包
 支持 .fpk（飞牛 fnOS）与 .spk（群晖），自动识别；纯只读，不解包到磁盘。
 
-为什么需要它（每一条都对应 2026-10-09 实际踩过的坑）：
+为什么需要它（每一条都对应实际踩过的坑）：
   · 少一个 cmd 钩子（install_callback）→ fnOS 安装钩子不执行 → 权限/数据目录建不出来
   · FPK 载荷里留着软链 → fnOS 解压逐条目设 ACL → acl_get_file failed
     （前端「设置目录权限失败」）
@@ -33,7 +33,7 @@ RST = "\033[0m" if sys.stdout.isatty() else ""
 def _no_slash(paths):
     """剥掉条目结尾斜杠。
 
-    ★ 2026-10-10 实测：tar 会把【目录】条目记成带结尾斜杠的形式（如
+    ★ 实测：tar 会把【目录】条目记成带结尾斜杠的形式（如
       ./node_modules/.pnpm/fast-check@4.8.0/node_modules/fast-check/），
       而软链指向的是不带斜杠的路径 → 精确匹配失败 → 把【能正常工作的官方基准包】
       也误判成 5638 条悬空（反向自检证实：基准当候选时同样报 5638）。
@@ -179,7 +179,7 @@ def links_tar_dangling(path, kind, outer, ents):
 def links_txt_dangling(path, kind, outer, ents):
     """体检 links.txt（旧法文本清单，path<TAB>target）里软链目标是否存在。
 
-    历史形态：2026-10-09 之前打包产出 links.txt，安装期逐行 ln -s 还原。
+    历史形态：早期打包产出 links.txt，安装期逐行 ln -s 还原。
     该形态同样会因为裁剪删掉目标实体而悬空 —— 守卫两种形态都要能抓。
     """
     if "links.txt" not in outer:
@@ -295,9 +295,9 @@ def main():
 
     # ④ 悬空软链（运行时 Cannot find package 的根源）
     if cand["dangling"]:
-        # ★ 2026-10-10 用户口径（真机验证）：SPK 载荷里的悬空软链【不影响安装可用】——
+        # ★ 真机验证：SPK 载荷里的悬空软链【不影响安装可用】——
         #   群晖原样解软链、dev/可选包本就不需要、运行期还有 start.sh 自愈兜底。
-        #   实测官方基准 2.0 SPK 自身也有 5638 条同形态链且工作正常。
+        #   实测官方基准 SPK 自身也有 5638 条同形态链且工作正常。
         #   → 降级为【提示】，不再判回归；硬判据只留外层结构 / 钩子 / manifest。
         print("%s· 提示：载荷有 %d 条悬空软链（不做硬判据；SPK 实测可正常安装运行）%s"
               % (YLW, len(cand["dangling"]), RST))

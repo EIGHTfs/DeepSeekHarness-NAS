@@ -1,4 +1,4 @@
-"""DSH 打包裁剪的公共逻辑（2026-10-03 抽出）
+"""DSH 打包裁剪的公共逻辑（模式 B/C 共用，避免各自内联漂移）
 
 【为什么要有这个文件】
 prune-target.sh 的三个模式原本是各自内联的 python heredoc：`pkg_name` 在模式 B/C
@@ -35,7 +35,7 @@ def pkg_deps(full):
 
     ⚠ 判据必须是 `islink() or exists()`，不能只用 exists()：依赖目标已被删时
       exists() 为假，该依赖会被从闭包里**静默丢掉**，此后即便补包回来也再不会被保留
-      （2026-10-03 实测：fontkit / @sindresorhus/is 的软链悬空，闭包再也看不到它们）。
+      （实测：fontkit / @sindresorhus/is 的软链悬空，闭包再也看不到它们）。
     """
     nm = os.path.join(full, 'node_modules')
     out = set()
@@ -73,7 +73,7 @@ def index_pnpm(pnpm):
 def pkg_exact_runtime_deps(full):
     """精确运行期依赖 = **node_modules 目录列表 − 该包自己的 devDependencies**。
 
-    为什么这样取（2026-10-03 两次实测教训）：
+    为什么这样取（两次实测教训）：
       · 纯目录列表：含 optional/peer/hoisted 及 dev 噪声 → 闭包 490→1654 ≈ 整棵 .pnpm
         → target 5.5G → SPK 2GB 撞 600MB 门禁 ✗
       · 纯 package.json dependencies：漏掉 optional/peer/未声明但已安装的运行期包
@@ -95,7 +95,7 @@ def pkg_exact_runtime_deps(full):
 def pkg_runtime_deps(full):
     """只取**运行期**依赖名（package.json 的 dependencies + optionalDependencies）。
 
-    为什么需要它（2026-10-03 实测）：pkg_deps() 读的是 node_modules **目录列表**，会把
+    为什么需要它（实测）：pkg_deps() 读的是 node_modules **目录列表**，会把
     提升进来的 dev 依赖一并纳入 → 闭包爆炸（490 声明 → 1654 闭包 ≈ 整棵 .pnpm）→ 最终裁剪
     几乎不删（保留 1546 / 删除 8）→ target 5.5G → SPK 2GB 撞 600MB 体积门禁。
     运行期闭包只该沿 dependencies 边展开；构建期工具由白名单 extra 负责（模式 C 用全闭包）。

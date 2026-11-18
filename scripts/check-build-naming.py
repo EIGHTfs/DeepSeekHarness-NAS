@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """check-build-naming.py — 命名规范守卫（job / action / 脚本）
 
-规范（2026-10-04 定，步骤 12 的改名会进一步收紧）：
+规范（步骤 12 的改名会进一步收紧）：
   · CI job      ：`<动词>-<产物>[-<链路>]`，动词 ∈ {build, pack, release}
   · 复合 action ：`.github/actions/<kebab-case>`
   · 构建脚本    ：`build/build-<角色>.sh`（公共/编排）

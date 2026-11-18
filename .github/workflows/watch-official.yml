@@ -1,12 +1,12 @@
 name: Watch official DSH releases
 
-# ── 官方更新自动对齐（用户 2026-10-09 定：轮询 30 分钟；构建成功后暂停 6 小时）──────────
+# ── 官方更新自动对齐（轮询 30 分钟；构建成功后暂停 6 小时）──────────
 # 为什么用轮询：官方不会给我们发 webhook，轮询是唯一可行的自动对齐手段；代价极小 ——
 #   每 30 分钟一次 api.github.com 调用（实测 1~4 秒），且只在"确实需要构建"时才触发。
 # 判定是无状态的（不依赖任何额外存储），三个条件全部满足才触发：
 #   ① 官方最新 tag ≠ 本仓最新 Release tag（还没对齐）
 #   ② 当前没有构建在跑（build.yml 是 cancel-in-progress: true，插队会把它取消掉）
-#   ③ 距最近一次【成功】构建 ≥ 6 小时（用户口径：成功后暂停 6 小时）
+#   ③ 距最近一次【成功】构建 ≥ 6 小时（成功后暂停 6 小时）
 # 与 build.yml 的"方案 B（失败时自动学习依赖并入库 + 自动重建）"配套，形成无人值守闭环。
 
 on:
@@ -98,9 +98,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -e
-          # ★ 必须【两种架构都派发】（2026-10-18 真机 bug ✗）
+          # ★ 必须【两种架构都派发】（真机 bug ✗）
           #   原来只发 {"ref":"main"} ✗ → arch 用默认 x86_64 ✗ → 自动构建永远只出 x86 ✗，
-          #   新版本 Release 里没有 ARM 包 ✗（实测 dsh-v0.2.1-rc.1 / rc.2 只有 2 个 x86 资产 ✗）
+          #   新版本 Release 里没有 ARM 包 ✗（实测某 rc 版只有 2 个 x86 资产 ✗）
           #   build.yml 并发组已按架构隔离（group: <workflow>-<arch>）✓ → 两次派发不互相取消 ✓
           for ARCH in x86_64 arm64; do
           curl -sS -o /dev/null -w "  触发构建($ARCH) HTTP %{http_code}\n" -X POST \

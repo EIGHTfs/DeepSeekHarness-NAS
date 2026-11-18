@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """check-packaging-invariants.py —— 打包/发布链路的关键不变量守卫。
 
-每一条都对应 2026-09 ~ 2026-10 期间真实发生过的一次事故（括号内为现场），
+每一条都对应真实发生过的一次事故（括号内为现场），
 把它们固化成"改坏了就红"的检查，避免同一个坑踩第二次。
 
 检查项：
@@ -25,7 +25,7 @@
  11. 两条链路（SPK/FPK）的运行时补包调用必须同时存在（防止只修一条）
  12. 反代的「自动带 token」分支必须排在 403 之前
      （fnOS 套件打开与地址栏直连都发 sec-fetch-site=none，无法区分；
-      403 在前 → 套件图标打开必吃 403，用户实测症状）
+      403 在前 → 套件图标打开必吃 403，真机实测症状）
 
 用法：./scripts/check-packaging-invariants.py [--verbose]
 退出码 0 = 全部满足，1 = 有回归。
@@ -114,7 +114,7 @@ def main():
     # 7. 临时目录首选平台目录
     chk(7, ("TRIM_PKGTMP" in start) and ("/var/apps/${APP_NAME}/tmp" in start),
         "start.sh 的临时目录优先用平台自带目录",
-        "写死 ${PID_DIR}/tmp → 应用数据目录里多出 tmp/（用户口径不允许）")
+        "写死 ${PID_DIR}/tmp → 应用数据目录里多出 tmp/（不允许）")
 
     # 8. pnpm install 不得传空参数
     chk(8, "${1:+$1}" in common,
@@ -135,7 +135,7 @@ def main():
 
     # 12. 反代里「自动带 token」必须排在 403 之前
     #     fnOS 套件图标打开与地址栏直连**都**发 sec-fetch-site=none，无法区分；
-    #     403 若在前，从套件图标打开必吃 403（2026-10-09 用户实测症状：
+    #     403 若在前，从套件图标打开必吃 403（真机实测症状：
     #     "套件没打开 url，url 不带 token" → 页面显示「请从套件图标打开」）。
     i_auto = start.find("autoAuthRedirect(clientReq, clientRes)")
     i_403 = start.find("clientRes.end(FORBIDDEN_PAGE)")
@@ -158,7 +158,7 @@ def main():
         "反代含「陈旧 token 兜底」（非当次 token → 302 换成当次）",
         "缺则每次重启应用后，套件图标都会带着过期 token 打不开")
 
-    # 15. 门户 url 必须【固定 "/"】（2026-10-10 实测，勿回退）
+    # 15. 门户 url 必须【固定 "/"】（实测，勿回退）
     #     实测：包内原版 url="/" → 飞牛应用中心「打开」按钮正常；
     #     启动期把 token 写进 url（"/?token=…"）→ 按钮点不开。
     #     对照能正常打开的 1Panel：它的 .url 条目里根本没有 url 字段。
@@ -191,7 +191,7 @@ def main():
         "fix-node-links.py 用 os.scandir 手工遍历（无 ** 递归 glob）",
         "用 ** glob 会跟随 .pnpm 软链爆炸（#98 实测空转 14m45s）；发现 %s" % (_bad or '无'))
 
-    # 17. install_callback 保留 /var/apps/<app>/ui 的尽力而为复制（2026-10-10 复核更正）
+    # 17. install_callback 保留 /var/apps/<app>/ui 的尽力而为复制（防误删该段代码）
     #     【旧结论已推翻】全机 5 个应用（含 1Panel）该路径下都没有 ui/ 而入口正常，
     #     fnOS 读的是应用目录里的 ui/config。"按钮消失"的真因是应用中心判启动失败 10330
     #     （缺 running_dsh 定义 / 端口变量用错，已修）。本条只防误删该段代码。
@@ -208,7 +208,7 @@ def main():
         "按钮真因是应用中心判启动失败 10330（见 pack-fpk.sh 生成物注释）；本条只防误删该段")
 
 
-    # 18. 修复脚本必须【纠正已存在的错链】，不能只补缺（2026-10-10 真机实测）
+    # 18. 修复脚本必须【纠正已存在的错链】，不能只补缺 —— 只补缺遇到错链永远修不好
     #     实例：execa@10.0.1 声明 get-stream ^9.0.1，但 .pnpm/node_modules/get-stream
     #     指向 5.2.0（CJS）→ "Named export 'getStreamAsArray' not found"，
     #     plugin-manager 起不来。只补缺的实现在此场景【永远修不好】。
@@ -224,7 +224,7 @@ def main():
         "修复脚本会【纠正错链】（python relink + JS fixLink），不只补缺",
         "只补缺时 pnpm 把提升/顶层链指向旧版本就永远修不好（实测 get-stream 5.2.0 vs ^9.0.1）")
 
-    # 19. 出货裁剪（模式 B）必须并入 _autoLearned（2026-10-10 真机实测）
+    # 19. 出货裁剪（模式 B）必须并入 _autoLearned，否则学习成果落空
     #     实证：otel 报 Cannot find module '@szmarczak/http-timer'；该包已在
     #     extra 与 _autoLearned，却不在 lockfileDeps，而模式 B 只读 lockfileDeps +
     #     workspaceRuntimeDeps → 出货被删。全仓库无一处读 _autoLearned（学习成果落空），
@@ -237,7 +237,7 @@ def main():
         "出货裁剪（模式 B）并入 _autoLearned（否则学习成果落空）",
         "缺则学到的运行时依赖在出货时被删（实测 @szmarczak/http-timer → otel 挂）")
 
-    # 20. 两个打包脚本生成的 cmd/main 必须【自带 running_dsh 定义】（2026-10-10 真机实测）
+    # 20. 两个打包脚本生成的 cmd/main 必须【自带 running_dsh 定义】，否则应用中心判启动失败
     #     病根：生成物调用 running_dsh 却没定义（它只在 scripts/lib/common.sh 里）→
     #     飞牛真机实测 cmd/main status 报 "running_dsh: 未找到命令" rc=3 →
     #     fnOS 应用中心把启动判为失败（error log: start app error 10330）→
@@ -249,7 +249,7 @@ def main():
         "FPK/SPK 生成的 cmd/main 自带 running_dsh 定义（否则应用中心判启动失败、无打开按钮）",
         "只调用不定义 → 真机 rc=3 + fnOS error 10330 → 打开按钮消失（实测复现十余次）")
 
-    # 21. FPK 生成的 cmd/main 必须用【运行时端口变量】（2026-10-10 真机实测第二处 bug）
+    # 21. FPK 生成的 cmd/main 必须用【运行时端口变量】（真机实测第二处 bug）
     #     生成物是 <<'EOF' 引号 heredoc，里面的 $FPK_DSH_PORT 是【打包脚本的变量】，
     #     运行时为空 → running_dsh 拿到空端口 → status 恒失败 → fnOS 记启动失败(10330)。
     #     真机实测：修成 ${DSH_PORT:-$FPK_DSH_PORT} 后 10330 不再新增、status rc=0。
@@ -262,7 +262,7 @@ def main():
         "FPK 生成物用运行时端口变量（$DSH_PORT 优先），不用打包期变量",
         "打包期变量在生成物里为空 → running_dsh 恒失败 → fnOS 记启动失败 10330（实测）")
 
-    # 22. SPK 生成物（scripts/start-stop-status）同样规则（2026-10-10 真机实证）
+    # 22. SPK 生成物（scripts/start-stop-status）与 FPK 同规则
     #     VirtualDSM 7.4.1 实测：install 阶段 start-stop-status start 返回 ret=[1]
     #     → DSM 记 "start version failed" → 前端报"安装失败"。
     #     两处原因与 FPK 同款：端口用了打包期变量 $SPK_DSH_PORT（引号 heredoc 运行时空）；
@@ -277,7 +277,7 @@ def main():
         "SPK 生成物用运行时端口变量 + 有界轮询（否则 DSM 记启动失败、前端报安装失败）",
         "打包期变量在生成物里为空 → running_dsh 恒判未运行 → ret=[1] → DSM 报安装失败（真机实测）")
 
-    # 23. 链接修复必须【按消费者声明的范围】选版本（2026-10-10 DSM 真机实证）
+    # 23. 链接修复必须【按消费者声明的范围】选版本（DSM 真机实证）
     #     compression@1.8.2 声明 negotiator ~0.6.4，却被指到提升层 1.1.0（Express 5 那份）
     #     → negotiator@1.1 用 content-type.parse('gzip') → TypeError: invalid media type
     #     → 异常抛在 res.writeHead 里 → web 载体兜底 catch 把每个响应变成 400（空 body）
@@ -308,8 +308,8 @@ def main():
         "卸载流程按场景输出「已卸载」",
         "卸载时把「DSH 未运行」当弹窗弹给用户")
 
-    # 25. 构建期裁剪不得裁掉【类型层依赖】（2026-10-15 实证：官方 alpha.3 构建连续失败）
-    #     上游在 alpha.3 根 devDependencies 新增 @types/react(-dom)，白名单没有它们 →
+    # 25. 构建期裁剪不得裁掉【类型层依赖】（实证：上游某 alpha 版本构建连续失败）
+    #     上游某 alpha 版本在根 devDependencies 新增 @types/react(-dom)，白名单没有它们 →
     #     mode A「非白名单一律删」把它们剥掉 → pnpm install 不装 React 类型 →
     #     pnpm build 的 tsc 报 TS2339 Property 'props' does not exist /
     #     TS7026 JSX element implicitly has type 'any' → 构建失败 → 看门狗每 30 分钟重试再失败。
@@ -324,8 +324,8 @@ def main():
         "构建期裁剪保留类型层依赖（@types/* 永不裁）+ 白名单含 @types/react(-dom)",
         "裁掉类型包 → tsc 报 TS2339/TS7026 → 官方新 tag 永远构建失败（alpha.3 实证）")
 
-    # 26. 自动学习器必须有【回归测试 + 夹具】（2026-10-15 实证：老学习器对纯类型错完全瞎）
-    #     官方 alpha.3 构建失败时，学习器输出"白名单无变化（不是缺包导致）"——
+    # 26. 自动学习器必须有【回归测试 + 夹具】（实证：老学习器对纯类型错完全瞎）
+    #     上游 alpha 版构建失败时，学习器输出"白名单无变化（不是缺包导致）"——
     #     因为老规则只认日志里的模块名，而那次是 TS7026/TS2339/TS4112（无模块名）。
     #     现增强：类型错信号 + 源码声明的类型包 两条证据 → 学；并用真实失败日志做夹具回归。
     try:
@@ -341,7 +341,7 @@ def main():
         "学习器增强（类型错信号 + 源码声明两条证据）且有回归夹具/测试",
         "老学习器对无模块名的类型错完全瞎 → 看门狗每 30 分钟重试再失败（alpha.3 实证）")
 
-    # 27. 架构解析必须在首次使用之前（2026-10-15 ARM 构建 #137 实证）
+    # 27. 架构解析必须在首次使用之前（ARM 构建 #137 实证）
     #     我在 pack-spk.sh 的横幅里用了 $SPK_ARCH，却把 resolve_arch 调用放在后面的旧 arch= 行
     #     → 脚本是 set -euo pipefail → "line 130: SPK_ARCH: unbound variable" 直接中止 ✗
     #     另：优先级必须是 环境变量 ARCH > YAML(SPKCFG_ARCH/FPKCFG_ARCH) > 默认（README 口径）
@@ -353,7 +353,7 @@ def main():
         except Exception:
             _arch_ok = False
             continue
-        # ★ 必须剔除注释行再找"首次使用"（2026-10-15 自查：我插的说明注释里也写了 $SPK_ARCH，
+        # ★ 必须剔除注释行再找"首次使用"（自查：我插的说明注释里也写了 $SPK_ARCH，
         #   导致"首次使用"落在注释上 → 误报 ✗；与"守卫被注释骗过"同类，一律剥注释 ✓）
         _t = '\n'.join(x for x in _t.split('\n') if not x.lstrip().startswith('#'))
         _c = _t.find('resolve_arch ')
@@ -368,7 +368,7 @@ def main():
         "架构解析 resolve_arch 在首次使用 $SPK_ARCH/$FPK_ARCH 之前，且优先级 ARCH > YAML > 默认",
         "顺序错 → set -u 下 unbound variable 直接中止（ARM 构建 #137 实证）；优先级错 → 传了 ARCH 却被 YAML 覆盖")
 
-    # 28. Release 资产清理的"类别"必须含【架构】（2026-10-15 真机事故）
+    # 28. Release 资产清理的"类别"必须含【架构】，否则会误删另一架构的产物
     #     事故：构建 ARM 后，Release 里的 x86 两个资产被删 ✗ —— classify() 类别只有 后缀+链路、
     #     不含架构 → ARM .spk 与 x86 .spk 同类 → 本次 dist-main 只有 ARM 产物 → x86 被当残留清掉 ✗
     #     现要求：classify 返回 (kind, arch)，且有回归测试 test/prune-release-assets.test.sh。

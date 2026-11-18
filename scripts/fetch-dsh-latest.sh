@@ -4,7 +4,7 @@
 #
 # 用法:
 #   ./fetch-dsh-latest.sh                        # 拉取官方最新 tag
-#   ./fetch-dsh-latest.sh --tag dsh-v0.1.5-rc.2  # 指定某 tag（不自动判定最新）
+#   ./fetch-dsh-latest.sh --tag dsh-v<版本>     # 指定某 tag（不自动判定最新）
 #   ./fetch-dsh-latest.sh --repo owner/name      # 指定官方仓库（默认 deepseek-ai/deepseek-harness）
 #   ./fetch-dsh-latest.sh --src-dir DIR          # 指定存放目录（默认 <脚本目录>/src/deepseek-ai）
 #   ./fetch-dsh-latest.sh --token '<ghp>'       # 显式传入 GitHub token（脚本不自找凭据文件）
@@ -68,7 +68,7 @@ fi
 mkdir -p "$SRC_DIR"
 
 # ---------- 解析 git 可执行文件（不假设 PATH 里有 git） ----------
-# 实测（193，2026-10-03）：群晖上 git 在 /var/packages/git/target/bin，PATH 里没有 →
+# 实测（群晖 193）：git 在 /var/packages/git/target/bin，PATH 里没有 →
 #   原脚本 `git clone` 直接 "git: command not found" 静默失败、每次都退化成全量 zipball。
 #   这里显式解析，并把「没有 git」明确告知（而不是让人以为只是网络问题）。
 GIT_BIN="$(command -v git 2>/dev/null || true)"
@@ -86,7 +86,7 @@ fi
 #     —— 第三方镜像会看到流量，必须由使用者显式打开。
 #   · **api.github.com 不走镜像**：API 是逐 blob、为断点续传设计的，改基址会破坏可续性。
 #   · 注入方式与插件一致（GIT_CONFIG_* 环境变量），故下方所有 git 调用无需逐处修改。
-#   · 实测（本机，2026-10-09）：codeload 直连 21KB/s ✗ vs gh-proxy 9.3MB/s ✓（约 440 倍）；
+#   · 实测（本机）：codeload 直连 21KB/s ✗ vs gh-proxy 9.3MB/s ✓（约 440 倍）；
 #     首次建镜像 + 出快照全程 2 分 26 秒（直连预估 2.5 小时）。
 #     用法：DSH_GIT_MIRROR_PREFIX=https://gh-proxy.com/ ./fetch-dsh-latest.sh
 #   · 注意：下方"兜底 API zipball"通道**未接镜像**（改走镜像需同时改解压方式，zip/tar 分叉，
@@ -102,7 +102,7 @@ fi
 # ---------- 利用 python3 做严格 semver 比较并选出最高 tag（含 pre-release） ----------
 pick_latest_tag() {
   # tags 判定：token 只来自显式传参（--token 或环境变量 DS_FETCH_TOKEN，见参数解析），
-  # 脚本不自找凭据文件（用户要求 2026-10-02）。无 token 则匿名（限流 60 次/h）。
+  # token 只来自显式传参（脚本不自找凭据文件）。无 token 则匿名（限流 60 次/h）。
   local _hdr=()
   [[ -n "$FETCH_TOKEN" ]] && _hdr=(-H "Authorization: token $FETCH_TOKEN")
   TAGS_JSON="$(curl -s --connect-timeout 8 --max-time 20 --retry 5 --retry-delay 3 "${_hdr[@]}" \
@@ -163,7 +163,7 @@ fi
 
 # --print-engines-node: 读取官方该 tag 的 package.json，把 engines.node 解析成
 # 「应安装的 Node 大版本」输出到 stdout（诊断走 stderr）。CI 安装 Node 用，不下载源码。
-# 为什么不写死版本：官方已在 0.2.2 系把最低 Node 提到 24.9，而 CI 曾写死 22 ——
+# 为什么不写死版本：上游某版本起把最低 Node 提到 24.9，而 CI 曾写死 22 ——
 # 构建期不校验 engines 时照样绿，风险被推到运行期。读官方声明 = 官方升版 CI 自动跟上。
 # 解析规则：engines.node 按 || 分段取备选，每段取首个版本号的大版本，取所有备选中
 # 【最小的】作为结果 —— 该大版本必然满足至少一个备选（如 ">=24.9.0"→24；
@@ -282,7 +282,7 @@ mkdir -p "$WORK"
 trap 'safe_rm_rf "$WORK"' EXIT
 
 # ---------- 方法0: 本地 git 缓存增量拉取（首选） ----------
-# 依据（2026-10-03 用户要求）：官方是 **git 仓库**，不该每次全量下快照；且**旧源码可复用**。
+# 依据：官方是 **git 仓库**，不该每次全量下快照；且**旧源码可复用**。
 #   复用优先级：
 #     ① 已有镜像 <SRC_DIR>/.cache/<repo>.git  → 直接 fetch（只下增量）
 #     ② 无镜像但已有旧快照（浅克隆、带 .git）→ 就地当种子（补 origin 后 fetch）
@@ -311,7 +311,7 @@ cache_prepare_seed() {
 SEED=""
 [[ -n "$GIT_BIN" ]] && SEED="$(cache_prepare_seed)"
 if [[ -n "$SEED" ]]; then
-  # 复用旧快照时它可能没有 origin（实测 0.2.0 快照 remote/tags 都是空的）
+  # 复用旧快照时它可能没有 origin（实测旧版快照 remote/tags 都是空的）
   if "$GIT_BIN" -c 'safe.directory=*' -C "$SEED" remote get-url origin >/dev/null 2>&1; then
     "$GIT_BIN" -c 'safe.directory=*' -C "$SEED" remote set-url origin "$REPO_URL" 2>/dev/null || true
   else

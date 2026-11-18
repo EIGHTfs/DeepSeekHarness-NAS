@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check-destructive-ops.py — 破坏性操作守卫（2026-10-03 事故的长期防线）
+"""check-destructive-ops.py — 破坏性操作守卫（跨挂载点误删事故的长期防线）
 
 断言一件事：
   指向敏感路径（@appdata / @appstore / @appconf / @apphome / @apptemp /

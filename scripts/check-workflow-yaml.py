@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """check-workflow-yaml.py — GitHub Actions YAML 结构守卫（无需第三方库）
 
-为什么需要它（2026-10-04 实测教训）：
+为什么需要它（错误发生在 action 加载阶段，只能用本地检查提前拦下）：
   actions/*/action.yml 里写了 `run: echo "…命中: ${{ … }}"`（**未加引号的标量里含 ": "**），
   YAML 把 `: ` 当映射分隔符 → GitHub 报
     Mapping values are not allowed in this context
@@ -13,7 +13,7 @@
   1. `key: value` 形式的行，value 未加引号/不是块标量，却包含 ": " → 报错（本次踩的坑）
   2. 缩进里含 Tab → 报错（YAML 禁止）
   3. action.yml 必需键：name / description / runs / using: composite / steps
-  4. action.yml 的 inputs: 层级（2026-10-15 实证）：input 名必须 2 空格、属性必须 4 空格；
+  4. action.yml 的 inputs: 层级（实证）：input 名必须 2 空格、属性必须 4 空格；
      缩进错【不会】报 YAML 语法错，而是静默变成上一个 input 的子键 → 下游 input 变空 ✗
      （实测：arch 写成 0 空格 + artifact-name 被吞成其子键 → 上传 artifact 报
        "Provided artifact name input during validation is empty"）
@@ -135,7 +135,7 @@ def _iter_inputs_block(lines):
 
 
 def check_action_inputs(path, lines):
-    """action.yml 的 inputs: 层级检查（2026-10-15 实证教训）。
+    """action.yml 的 inputs: 层级检查（实证教训）。
 
     缩进错不会报 YAML 语法错，而是**静默改变结构**：
       · input 名写成 0 缩进 → 不是 input（GitHub: Unexpected input(s)）
@@ -174,13 +174,13 @@ def check_action_inputs(path, lines):
 
 
 def check_action_calls(path, text, action_inputs):
-    """workflow 调 action 时 `with:` 的键必须已声明（2026-10-15 实证：多传 arch 会被 GitHub 拒绝）。"""
+    """workflow 调 action 时 `with:` 的键必须已声明（实证：多传 arch 会被 GitHub 拒绝）。"""
     out = []
     lines = text.split("\n")
     cur = None
     for i, l in enumerate(lines):
         # 任何 uses: 都要重置归属：本地 action 记名字，第三方 action 置空
-        # （2026-10-15 自查：只在匹配本地 action 时更新 cur → 第三方 action 的 with: 会被
+        # （自查：只在匹配本地 action 时更新 cur → 第三方 action 的 with: 会被
         #   错算到上一个本地 action 头上，产生误报 ✗）
         if re.match(r"^\s*-?\s*uses:\s*\S", l):
             m = re.match(r"^\s*-?\s*uses:\s*\./\.github/actions/([A-Za-z0-9_.\-]+)\s*$", l)
@@ -207,7 +207,7 @@ def check_action_calls(path, text, action_inputs):
 def check_step_indent(path, lines):
     """同一文件内所有 `- name:` 步骤的缩进必须一致。
 
-    ★ 2026-10-10 血的教训：给 build-target/action.yml 插"记录缓存命中"步骤时用了 6 空格，
+    ★ 血的教训：给 build-target/action.yml 插"记录缓存命中"步骤时用了 6 空格，
       而既有步骤是 4 空格 → YAML 结构被插坏，GitHub 直接拒绝加载：
         ##[error]Failed to load .../action.yml
         System.ArgumentException: Unexpected type '' encountered while reading 'action manifest root'

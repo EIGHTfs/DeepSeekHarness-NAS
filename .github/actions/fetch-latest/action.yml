@@ -5,7 +5,7 @@ inputs:
     description: GitHub token（DS_FETCH_TOKEN）
     required: true
   dsh_tag:
-    description: 指定官方 tag（如 dsh-v0.1.5-rc.2）；留空 = 官方最新
+    description: 指定官方 tag（如 dsh-v<版本>）；留空 = 官方最新
     required: false
     default: ""
 runs:

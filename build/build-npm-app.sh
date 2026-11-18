@@ -7,10 +7,10 @@
 #   build-npm-app.sh 【本脚本】npm 装官方包 → app_root（FPK npm 链路；独立新增，不影响 SPK）
 #   pack-fpk.sh     消费 target 或 app_root → 飞牛 .fpk（加 --npm 走本脚本产物）
 #
-# 依据:10000ge10000/deepseek-harness-fpk 的 npm 装包方案实测（2026-09-13，
-#   产物 100.5MiB vs 源码 173MB；构建 ~12min vs ~20min；本机 fnOS 装成 running）。
+# 依据同类项目的 npm 装包方案实测，效果对比如下。
+#   产物 100.5MiB vs 源码 173MB；构建 ~12min vs ~20min；本机 fnOS 装成 running。
 #   我们不照抄对方的 runner.js（依赖其品牌 patch/settings），只复用「npm 装包 + 自带 node/pnpm」
-#   的 app_root 组装思路，start.sh 一律用我们自己的母版（入口收敛 + token 免密）。
+#   的 app_root 组装思路。start.sh 一律用我们自己的母版（入口收敛 + token 免密）。
 #
 # 用法:
 #   ./build-npm-app.sh [VERSION] [NODE_VERSION]
@@ -18,7 +18,7 @@
 #     NODE_VERSION node 版本（缺省 24.4.0）
 #   产物: build/master-build/npm-app-VERSION/  app_root/  +  npm-meta.env
 #===============================================================================
-# ⚠ 2026-10-04 状态：**留档，不在 CI 执行**（用户口径）
+# ⚠ 状态：**留档，不在 CI 执行**（在线构建只跑源码链路）
 #   本脚本产出 FPK 的 npm 应用体（app_root）。在线构建已改为**只跑源码链路**：
 #     · CI job 仅 2 个：build-target（唯一构建）+ pack-and-release（打 SPK/FPK 并发布）
 #     · 本脚本与 pack-fpk.sh 的 --npm 分支**保留代码**，供本地/将来手动执行：
@@ -78,14 +78,14 @@ if [ -z "$VERSION" ] || [ "$VERSION" = "next" ]; then
 fi
 if [ -z "$VERSION" ]; then
   echo "✗ 无法解析 @deepseek-ai/dsh 版本（网络不可达？）" >&2
-  echo "  可显式传参: ./build/build-npm-app.sh 0.1.5-rc.2" >&2
+  echo "  可显式传参: ./build/build-npm-app.sh <版本>" >&2
   exit 1
 fi
 echo "══════ npm 装包构建 dsh@${VERSION} (Node ${NODE_VERSION}) ══════"
 
 # ── 工作目录（版本隔离，永久缓存：node 运行时 / 装好的 node_modules 都不删，git 已忽略） ──
-# 注意：$NPM_BUILD_ROOT 被 .gitignore 忽略，CI 全新 checkout 时不存在，
-# 必须显式 mkdir（cd 到不存在目录会直接退出，实测 CI build-fpk 即因此失败）。
+# 注意：$NPM_BUILD_ROOT 被 .gitignore 忽略，CI 全新 checkout 时不存在，必须显式 mkdir。
+# 原因是 cd 到不存在目录会直接退出，实测 CI build-fpk 即因此失败。
 mkdir -p "$NPM_BUILD_ROOT"
 NPM_BUILD="$(cd "$NPM_BUILD_ROOT" && pwd)/npm-app-${VERSION}"
 APP_ROOT="$NPM_BUILD/app_root"
@@ -98,7 +98,7 @@ NODE_ARCHIVE="node-v${NODE_VERSION}-linux-x64.tar.xz"
 NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_ARCHIVE}"
 if [ ! -x "$NODE_DIR/bin/node" ]; then
   echo "▶ 下载 Node ${NODE_VERSION}（管道直解，不落临时文件）..."
-  # 原先的做法是 curl 落盘到一个写死的临时路径、再解压、再删除：三处硬编码、还要保证清理，
+  # 原先的做法是 curl 落盘到一个写死的临时路径、再解压、再删除：三处硬编码，还要保证清理。
   #   中途失败还会留下半个归档。本脚本已 set -o pipefail，直接管道更省事也更快。
   curl -fL --retry 3 --connect-timeout 8 --max-time 180 "$NODE_URL" \
     | tar -xJf - -C "$NODE_DIR" --strip-components=1
@@ -116,7 +116,7 @@ if [ -f "$_DSH_PKG" ] && grep -q "\"version\":\s*\"${VERSION}\"" "$_DSH_PKG"; th
 fi
 if [ "$_NEED_INSTALL" = "1" ]; then
   echo "▶ npm install @deepseek-ai/dsh@${VERSION}（扁平 node_modules，无 workspace 软链；装完永久保留）"
-  # ⚠ dsh-web 是 npm 装包目录，全新环境（CI 干净 checkout）下不存在，须先建，
+  # ⚠ dsh-web 是 npm 装包目录，全新环境（CI 干净 checkout）下不存在，须先建。
   #   否则子 shell 里 cd 失败（实测 CI build-fpk：cd: .../dsh-web: No such file or directory）。
   mkdir -p "$DSH_WEB"
   (
@@ -133,11 +133,9 @@ if [ "$_NEED_INSTALL" = "1" ]; then
     [ "$OK" = true ] || { echo "✗ npm install @deepseek-ai/dsh@${VERSION} 失败" >&2; exit 1; }
   )
 fi
-# ⚠ 嵌套 bug 修复（2026-09-13 实测根因）：cp -a src dst 在 dst 已存在时，
-#   会把 src 复制成 dst/src 而非覆盖 → 重跑 build-npm-app.sh 产生
-#   app_root/node_modules/node_modules 双份物理副本 → @deepseek-ai/dsh-tools 被加载两份
-#   → TOOL_RUNTIME_SCHEDULER Symbol 对不上 → 飞牛 dsh 报
-#   "Cannot read properties of undefined (reading 'prepare')"。
+# ⚠ 嵌套 bug（实测根因）：cp -a src dst 在 dst 已存在时，会把 src 复制成 dst/src 而非覆盖。
+#   后果：重跑 build-npm-app.sh 产生 app_root/node_modules/node_modules 双份物理副本 → @deepseek-ai/dsh-tools 被加载两份。
+#   然后 TOOL_RUNTIME_SCHEDULER Symbol 对不上 → 飞牛 dsh 报 "Cannot read properties of undefined (reading 'prepare')"。
 #   修复：复制前先移除目标目录，保证 cp 永远"创建目标"语义，不嵌套。
 rm -rf "$APP_ROOT/node_modules"
 cp -a "$DSH_WEB/node_modules" "$APP_ROOT/node_modules"
@@ -148,17 +146,17 @@ cp "$DSH_WEB/package.json" "$APP_ROOT/package.json" 2>/dev/null || true
 echo "▶ 随包 pnpm（tools/pnpm，$(node "$WS/tools/pnpm/bin/pnpm.mjs" --version 2>/dev/null || echo unknown)）"
 mkdir -p "$APP_ROOT/tools"
 cp -a "$WS/tools/pnpm/." "$APP_ROOT/tools/pnpm/"
-# bin/pnpm 包装器：直接用母版 scripts/pnpm（内置 readlink 软链解析 + node 查找兜底，
-#   被 /usr/local/bin/pnpm 软链调用时也能正确定位实例根；路径与包名无关）
+# bin/pnpm 包装器：直接用母版 scripts/pnpm（内置 readlink 软链解析 + node 查找兜底）。
+#   被 /usr/local/bin/pnpm 软链调用时也能正确定位实例根；路径与包名无关。
 # ⚠ 母版期望 <实例>/pnpm/dist/pnpm.mjs，npm 链路放 <实例>/tools/pnpm/，须 sed 适配
 cp "$WS/scripts/pnpm" "$APP_ROOT/bin/pnpm"
 sed -i 's|$DSH_DIR/pnpm/dist/pnpm\.mjs|$DSH_DIR/tools/pnpm/dist/pnpm.mjs|g' "$APP_ROOT/bin/pnpm"
 chmod +x "$APP_ROOT/bin/pnpm"
 
 # ── 4. dsh CLI 包装器（SSH 下直接 dsh 可用；与 SPK 的软链思路一致但包内自包含） ──
-#   直接用母版 scripts/dsh：readlink 解析软链 + find_node 兜底 +
-#   三入口自适应（apps/cli/lib → apps/cli/src → node_modules/@deepseek-ai/dsh/lib，
-#   最后者正是 npm 链路的布局，见母版第三个 elif）
+#   直接用母版 scripts/dsh：readlink 解析软链 + find_node 兜底 + 三入口自适应。
+#   三入口顺序：apps/cli/lib → apps/cli/src → node_modules/@deepseek-ai/dsh/lib。
+#   最后者正是 npm 链路的布局，见母版第三个 elif。
 cp "$WS/scripts/dsh" "$APP_ROOT/bin/dsh"
 chmod +x "$APP_ROOT/bin/dsh"
 

@@ -5,7 +5,7 @@
 #
 # 用法:
 #   ./fetch-release-mt.sh                      # 下载最新 release 的全部资产
-#   ./fetch-release-mt.sh --tag dsh-v0.1.6-alpha.1   # 指定 tag
+#   ./fetch-release-mt.sh --tag dsh-v<版本>      # 指定 tag
 #   ./fetch-release-mt.sh --only spk           # 只下 .spk（群晖）
 #   ./fetch-release-mt.sh --only fpk           # 只下 .fpk（飞牛）
 #   ./fetch-release-mt.sh --threads 16         # 并发连接数（默认 16）
@@ -40,7 +40,7 @@ TAG=""
 ONLY=""
 THREADS=16
 JOBS_PER_FILE=2
-TOKEN_ARG=""          # --token 显式传入（优先于环境变量与配置文件，2026-10-09 用户要求）
+TOKEN_ARG=""          # --token 显式传入（优先于环境变量与配置文件）
 
 usage() { sed -n '3,20p' "$0"; }
 
@@ -71,7 +71,7 @@ for path in sys.argv[1:]:
             break
 PYEOF
 }
-# 取值优先级（2026-10-09 用户要求"改成传参传 token"）：
+# 取值优先级（token 一律传参，不从脚本内自找凭据）：
 #   ① --token <ghp_...>            显式传参（最高优先）
 #   ② DS_FETCH_TOKEN / GH_TOKEN / GITHUB_TOKEN  环境变量（DS_FETCH_TOKEN 与 fetch-dsh-latest.sh 同名同序）
 #   ③ 配置文件里的 githubToken     兜底（插件托管路径，见 TOKEN_FILES）
@@ -105,7 +105,7 @@ print(rs[0]['tag_name'])
   echo "▶ 最新 release: $TAG"
 fi
 
-# ---------- aria2c 自动探测 + 缺失下载（2026-10-02） ----------
+# ---------- aria2c 自动探测 + 缺失下载 ----------
 # 有则用系统/已有的；没有则下载 P3TERX/Aria2-Pro-Core 静态二进制到本项目
 # tools/aria2/（自备工具惯例）并注入 PATH，避免每次回退慢速 curl 单流。
 ARIA2C="$(command -v aria2c 2>/dev/null || true)"

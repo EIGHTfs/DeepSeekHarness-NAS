@@ -42,7 +42,7 @@ PY
 fi
 
 # ── 公共函数库（唯一实现：scripts/lib/common.sh）──
-#    die() 等一律由公共库提供，本文件不再自定义（2026-10-04 去重）。
+#    die() 等一律由公共库提供，本文件不再自定义（避免重复实现）。
 _DSH_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/lib/common.sh"
 [ -f "$_DSH_LIB" ] && . "$_DSH_LIB"
 command -v die >/dev/null 2>&1 || { echo "✗ 缺少公共函数库: $_DSH_LIB" >&2; exit 1; }
