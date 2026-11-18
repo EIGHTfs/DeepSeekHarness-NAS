@@ -641,7 +641,15 @@ mkdir -p "$_HOME_DIR"
 #      pnpm-workspace.yaml → 垫片每次调用前自动跑 tools/pnpm-bridge.py 做 json→yaml 转换。
 #   三者合一：所有 pnpm 调用（含上游 sh -c 子进程）都锁我们用自带的 pnpm 11 且配置已桥接。
 _PNPM_SHIM="$PNPM_BIN_DIR/pnpm"
-if [ ! -x "$_PNPM_SHIM" ] || ! grep -q "build-common pnpm shim v3" "$_PNPM_SHIM" 2>/dev/null; then
+# 三个条件任一不满足就重新生成：
+#   ① 垫片不存在或不可执行；
+#   ② 版本串不符（生成逻辑变了）；
+#   ③ **垫片里记录的仓库路径不是当前仓库** —— 垫片内嵌了 $D_TOOLS 与 $PNPM_BIN 的绝对路径，
+#      从别的机器同步过来的旧垫片会带着上一台的路径（实测：本机构建生成的垫片同步到另一台后，
+#      所有 pnpm 调用报 Cannot find module .../volume1/VirtualDSM/...）。只查版本串会漏掉这种情况。
+if [ ! -x "$_PNPM_SHIM" ] \
+   || ! grep -q "build-common pnpm shim v3" "$_PNPM_SHIM" 2>/dev/null \
+   || ! grep -qF "$D_TOOLS" "$_PNPM_SHIM" 2>/dev/null; then
   cat > "$_PNPM_SHIM" <<SHIMEOF
 #!/bin/sh
 # build-common pnpm shim v3 —— 由 build/build-common.sh 自动生成，勿手改

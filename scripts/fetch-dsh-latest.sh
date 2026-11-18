@@ -340,6 +340,13 @@ if [[ -n "$GIT_BIN" ]] && [[ "$GH_CODE" != "000" ]]; then
   echo "… 尝试 git clone --depth 1（github 443 可达，code=$GH_CODE）…"
   if timeout 120 "$GIT_BIN" -c 'safe.directory=*' clone --depth 1 --branch "$SAFE_TAG" \
        "https://github.com/$REPO" "$WORK/clone" 2>/dev/null; then
+    # mv 的语义坑：目标已存在时，源会被移进目标**内部**，源码于是落到 <target>/clone/，
+    #   而 build-common.sh 只认 <target>/package.json → 报「源码目录不完整」。
+    #   实测触发场景：上次拉取失败留下了空壳目录，重跑就中招（CI 每次干净 checkout 所以躲过）。
+    #   TARGET 只是官方源码快照目录（不含用户数据），可安全清除后重建。
+    if [ -e "$TARGET" ]; then
+      rm -rf --one-file-system "$TARGET" 2>/dev/null || true
+    fi
     mv "$WORK/clone" "$TARGET"
     echo "✓ 已通过 git clone 拉取: $REPO@$SAFE_TAG → $TARGET"
     exit 0
