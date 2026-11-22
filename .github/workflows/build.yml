@@ -329,3 +329,17 @@ jobs:
           python3 scripts/prune-release-assets.py \
             --tag "${{ steps.reltag.outputs.TAG }}" \
             --keep-from dist-main
+
+      # 四资产齐套检查：同一 tag 需要 x86_64 与 arm64 各跑一次构建才凑齐四件。
+      #   任一架构失败时，那个 Release 会永久只挂一半资产，而成功那次的 job 是绿的 —— 没人会发现。
+      #   这里发布后独立核对四件是否齐全；缺件只告警（失败架构的 job 本来已经红过，
+      #   不该让另一个成功架构的 run 也变红）。
+      - name: 校验四资产齐套（缺件告警，不阻断另一架构）
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/check-release-assets.py \
+            --repo "${{ github.repository }}" \
+            --tag "${{ steps.reltag.outputs.TAG }}"

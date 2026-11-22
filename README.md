@@ -92,6 +92,7 @@ SKIP_BUILD=1 ./build/build-common.sh   # 复用已有 target（秒级）
 | `scripts/fetch-release-mt.sh` | 下载本仓 Release 资产；`[--tag <tag>] [--only spk\|fpk] [--threads N]` |
 | `scripts/promote-release.sh` | staging → release 提升；`D_REL=<dir>` 可覆盖输出目录 |
 | `scripts/prune-release-assets.py` | 清理 Release 改名残留资产；`--tag <tag> --keep-from <dir> [--dry-run]` |
+| `scripts/check-release-assets.py` | 核对某 tag 的四资产是否齐套（缺件告警）；`--repo <owner/name> --tag <tag> [--token] [--strict] [--json]` |
 | `scripts/update-release-note.sh` | 单独刷新某个 Release 正文（不重新构建）；`--tag <tag> [--trigger <名>] [--dry-run]`，`--tag` 可空=最新 |
 | `scripts/collect-failure-fixtures.py` | 采集历史 CI 失败日志做回归夹具；`[--limit N] [--out <dir>] [--dry-run]` |
 
