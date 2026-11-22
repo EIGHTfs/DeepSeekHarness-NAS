@@ -18,6 +18,9 @@ runs:
       env:
         EXPLICIT: ${{ inputs.node-version }}
         DSH_TAG: ${{ inputs.dsh-tag }}
+        # 读官方 engines.node 会走 api.github.com；匿名配额按共享出口 IP 计，不带 token 会被限流
+        # （表现为版本解析失败、整个 job 红）。这里用内置 token 兜住。
+        DS_FETCH_TOKEN: ${{ github.token }}
       run: |
         set -e
         if [ -n "$EXPLICIT" ]; then

@@ -46,6 +46,10 @@ runs:
     - name: 解析官方 tag（指定则用指定值，否则取最新；作为 target 复用缓存的 key）
       id: tag
       shell: bash
+      env:
+        # tags 判定走 api.github.com，匿名配额 60 次/小时且按出口 IP 计 —— runner 是共享 IP，
+        # 不带 token 会间歇性被限流（表现为 tag= 为空、后续步骤连锁失败）。这里必须传 token。
+        DS_FETCH_TOKEN: ${{ inputs.token }}
       run: |
         if [ -n "${{ inputs.dsh_tag }}" ]; then
           echo "tag=${{ inputs.dsh_tag }}" >> "$GITHUB_OUTPUT"

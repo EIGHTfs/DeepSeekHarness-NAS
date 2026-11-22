@@ -107,8 +107,21 @@ pick_latest_tag() {
   [[ -n "$FETCH_TOKEN" ]] && _hdr=(-H "Authorization: token $FETCH_TOKEN")
   TAGS_JSON="$(curl -s --connect-timeout 8 --max-time 20 --retry 5 --retry-delay 3 "${_hdr[@]}" \
     "https://api.github.com/repos/$REPO/tags?per_page=300" || true)"
+  # API 不可用时的退路：git 协议列 tags —— 不吃 API 配额，同出口 IP 上更稳。
+  #   触发场景：CI runner 共享出口 IP，匿名配额（60 次/小时）被打满 → API 403/空响应。
+  local _git_tags=""
   if [[ -z "$TAGS_JSON" || -z "$(echo "$TAGS_JSON" | grep -o '\"name\"')" ]]; then
-    echo "✗ 无法从 api.github.com 获取 $REPO 的 tags（网络或限速）。" >&2
+    _git_tags="$(timeout 60 "${GIT_BIN:-git}" ls-remote --tags --refs "https://github.com/$REPO" 2>/dev/null \
+      | sed -n 's|.*refs/tags/||p')"
+    if [[ -n "$_git_tags" ]]; then
+      echo "… api.github.com 不可用（限流/网络）→ 改用 git 协议列 tags（$(printf '%s\n' "$_git_tags" | grep -c .) 个）…" >&2
+      TAGS_JSON="$(printf '%s\n' "$_git_tags" \
+        | python3 -c 'import sys,json;print(json.dumps([{"name": l.strip()} for l in sys.stdin if l.strip()]))')"
+    fi
+  fi
+  if [[ -z "$TAGS_JSON" || -z "$(echo "$TAGS_JSON" | grep -o '\"name\"')" ]]; then
+    echo "✗ 无法获取 $REPO 的 tags（api.github.com 限流/网络，git 协议回退也失败）。" >&2
+    echo "  传 --token 或设 DS_FETCH_TOKEN 可显著提高 API 配额。" >&2
     return 1
   fi
   echo "$TAGS_JSON" | python3 -c '
