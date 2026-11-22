@@ -74,7 +74,7 @@ BUILD_SRC="$(cd "$BUILD_SRC" && pwd)" || { echo "✗ BUILD_SRC 不存在: $BUILD
 #   于是命令替换非零 → set -e 立即退出（连 command -v 回退都没机会跑）。
 #   判据：每个命令替换必须内联 || true，不能只靠下一行的兜底。
 if [ -z "$NODE_BIN" ]; then
-  NODE_BIN="$(ls -d "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"/tools/node-dist/node-v*/bin/node 2>/dev/null | head -1 || true)"
+  NODE_BIN="$(ls -d "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"/tools/node-dist/node-v*/bin/node 2>/dev/null | sort -V | tail -1 || true)"
 fi
 if [ -z "$NODE_BIN" ]; then NODE_BIN="$(command -v node 2>/dev/null || true)"; fi
 if [ -z "$NODE_BIN" ] && [ -x "$TARGET/bin/node" ]; then NODE_BIN="$TARGET/bin/node"; fi

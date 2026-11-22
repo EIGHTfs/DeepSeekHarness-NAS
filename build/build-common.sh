@@ -90,13 +90,13 @@ resolve_node_src() {
   #    判据：优先 /usr/bin/node，不可执行则自探测。
   if [ -x /usr/bin/node ]; then echo "/usr/bin/node"; return 0; fi
   # ② 自探测（先要带 headers 的：native 编译需要）
-  _c="$(ls -d "$WS"/tools/node-dist/node-v*/bin/node 2>/dev/null | head -1)"
+  _c="$(ls -d "$WS"/tools/node-dist/node-v*/bin/node 2>/dev/null | sort -V | tail -1)"
   if node_has_headers "$_c"; then echo "$_c"; return 0; fi
   _c="$(command -v node 2>/dev/null || true)"
   if node_has_headers "$_c"; then echo "$_c"; return 0; fi
   # ③ 退一步：任何**可执行**的 node（不带 headers 也比写死不存在强）
   for _c in /usr/local/bin/node \
-            "$(ls -d "$WS"/tools/node-dist/node-v*/bin/node 2>/dev/null | head -1)" \
+            "$(ls -d "$WS"/tools/node-dist/node-v*/bin/node 2>/dev/null | sort -V | tail -1)" \
             "$(command -v node 2>/dev/null || true)" \
             "${SYNOPKG_PKGDEST:-}/bin/node"; do
     [ -n "$_c" ] && [ -x "$_c" ] && { echo "$_c"; return 0; }
@@ -920,6 +920,22 @@ done
 # 随包 bin/node + dsh + pnpm + var 数据目录
 mkdir -p "$TARGET/bin"
 cp "$NODE_SRC" "$TARGET/bin/node" 2>/dev/null && chmod +x "$TARGET/bin/node" || echo "⚠ 未找到 node: $NODE_SRC"
+# 随包 node 必须满足官方 engines.node：CI 的 NODE_SRC 由 setup-node 按 engines 装，
+# 本地构建却可能命中 /usr/bin/node 或落后几版的 tools/node-dist —— 不合规的包一旦发出去，
+# 用户装完才会因引擎版本不符起不来，且从包外完全看不出问题。所以打包当场比对。
+if [ -f "$BUILD_SRC/package.json" ] && [ -x "$TARGET/bin/node" ]; then
+  _NODE_ENGINES="$(python3 -c 'import json,sys;print((json.load(open(sys.argv[1])).get("engines") or {}).get("node",""))' "$BUILD_SRC/package.json" 2>/dev/null || true)"
+  if [ -n "$_NODE_ENGINES" ]; then
+    python3 "$WS/scripts/check-node-engines.py" --engines "$_NODE_ENGINES" --node "$TARGET/bin/node"
+    _node_eng_rc=$?
+    if [ "$_node_eng_rc" = "1" ]; then
+      echo "✗ 随包 node 不满足官方 engines.node（$_NODE_ENGINES）→ 换合规 node 后重跑" >&2
+      exit 1
+    elif [ "$_node_eng_rc" = "2" ]; then
+      echo "⚠ 无法判定随包 node 是否满足 engines.node（$_NODE_ENGINES），请自行确认" >&2
+    fi
+  fi
+fi
 sed "s/deepseek-harness-nas/${APP_NAME}/g" "$D_SCRIPTS/dsh" > "$TARGET/bin/dsh"
 chmod +x "$TARGET/bin/dsh"
 PNPM_SRC=""
