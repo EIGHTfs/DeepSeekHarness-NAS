@@ -90,6 +90,8 @@ jobs:
           python3 scripts/guards/check-packaging-invariants.py
           # 平台边界：公共构建内核里不许出现平台专有词（否则无法复用到新平台）
           python3 scripts/guards/check-platform-boundary.py
+          # 物料路径：脚本里引用的 config/ pkgsrc/ tools/ 等必须真实存在（搬家后最易漏）
+          python3 scripts/guards/check-path-references.py
           # 学习器回归（dry-run，夹具见 test/fixtures/learner/）
           bash test/learner-dryrun.test.sh
           # Release 资产清理回归（架构维度，见 test/prune-release-assets.test.sh）
