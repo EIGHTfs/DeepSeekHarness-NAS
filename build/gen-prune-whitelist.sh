@@ -13,7 +13,7 @@
 #   ./build/gen-prune-whitelist.sh <锁文件路径>    # 指定锁文件
 #   ./build/gen-prune-whitelist.sh --dry-run       # 只打印将要写入的包名数，不写盘
 #
-# 【输出】更新 build/build-prune-whitelist.json 的 lockfileDeps 字段（全量包名，与 extra / workspaceRuntimeDeps 并列）。
+# 【输出】更新 build/config/build-prune-whitelist.json 的 lockfileDeps 字段（全量包名，与 extra / workspaceRuntimeDeps 并列）。
 #   白名单三者取并集；字段缺失时自动补。
 #   包名从 packages 键路径解析：node_modules/js-yaml → js-yaml、node_modules/@types/js-yaml → @types/js-yaml。
 #   与黑名单 pkg_name() 的 .pnpm 目录名解析（+ → /）格式对齐。
@@ -22,7 +22,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="$(cd "$SCRIPT_DIR/.." && pwd)"
-WHITELIST_FILE="$SCRIPT_DIR/build-prune-whitelist.json"
+WHITELIST_FILE="$SCRIPT_DIR/config/build-prune-whitelist.json"
 
 # ── 锁文件定位（缺省：最新 npm-app 产物） ──
 LOCK_FILE="${1:-}"

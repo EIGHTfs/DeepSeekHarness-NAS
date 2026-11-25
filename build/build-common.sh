@@ -60,7 +60,7 @@ export LEFTHOOK="${LEFTHOOK:-0}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="$(cd "$SCRIPT_DIR/.." && pwd)"              # 工作区根（脚本在 build/ 子目录）
-CONFIG_FILE="$SCRIPT_DIR/build-config.yaml"     # 配置文件在 build 目录内
+CONFIG_FILE="$SCRIPT_DIR/config/build-config.yaml"     # 配置文件在 build 目录内
 # 构建中间产物放 assets/（rw 工作区内），避免写到 /vol2 只读挂载
 PNPM_STORE="${PNPM_STORE_DIR:-$WS/assets/pnpm-store}"
 NPM_CACHE="${npm_config_cache:-$WS/assets/pnpm-cache}"
@@ -75,34 +75,6 @@ PNPM_BIN_DIR="$WS/tools/pnpm/bin"
 #   ② 项目自备 tools/node-dist/node-v*/bin/node（含 include/node，本地构建用）
 #   ③ PATH 里的 node 且带 include/node 头文件
 #   ④ 兜底 /usr/bin/node（历史默认，保持向后兼容）
-node_has_headers() {  # $1=node 可执行文件路径 → 校验同级/上级 include/node/node_api.h
-  local _n="$1" _d
-  [ -x "$_n" ] || return 1
-  _d="$(dirname "$_n")"
-  [ -f "$_d/../include/node/node_api.h" ] || [ -f "$_d/include/node/node_api.h" ]
-}
-resolve_node_src() {
-  local _c=""
-  # ① 首选 /usr/bin/node —— 但**必须可执行**才算数。
-  #    旧写法最后直接 echo /usr/bin/node，不校验存在性：本机（193）该路径不存在。
-  #    于是垫片被写死成 exec "/usr/bin/node" → 每次 pnpm install 都报
-  #    "/usr/bin/node: No such file or directory"。
-  #    判据：优先 /usr/bin/node，不可执行则自探测。
-  if [ -x /usr/bin/node ]; then echo "/usr/bin/node"; return 0; fi
-  # ② 自探测（先要带 headers 的：native 编译需要）
-  _c="$(ls -d "$WS"/tools/node-dist/node-v*/bin/node 2>/dev/null | sort -V | tail -1)"
-  if node_has_headers "$_c"; then echo "$_c"; return 0; fi
-  _c="$(command -v node 2>/dev/null || true)"
-  if node_has_headers "$_c"; then echo "$_c"; return 0; fi
-  # ③ 退一步：任何**可执行**的 node（不带 headers 也比写死不存在强）
-  for _c in /usr/local/bin/node \
-            "$(ls -d "$WS"/tools/node-dist/node-v*/bin/node 2>/dev/null | sort -V | tail -1)" \
-            "$(command -v node 2>/dev/null || true)" \
-            "${SYNOPKG_PKGDEST:-}/bin/node"; do
-    [ -n "$_c" ] && [ -x "$_c" ] && { echo "$_c"; return 0; }
-  done
-  echo "/usr/bin/node"
-}
 if [ -z "${NODE_SRC:-}" ]; then
   NODE_SRC="$(resolve_node_src)"
   echo "▶ NODE_SRC 自探测: $NODE_SRC"
@@ -120,29 +92,6 @@ fi
 #   bin/pnpm.mjs 只是入口（await import('../dist/pnpm.mjs')，引擎在 dist/ 里）。
 #   dist 为 pnpm 官方安装产物（457 文件大 bundle），不入 git。
 #   CI / 新 clone 后会出现 bin 在但 dist 缺失 → 此处自动用 npm 下载 pnpm 官方包解压补全，保证构建可用。
-ensure_pnpm_engine() {
-  if [ -f "$PNPM_BIN" ] && [ -f "$WS/tools/pnpm/dist/pnpm.mjs" ]; then
-    return 0  # bin + dist 齐全，直接可用
-  fi
-  echo "▶ pnpm 引擎缺失（tools/pnpm/dist 不入库），自动安装 pnpm…"
-  mkdir -p "$WS/tools/pnpm"
-  local _ver _tmp
-  _ver="$(cat "$WS/tools/pnpm/package.json" 2>/dev/null \
-    | python3 -c "import json,sys;print(json.load(sys.stdin).get('version','11.25.0'))" 2>/dev/null \
-    || echo '11.25.0')"
-  _tmp="$(mktemp -d)"
-  if command -v npm >/dev/null 2>&1; then
-    ( cd "$_tmp" && npm pack "pnpm@$_ver" --silent 2>/dev/null ) \
-      && tar -xzf "$_tmp"/pnpm-*.tgz -C "$WS/tools/pnpm" --strip-components=1 2>/dev/null
-  fi
-  safe_rm_rf "$_tmp"
-  if [ -f "$WS/tools/pnpm/dist/pnpm.mjs" ]; then
-    echo "  ✓ pnpm 引擎就绪 (tools/pnpm/dist/pnpm.mjs, v$_ver)"
-  else
-    echo "  ✗ pnpm 引擎安装失败：npm 不可用或下载失败，请 npm install -g pnpm@$_ver 后重试" >&2
-    return 1
-  fi
-}
 ensure_pnpm_engine
 
 # ── 工作区分类目录（全部可用环境变量覆盖，默认以脚本所在目录为根） ──
@@ -190,6 +139,8 @@ GEN_WHITELIST_SCRIPT="$BUILD_ROOT/gen-prune-whitelist.sh"    # 白名单生成�
 # ── 平台适配器（平台专有的一切都在 build/platform/*.sh 里，本文件不再出现） ──
 # shellcheck source=platform/select.sh
 . "$BUILD_ROOT/platform/select.sh"
+# shellcheck source=core/env.sh
+. "$BUILD_ROOT/core/env.sh"
 # 参数（可任意顺序）：
 #   --dry-run            只预演，不实际构建
 #   --work-dir DIR       构建中间产物根（缺省 = build/master-build，即旧行为）
@@ -227,27 +178,6 @@ fi
 #   这两个报错以退出码 2 结束，但内容其实完整，退出码会让构建误判失败。
 #   故：过滤这两类已知无害报错，其余报错照常失败。
 #   再用「文件数比对」做完整性兜底（内容不全会立刻暴露，不会静默半成品）。
-copy_tree_tar() {
-  local src_dir="$1" dst_dir="$2" _tar_err _real_err _src_n _dst_n
-  _tar_err="$(mktemp)"
-  ( cd "$src_dir" && tar -cf - --hard-dereference . ) 2>/dev/null \
-    | ( cd "$dst_dir" && tar -xf - --no-same-owner --no-same-permissions --touch ) 2>"$_tar_err"
-  _real_err="$(grep -vE 'Cannot (utime|change mode|chmod|chown)|Exiting with failure status' "$_tar_err" 2>/dev/null || true)"
-  if [ -n "$_real_err" ]; then
-    err "复制源码出现非权限类错误："
-    printf '%s\n' "$_real_err" | head -5 >&2
-    rm -f "$_tar_err"
-    return 1
-  fi
-  rm -f "$_tar_err"
-  _src_n="$(find "$src_dir" -type f 2>/dev/null | wc -l)"
-  _dst_n="$(find "$dst_dir" -type f 2>/dev/null | wc -l)"
-  if [ "$_src_n" != "$_dst_n" ]; then
-    err "复制不完整：源 $_src_n 个文件，目标 $_dst_n 个"
-    return 1
-  fi
-  return 0
-}
 SRC="${_POS[0]:-}"
 
 # ── 指定了目标 tag 时：直接按 tag 定位目录，不做任何 semver 排序 ──
@@ -328,39 +258,6 @@ SKIP_BUILD="${SKIP_BUILD:-${_POS[1]:-1}}"   # 默认跳过已存在的 target（
 # 分阶段构建门控：all | install | build | prune。
 # CI 把长步骤拆成 3 个独立 step，靠 step 结论定位死点；分阶段时复用已有 WORK，不清不删。
 BUILD_STAGE="${BUILD_STAGE:-all}"
-_STAGE_OK() { [ "$BUILD_STAGE" = "all" ] || [ "$BUILD_STAGE" = "$1" ]; }
-
-# ── 编译 dry-run：所有阶段均可预演，不执行任何编译/裁剪/写盘 ──
-#   ./build-common.sh [SRC] [SKIP_BUILD] --dry-run     # 或 DRY_RUN=1
-#   仅报告：阶段计划、源码/版本/node/编译器自探测结果、白名单与排除规则统计。
-#   另外报告：现有 target 体积、各阶段将执行的具体动作（逐条 [dry-run] 列出）。
-_dry() { [ "$DRY_RUN" = "1" ]; }
-# 预演提示（dry-run 时打印一行；非 dry-run 静默）
-dry_note() { if _dry; then echo "  [dry-run] $1"; fi; return 0; }
-# GitHub annotation：存在 check run 里，日志 blob 丢（BlobNotFound）也能从 API 拿
-_ANN() { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::warning::$1" || echo "[stage] $1"; }
-
-# ── 日志：段耗时 + CI 折叠分组（便于看出哪一段慢）────────
-#   动机：在线构建偶发变慢，但日志里只有阶段名、没有耗时 → 无法回答"慢在哪"。
-#   用法：在每个阶段边界调 _tick "阶段名"（打印【本段】与【累计】耗时并累计到汇总）。
-#   · CI 里用 ::group:: / ::endgroup:: 折叠，本地退化为 ▶ 一行。
-#   · 全部只在 stdout 打，不改任何行为、不写文件。
-_DSH_T_START="${_DSH_T_START:-$(date +%s)}"
-_DSH_T_LAST="$_DSH_T_START"
-_DSH_PHASES=""
-_tick() {
-  local _now _seg _tot
-  _now="$(date +%s)"
-  _seg=$(( _now - _DSH_T_LAST )); _tot=$(( _now - _DSH_T_START ))
-  _DSH_T_LAST="$_now"
-  # 用 | 分隔：阶段名里含空格与括号，绝不能靠空格切分（实测会打印成乱码）
-  _DSH_PHASES="${_DSH_PHASES}${1}|$(printf '%dm%02ds' $((_seg/60)) $((_seg%60)))
-"
-  printf '⏱  %-32s 本段 %dm%02ds   累计 %dm%02ds\n' "$1" $((_seg/60)) $((_seg%60)) $((_tot/60)) $((_tot%60))
-  return 0
-}
-_group() { if [ -n "${GITHUB_ACTIONS:-}" ]; then echo "::group::$1"; else echo "▶ $1"; fi; return 0; }
-_endgroup() { [ -n "${GITHUB_ACTIONS:-}" ] && echo "::endgroup::"; return 0; }
 _phase_summary() {
   local _tot=$(( $(date +%s) - _DSH_T_START ))
   echo "───────────────────────────────────────────────"
@@ -404,8 +301,8 @@ fi
 # ----------------------------------------------------------------------------
 # 排除规则（build-excludes.json dist 模式；spk/fpk 打包各自读取自己的条目）
 # ----------------------------------------------------------------------------
-EXCLUDES_FILE="$SCRIPT_DIR/build-excludes.json"
-WHITELIST_FILE="$SCRIPT_DIR/build-prune-whitelist.json"
+EXCLUDES_FILE="$SCRIPT_DIR/config/build-excludes.json"
+WHITELIST_FILE="$SCRIPT_DIR/config/build-prune-whitelist.json"
 _MODE="dist"
 if [ -f "$EXCLUDES_FILE" ]; then
   mapfile -t TAR_EXCLUDES < <(python3 -c "
@@ -589,7 +486,7 @@ else
   #   .../@playwright+mcp@0.0.80/...: Directory not empty → 构建中止、日志停在"复制源码"。
   #   且留下半成品 BUILD_SRC 让下次重跑继续踩。
   #   改用 **tar 管道 + --hard-dereference**（硬链展开为真实文件、软链保留）。
-  #   与 build/FPK/pack-fpk.sh 的 app.tgz 段同一套实现（那里也是为规避深目录复制失败）。
+  #   与 build/fpk/pack-fpk.sh 的 app.tgz 段同一套实现（那里也是为规避深目录复制失败）。
   # CIFS/SMB 上 safe_rm_rf 删深层旧副本常报「Directory not empty」（服务端语义，不是权限问题）。
   # 改名让出路径即可（同卷 mv 秒级），避免整轮构建卡在清理。
   safe_rm_rf "$BUILD_SRC" 2>/dev/null || true
@@ -1011,12 +908,12 @@ _ANN "stage=$BUILD_STAGE prune 结束"
 fi
 
 # ── 顶层/提升/包内链接补全（必需，勿删）──────────────────────────────────────
-#   见 build/fix-node-links.py 的文件头：pnpm 的链接分三层（顶层 / .pnpm/node_modules 提升 / .pnpm/<包>@<版本>/node_modules 包内）。
+#   见 build/tools/fix-node-links.py 的文件头：pnpm 的链接分三层（顶层 / .pnpm/node_modules 提升 / .pnpm/<包>@<版本>/node_modules 包内）。
 #   任一层缺失都会在启动时报 Cannot find module / Cannot find package → DSH 退出 code=1 → 守护反复重试。
 #   用户观感就是"启动卡很久"。该脚本确定性、幂等、只增不删、纯本地。
 #   ⚠ 必须放在裁剪之后、写 meta 之前，作用在 target 上（打包器直接消费 target）。
-if [ -d "$TARGET/node_modules" ] && [ -f "$SCRIPT_DIR/fix-node-links.py" ]; then
-  python3 "$SCRIPT_DIR/fix-node-links.py" "$TARGET" || echo "  ⚠ 链接补全返回非零，继续（不阻断构建）"
+if [ -d "$TARGET/node_modules" ] && [ -f "$SCRIPT_DIR/tools/fix-node-links.py" ]; then
+  python3 "$SCRIPT_DIR/tools/fix-node-links.py" "$TARGET" || echo "  ⚠ 链接补全返回非零，继续（不阻断构建）"
 fi
 #   模式 B 是纯白名单裁剪（不做依赖闭包，否则 target 撑到 5.3G），会删掉运行时传递依赖。
 #   实测：execa → is-plain-obj、@js-temporal/polyfill → jsbi 都被删。

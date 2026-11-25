@@ -33,7 +33,7 @@
 # 幂等  ：目标文件已含兜底语句则跳过，重复运行不会重复插入。
 # 安全  ：改动前备份 <文件>.bak-<时间戳>，不删任何原文件；改写后先过 bash -n
 #         校验，不通过就不写；就地 cat 写入（不用 mv）以保住硬链/软链关系。
-# 防重  ：目标按 inode 去重——start.sh 与 build/start.sh.example 可能经软链指向
+# 防重  ：目标按 inode 去重——start.sh 与 build/pkgsrc/start.sh.example 可能经软链指向
 #         同一份文件，不去重会往同一文件插两遍（实测踩过）。
 # ============================================================
 
@@ -249,7 +249,7 @@ discover_targets() {
   for p in \
     /var/packages/DeepSeekHarness-NAS/target/start.sh \
     "$SCRIPT_ROOT/../start.sh" \
-    "$SCRIPT_ROOT/../build/start.sh.example"; do
+    "$SCRIPT_ROOT/../build/pkgsrc/start.sh.example"; do
     [ -f "$p" ] && printf '%s\n' "$p"
   done
 }

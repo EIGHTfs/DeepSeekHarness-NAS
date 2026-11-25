@@ -3,7 +3,7 @@
 """fix-node-links.py —— 补齐 pnpm 的 node_modules 链接（确定性、幂等、纯本地）。
 
 用法:
-    ./build/fix-node-links.py <应用体或 target 目录> [--quiet]
+    ./build/tools/fix-node-links.py <应用体或 target 目录> [--quiet]
 
 为什么需要它（真机实测，每一句都有现场）：
   DSH 运行时按 node_modules/<包名> 解析依赖，而 pnpm 的链接分三层，任一层缺失都会

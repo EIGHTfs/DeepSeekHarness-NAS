@@ -41,7 +41,7 @@
 #   TARGET      已裁剪的 target（缺包被删）
 #   BUILD_SRC   完整构建副本（含全量 node_modules，补包来源）
 #               ⚠ 必须真的是"完整"：若它自身也被白名单裁剪过（prune-target.sh 模式 C 裁的就是 BUILD_SRC），缺包同样恢复不了 → 本脚本 exit 1。
-#                 此时先把缺包并入 build/build-prune-whitelist.json 的 lockfileDeps：
+#                 此时先把缺包并入 build/config/build-prune-whitelist.json 的 lockfileDeps：
 #                 scripts/learn-prune-whitelist.sh --runtime <TARGET> --apply
 #   NODE_BIN    node 可执行文件（缺省自探测 tools/node-dist → PATH → TARGET/bin/node）
 #   --max-rounds N  最大迭代轮数（默认 25）

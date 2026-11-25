@@ -34,10 +34,10 @@
 set -euo pipefail
 
 # ── 本脚本引用的脚本/目录路径（常量；改路径只改这里，引用点一律用常量） ──
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # build/FPK/
-WS="$(cd "$SCRIPT_DIR/../.." && pwd)"                        # 工作区根（脚本在 build/FPK/ 下）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # build/fpk/
+WS="$(cd "$SCRIPT_DIR/../.." && pwd)"                        # 工作区根（脚本在 build/fpk/ 下）
 BUILD_ROOT="$WS/build"
-CONFIG_FILE="$SCRIPT_DIR/../build-config.yaml"               # 配置在 build/ 根
+CONFIG_FILE="$SCRIPT_DIR/../config/build-config.yaml"               # 配置在 build/ 根
 BUILD_META_DIR="$BUILD_ROOT/master-build"                    # 源码链路 target 元数据根（原 spk-build → master-build）
 NPM_META_DIR="$BUILD_ROOT/master-build"                      # npm 链路 app 元数据根（同根目录，不同子目录）
 NPM_APP_SCRIPT="$BUILD_ROOT/build-npm-app.sh"        # FPK npm 链路脚本（本目录）
@@ -914,7 +914,7 @@ echo "  ✅ FPK: $OUT_FPK ($(du -h --apparent-size "$OUT_FPK" | cut -f1) | MD5 $
 # 体积门禁（阈值来自 build-config.yaml size_limit_mb；0 = 不检查）
 if [ "${CFG_SIZE_LIMIT_MB:-0}" != "0" ] && [ -n "$_FPK_SIZE_MB" ] && [ "$_FPK_SIZE_MB" -gt "$CFG_SIZE_LIMIT_MB" ]; then
   echo "[!] 体积门禁未通过：$_FPK_SIZE_MB MB > ${CFG_SIZE_LIMIT_MB} MB（阈值 size_limit_mb in build-config.yaml）" >&2
-  echo "    产物已生成但未达标，请先裁剪（build/FPK/pack-fpk.sh 消费的 target 重新跑 build-common.sh 纯白名单裁剪）后再发布。" >&2
+  echo "    产物已生成但未达标，请先裁剪（build/fpk/pack-fpk.sh 消费的 target 重新跑 build-common.sh 纯白名单裁剪）后再发布。" >&2
   exit 1
 fi
 

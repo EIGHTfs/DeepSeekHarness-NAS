@@ -2,13 +2,13 @@
 # 群晖（SPK）平台适配器 —— 只放「群晖专有」的东西，平台无关逻辑一律不进本文件。
 #
 # 群晖的硬约束：INFO 的 version 每段只允许数字，预发布信息只能编码进 build 段。
-#   映射规则与边界（阶段基数、序号上限、未知阶段报错）在 build/spk-version.py，
+#   映射规则与边界（阶段基数、序号上限、未知阶段报错）在 build/tools/spk-version.py，
 #   对应测试 test/spk-version-scheme.test.sh，说明见 docs/打包规范.md「版本号映射」。
 
 platform_synology_derive() {
   local official_version="$1"
-  PLATFORM_VERSION="$(python3 "$WS/build/spk-version.py" "$official_version")" || return 1
-  PLATFORM_BETA="$(python3 "$WS/build/spk-version.py" "$official_version" --field beta 2>/dev/null || echo no)"
+  PLATFORM_VERSION="$(python3 "$WS/build/tools/spk-version.py" "$official_version")" || return 1
+  PLATFORM_BETA="$(python3 "$WS/build/tools/spk-version.py" "$official_version" --field beta 2>/dev/null || echo no)"
   return 0
 }
 

@@ -22,16 +22,16 @@
 # 【用法】
 #   ./scripts/learn-prune-whitelist.sh --scan <官方源码目录> [--apply] [--dry-run]
 #   ./scripts/learn-prune-whitelist.sh --log <构建日志文件> [--apply] [--dry-run]
-#   （缺省只打印建议；--apply 才写 build/build-prune-whitelist.json；--dry-run 显式预览）
+#   （缺省只打印建议；--apply 才写 build/config/build-prune-whitelist.json；--dry-run 显式预览）
 #
-# 【白名单文件】build/build-prune-whitelist.json（与 prune-target.sh 同一权威源）
+# 【白名单文件】build/config/build-prune-whitelist.json（与 prune-target.sh 同一权威源）
 #   extra 字段追加（幂等去重），不覆盖 gen-prune-whitelist.sh 管理的 lockfileDeps
 #===============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="$(cd "$SCRIPT_DIR/.." && pwd)"
-WHITELIST_FILE="${WHITELIST_FILE:-$WS/build/build-prune-whitelist.json}"
+WHITELIST_FILE="${WHITELIST_FILE:-$WS/build/config/build-prune-whitelist.json}"
 
 MODE=""
 APPLY=0

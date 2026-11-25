@@ -51,7 +51,7 @@
 #   白名单 = extra（模式 A/C 用，构建与类型检查包）+ lockfileDeps（自动生成的运行时依赖）
 #          + workspaceRuntimeDeps（动态收集 packages/*/package.json dependencies）
 #   ⚠ 纯名字白名单必须再做**依赖闭包扩展**（沿 .pnpm 依赖软链 BFS），否则外部包的
-#     运行时传递依赖会被误删。公共实现见 build/prune_common.py。
+#     运行时传递依赖会被误删。公共实现见 build/tools/prune_common.py。
 #   ⚠ native/ 不在裁剪范围：node-addon-system-linux-x64 软链真身，删了启动必挂
 #
 # 【外部包的传递依赖必须专门兜住】
@@ -60,14 +60,14 @@
 #     got                          → @sindresorhus/is （dsh-otel failed to import）
 #     @modelcontextprotocol/client → @modelcontextprotocol/core
 #   两台机器（10.10.10.64 / 10.10.10.193）装的同一 SPK 全部中招。
-#   同时把 pkg_name / pkg_deps / expand_closure 抽到 build/prune_common.py。
+#   同时把 pkg_name / pkg_deps / expand_closure 抽到 build/tools/prune_common.py。
 #   原先 B/C 各自内联、pkg_name 重复定义两份，正是模式 B 漂移掉的机制性原因。
-#   ⚠ 以后新增模式请一律 import build/prune_common.py，不要再内联复制。
+#   ⚠ 以后新增模式请一律 import build/tools/prune_common.py，不要再内联复制。
 #===============================================================================
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WHITELIST_FILE="${WHITELIST_FILE:-$SCRIPT_DIR/build-prune-whitelist.json}"
+WHITELIST_FILE="${WHITELIST_FILE:-$SCRIPT_DIR/config/build-prune-whitelist.json}"
 
 MODE_BEFORE_INSTALL=0
 MODE_BEFORE_BUILD=0
@@ -174,7 +174,7 @@ fi
 # ==============================================================================
 if [ "$MODE_BEFORE_BUILD" = "1" ]; then
   echo "▶ build 前裁剪 node_modules: $BUILD_SRC/node_modules（$(du -sh "$BUILD_SRC/node_modules" 2>/dev/null | cut -f1)）"
-  PRUNE_COMMON_DIR="$SCRIPT_DIR" python3 - "$BUILD_SRC" "$WHITELIST_FILE" <<'PYEOF' 2>&1 || echo "  ⚠ 裁剪 python 段返回非零（详见上方错误）"
+  PRUNE_COMMON_DIR="$SCRIPT_DIR/tools" python3 - "$BUILD_SRC" "$WHITELIST_FILE" <<'PYEOF' 2>&1 || echo "  ⚠ 裁剪 python 段返回非零（详见上方错误）"
 import json, os, re, shutil, sys
 sys.path.insert(0, os.environ['PRUNE_COMMON_DIR'])
 from prune_common import pkg_name, pkg_deps, expand_closure   # 公共逻辑，勿再内联复制
@@ -187,7 +187,7 @@ pnpm = os.path.join(build_src, 'node_modules', '.pnpm')
 # 例如 esbuild / rollup / vite / postcss / oxc-resolver，这些既不在运行时 lockfileDeps、也不在 extra 名单里。
 # 静态列举必漏（实测漏 esbuild → build 报 Cannot find package 'esbuild'）。
 # 故改为**沿 .pnpm 依赖软链自动递归**：从白名单出发收集整棵依赖闭包，闭包内全部保留。
-# 公共实现见 build/prune_common.py（pkg_name / pkg_deps / expand_closure），勿各自内联。
+# 公共实现见 build/tools/prune_common.py（pkg_name / pkg_deps / expand_closure），勿各自内联。
 
 # ── 构建期白名单：以「所有 workspace 包声明的依赖」为根 ──
 # 教训：只从 extra（构建工具）出发会漏掉**源码构建依赖**。
@@ -233,7 +233,7 @@ if white.get('workspaceRuntimeDeps'):
             except Exception:
                 pass
 
-# 依赖闭包：从白名单种子沿 .pnpm 软链 BFS（公共实现，见 build/prune_common.py）
+# 依赖闭包：从白名单种子沿 .pnpm 软链 BFS（公共实现，见 build/tools/prune_common.py）
 whitelist, build_closure = expand_closure(whitelist, pnpm)
 declared_n = len(declared)
 
@@ -298,7 +298,7 @@ fi
 # ==============================================================================
 echo "▶ 裁剪 target: $TARGET ($(du -sh "$TARGET" 2>/dev/null | cut -f1))"
 
-PRUNE_COMMON_DIR="$SCRIPT_DIR" python3 - "$TARGET" "$WHITELIST_FILE" <<'PYEOF' 2>&1 || echo "  ⚠ 裁剪 python 段返回非零（详见上方错误）"
+PRUNE_COMMON_DIR="$SCRIPT_DIR/tools" python3 - "$TARGET" "$WHITELIST_FILE" <<'PYEOF' 2>&1 || echo "  ⚠ 裁剪 python 段返回非零（详见上方错误）"
 import json, glob, os, re, shutil, sys
 sys.path.insert(0, os.environ['PRUNE_COMMON_DIR'])
 from prune_common import pkg_name, expand_closure   # 公共逻辑，勿再内联复制

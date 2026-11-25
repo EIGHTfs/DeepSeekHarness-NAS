@@ -10,7 +10,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-MAP="$ROOT/build/spk-version.py"
+MAP="$ROOT/build/tools/spk-version.py"
 PASS=0
 FAIL=0
 
@@ -66,16 +66,18 @@ a="$(python3 "$MAP" 0.2.3-rc.1)"
 b="$(python3 "$MAP" 0.2.3-rc.1)"
 [ "$a" = "$b" ] && chk_ok "同一输入两次结果一致（$a）" || chk_bad "同一输入结果不稳定"
 
-# ⑤ 接线检查：build-common 必须用映射脚本算 SPK 版本，且把 beta 带进 meta
-grep -q 'build/spk-version.py' "$ROOT/build/build-common.sh" \
-  && chk_ok "build-common 已接映射脚本" || chk_bad "build-common 未接映射脚本"
-grep -q "^SPK_BETA=" "$ROOT/build/build-common.sh" \
-  && chk_ok "build-common 定义 SPK_BETA" || chk_bad "build-common 未定义 SPK_BETA"
-grep -q "SPK_BETA='" "$ROOT/build/build-common.sh" \
-  && chk_ok "build-meta.env 写出 SPK_BETA" || chk_bad "build-meta.env 未写 SPK_BETA"
+# ⑤ 接线检查（平台分层后）：内核只调适配器，映射与 meta 字段都在群晖适配器里
+grep -q 'platform/select.sh' "$ROOT/build/build-common.sh" \
+  && chk_ok "公共内核已接平台适配器加载器" || chk_bad "公共内核未接平台适配器"
+grep -q 'build/tools/spk-version.py' "$ROOT/build/platform/synology.sh" \
+  && chk_ok "群晖适配器已接版本映射脚本" || chk_bad "群晖适配器未接映射脚本"
+grep -q "SPK_BETA=" "$ROOT/build/platform/synology.sh" \
+  && chk_ok "群晖适配器输出 SPK_BETA 字段" || chk_bad "群晖适配器未输出 SPK_BETA"
+grep -q 'PLATFORM_META_BLOCK' "$ROOT/build/build-common.sh" \
+  && chk_ok "build-meta.env 由适配器字段拼装" || chk_bad "build-meta.env 未用适配器字段"
 
 # ⑥ INFO 必须带 beta 字段（否则预发布在套件中心与正式版无法区分）
-grep -q '^beta="\${SPK_BETA' "$ROOT/build/SPK/pack-spk.sh" \
+grep -q '^beta="\${SPK_BETA' "$ROOT/build/spk/pack-spk.sh" \
   && chk_ok "INFO 生成含 beta 字段" || chk_bad "INFO 生成缺 beta 字段"
 
 echo "═══ 结果: $PASS 通过 / $FAIL 失败 ═══"

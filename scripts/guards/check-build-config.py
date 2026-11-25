@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""check-build-config.py — 断言 build/build-config.yaml 的端口段是【映射】（不是标量）
+"""check-build-config.py — 断言 build/config/build-config.yaml 的端口段是【映射】（不是标量）
 
 【为什么需要】（属真实隐患，不是理论风险）
 端口段的读取方全部按【对象】取值，例如：
@@ -30,7 +30,7 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DEFAULT_FILE = os.path.join(ROOT, "build", "build-config.yaml")
+DEFAULT_FILE = os.path.join(ROOT, "build", "config", "build-config.yaml")
 
 # 必须为映射的端口段（与 README「build-config.yaml（端口权威配置）」一致）
 REQUIRED_SECTIONS = ("defaults", "spk", "fpk")
@@ -119,7 +119,7 @@ def _check(path):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="断言 build-config.yaml 的端口段是映射")
-    ap.add_argument("--file", default=DEFAULT_FILE, help="待检查的文件（默认 build/build-config.yaml）")
+    ap.add_argument("--file", default=DEFAULT_FILE, help="待检查的文件（默认 build/config/build-config.yaml）")
     ap.add_argument("--list", action="store_true", help="只打印被检查的段名后退出")
     args = ap.parse_args(argv)
 

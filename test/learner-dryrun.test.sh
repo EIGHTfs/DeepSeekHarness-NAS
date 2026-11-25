@@ -21,7 +21,7 @@ import hashlib, io, json, os, subprocess, sys
 FIX = 'test/fixtures/learner'
 BASE = os.path.join(FIX, 'baseline.json')
 SRC = os.path.join(FIX, 'src')
-WH = 'build/build-prune-whitelist.json'
+WH = 'build/config/build-prune-whitelist.json'
 update = '--update-baseline' in sys.argv
 
 base = json.load(io.open(BASE, encoding='utf-8'))

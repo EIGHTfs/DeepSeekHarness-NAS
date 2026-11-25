@@ -22,16 +22,16 @@
 #   本脚本产出 FPK 的 npm 应用体（app_root）。在线构建已改为**只跑源码链路**：
 #     · CI job 仅 2 个：build-target（唯一构建）+ pack-and-release（打 SPK/FPK 并发布）
 #     · 本脚本与 pack-fpk.sh 的 --npm 分支**保留代码**，供本地/将来手动执行：
-#         ./build/build-npm-app.sh && ./build/FPK/pack-fpk.sh --npm
+#         ./build/build-npm-app.sh && ./build/fpk/pack-fpk.sh --npm
 #   改回自动执行时，请同步恢复 workflow 的 npm 打包与 npm Release 步骤。
 
 set -euo pipefail
 
 # ── 本脚本引用的脚本/目录路径（常量；改路径只改这里，引用点一律用常量） ──
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # build/FPK/
-WS="$(cd "$SCRIPT_DIR/../.." && pwd)"                        # 工作区根（脚本在 build/FPK/ 下）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # build/fpk/
+WS="$(cd "$SCRIPT_DIR/../.." && pwd)"                        # 工作区根（脚本在 build/fpk/ 下）
 BUILD_ROOT="$WS/build"
-CONFIG_FILE="$SCRIPT_DIR/../build-config.yaml"               # 配置在 build/ 根
+CONFIG_FILE="$SCRIPT_DIR/../config/build-config.yaml"               # 配置在 build/ 根
 NPM_BUILD_ROOT="$BUILD_ROOT/master-build"                    # npm 链路产物根（原 spk-build → master-build）
 
 # ── 工作区分类目录（与 build-common.sh 一致） ──
@@ -172,7 +172,7 @@ sed -e "s|__PROXY_PORT__|${FPK_PROXY_PORT}|g" \
     -e "s|__FPK_VERSION__|${VERSION}|g" \
     -e "s|__PORTAL_TITLE__|${CFG_TITLE}|g" \
     -e "s|__PORTAL_DESC__|${CFG_DESC_SHORT}|g" \
-    "$BUILD_ROOT/start.sh.example" > "$APP_ROOT/bin/start.sh"
+    "$BUILD_ROOT/pkgsrc/start.sh.example" > "$APP_ROOT/bin/start.sh"
 chmod +x "$APP_ROOT/bin/start.sh"
 if grep -qE "__PROXY_PORT__|__DSH_PORT__|__CONTAINER_PORT__|__APP_NAME__|__APP_ID__|__BRAND_NAME__|__BRAND_VERSION_ORDER__|__FPK_VERSION__|__PORTAL_TITLE__|__PORTAL_DESC__" "$APP_ROOT/bin/start.sh"; then
   echo "[!] start.sh 占位符未全部替换" >&2; exit 1

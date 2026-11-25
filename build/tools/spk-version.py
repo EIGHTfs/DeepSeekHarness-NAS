@@ -19,10 +19,10 @@
   好处：build 完全由版本串算出，不依赖计数器 —— 换机器重算结果一致，不会倒退。
 
 用法：
-  python3 build/spk-version.py 0.2.3-alpha.2               # → 0.2.3-1002
-  python3 build/spk-version.py 0.2.3-alpha.2 --field beta   # → yes
-  python3 build/spk-version.py 0.2.3 --field feature        # → 0.2.3
-  python3 build/spk-version.py 0.2.3 --field build          # → 9000
+  python3 build/tools/spk-version.py 0.2.3-alpha.2               # → 0.2.3-1002
+  python3 build/tools/spk-version.py 0.2.3-alpha.2 --field beta   # → yes
+  python3 build/tools/spk-version.py 0.2.3 --field feature        # → 0.2.3
+  python3 build/tools/spk-version.py 0.2.3 --field build          # → 9000
 
 退出码：0 成功；2 输入无法映射（未知阶段、序号超界、缺三段版本）
 """

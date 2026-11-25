@@ -14,9 +14,9 @@
      （不删软链 → fnOS 解压设 ACL 失败 → 「设置目录权限失败」）
   4. pack-fpk.sh 必须生成 links.tar（软链专用清单，安装期精确还原）
   5. install_callback 必须用 tar 解 links.tar 还原（不能用逐行 ln -s 的文本清单）
-  6. build/start.sh.example 的 portal 候选路径必须含飞牛路径
+  6. build/pkgsrc/start.sh.example 的 portal 候选路径必须含飞牛路径
      （只认 DSM 的 /var/packages/… → 门户 url 永远 "/" → 套件点开打不开）
-  7. build/start.sh.example 的临时目录首选必须是平台自带目录
+  7. build/pkgsrc/start.sh.example 的临时目录首选必须是平台自带目录
      （写死 ${PID_DIR}/tmp → 应用数据目录里凭空多出 tmp/）
   8. build-common.sh 的 pnpm install 不得传空参数
      （空参数让 pnpm 11 解析错位 → 误报 Unknown option: 'frozen-lockfile'）
@@ -53,9 +53,9 @@ def main():
     fails = []
     checks = []
 
-    fpk = read("build/FPK/pack-fpk.sh") or ""
-    spk = read("build/SPK/pack-spk.sh") or ""
-    start = read("build/start.sh.example") or ""
+    fpk = read("build/fpk/pack-fpk.sh") or ""
+    spk = read("build/spk/pack-spk.sh") or ""
+    start = read("build/pkgsrc/start.sh.example") or ""
     common = read("build/build-common.sh") or ""
     buildyml = read(".github/workflows/build.yml") or ""
     watch = read(".github/workflows/watch-official.yml") or ""
@@ -174,7 +174,7 @@ def main():
     #     （日志：取消时残留进程 pid (3205) (python3)）。必须用 os.scandir 手工遍历
     #     （遇 node_modules 不下降、is_dir(follow_symlinks=False)）。
     try:
-        _fnl = open(os.path.join(ROOT, 'build', 'fix-node-links.py'), encoding='utf-8').read()
+        _fnl = open(os.path.join(ROOT, 'build', 'tools', 'fix-node-links.py'), encoding='utf-8').read()
     except Exception:
         _fnl = ''
     import ast as _ast
@@ -217,7 +217,7 @@ def main():
         return '\n'.join(x for x in t.split('\n')
                          if not x.lstrip().startswith('#') and not x.lstrip().startswith('//'))
     try:
-        _ss2 = _code_only(open(os.path.join(ROOT, 'build', 'start.sh.example'), encoding='utf-8').read())
+        _ss2 = _code_only(open(os.path.join(ROOT, 'build', 'pkgsrc', 'start.sh.example'), encoding='utf-8').read())
     except Exception:
         _ss2 = ''
     chk(18, ('def relink(' in _code_only(_fnl)) and ('const fixLink = ' in _ss2),
@@ -245,7 +245,7 @@ def main():
     def _defs(pat):
         t = _code_only(open(os.path.join(ROOT, pat), encoding='utf-8').read())
         return ('running_dsh() {' in t) and (t.count('running_dsh ') >= 1)
-    chk(20, _defs('build/FPK/pack-fpk.sh') and _defs('build/SPK/pack-spk.sh'),
+    chk(20, _defs('build/fpk/pack-fpk.sh') and _defs('build/spk/pack-spk.sh'),
         "FPK/SPK 生成的 cmd/main 自带 running_dsh 定义（否则应用中心判启动失败、无打开按钮）",
         "只调用不定义 → 真机 rc=3 + fnOS error 10330 → 打开按钮消失（实测复现十余次）")
 
@@ -284,11 +284,11 @@ def main():
     #     → 用户"装完打不开"。真机把 compression 包内链接改回 0.6.4 后立刻 200。
     #     并要求覆盖 .pnpm 里【每个包自己的 node_modules】（原实现只走工作区根，从不进 .pnpm）。
     try:
-        _ss = _code_only(open(os.path.join(ROOT, 'build', 'start.sh.example'), encoding='utf-8').read())
+        _ss = _code_only(open(os.path.join(ROOT, 'build', 'pkgsrc', 'start.sh.example'), encoding='utf-8').read())
     except Exception:
         _ss = ''
     try:
-        _fnl = _code_only(open(os.path.join(ROOT, 'build', 'fix-node-links.py'), encoding='utf-8').read())
+        _fnl = _code_only(open(os.path.join(ROOT, 'build', 'tools', 'fix-node-links.py'), encoding='utf-8').read())
     except Exception:
         _fnl = ''
     chk(23, ('const satisfies' in _ss) and ('const fixPnpmPkgs' in _ss)
@@ -298,7 +298,7 @@ def main():
         "取最高版本 → compression 拿到 negotiator 1.1 → 每个响应 400、DSH fatal 退出（真机实测）")
 
     try:
-        _ssex = _code_only(open(os.path.join(ROOT, 'build', 'start.sh.example'), encoding='utf-8').read())
+        _ssex = _code_only(open(os.path.join(ROOT, 'build', 'pkgsrc', 'start.sh.example'), encoding='utf-8').read())
         _spkex = _code_only(open(os.path.join(ROOT, 'build', 'SPK', 'pack-spk.sh'), encoding='utf-8').read())
         _fpkex = _code_only(open(os.path.join(ROOT, 'build', 'FPK', 'pack-fpk.sh'), encoding='utf-8').read())
     except Exception:
@@ -316,7 +316,7 @@ def main():
     #     原则：@types/* 与 typescript/@typescript-eslint/* 永不裁剪（体积小、tsc 必需）。
     try:
         _pt2 = _code_only(open(os.path.join(ROOT, 'build', 'prune-target.sh'), encoding='utf-8').read())
-        _wl2txt = open(os.path.join(ROOT, 'build', 'build-prune-whitelist.json'), encoding='utf-8').read()
+        _wl2txt = open(os.path.join(ROOT, 'build', 'config', 'build-prune-whitelist.json'), encoding='utf-8').read()
     except Exception:
         _pt2, _wl2txt = '', ''
     chk(25, ("def _keep_devdep" in _pt2) and ("startswith('@types/')" in _pt2)

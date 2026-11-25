@@ -71,7 +71,7 @@ runs:
       uses: actions/cache@v6
       with:
         path: src/deepseek-ai/.cache
-        key: dsh-src-mirror-${{ github.repository }}-${{ hashFiles('build/build-config.yaml') }}
+        key: dsh-src-mirror-${{ github.repository }}-${{ hashFiles('build/config/build-config.yaml') }}
         restore-keys: |
           dsh-src-mirror-${{ github.repository }}-
 
@@ -126,7 +126,7 @@ runs:
         #   这批缺陷在安装阶段看不出来，要等服务起来后第一次用文件锁（flock）才暴露。
         #   修法：key 与 restore-keys 同时带 ${{ runner.arch }}（X64 / ARM64）；升 v3 前缀让旧的
         #   跨架构缓存彻底失效 —— 只改 key 不改 restore-keys 仍会命中对方的旧缓存。
-        key: dsh-target-v3-${{ steps.tag.outputs.tag }}-${{ runner.arch }}-${{ hashFiles('build/build-config.yaml','build/build-common.sh','build/prune-target.sh','build/prune_common.py','build/build-prune-whitelist.json','scripts/lib/common.sh','.github/actions/build-target/action.yml','.github/actions/pack-with-target/action.yml') }}
+        key: dsh-target-v3-${{ steps.tag.outputs.tag }}-${{ runner.arch }}-${{ hashFiles('build/config/build-config.yaml','build/build-common.sh','build/prune-target.sh','build/tools/prune_common.py','build/config/build-prune-whitelist.json','scripts/lib/common.sh','.github/actions/build-target/action.yml','.github/actions/pack-with-target/action.yml') }}
         restore-keys: |
           dsh-target-v3-${{ steps.tag.outputs.tag }}-${{ runner.arch }}-
 

@@ -3,7 +3,7 @@
 # 覆盖：四要素齐全、source 不执行 main、self-check 正常与异常退出码。
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/build/start.sh.example"
+SRC="$ROOT/build/pkgsrc/start.sh.example"
 PASS=0; FAIL=0
 chk_ok()  { echo "  ✓ $1"; PASS=$((PASS+1)); }
 chk_bad() { echo "  ✗ $1"; FAIL=$((FAIL+1)); }

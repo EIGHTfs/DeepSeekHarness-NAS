@@ -12,7 +12,7 @@
 #    scripts/promote-release.sh --all               # 提升暂存区全部包
 #    scripts/promote-release.sh --check <文件名>     # 只校验不拷贝
 #
-#  路径可用环境变量覆盖（与 build/build-common.sh / build/SPK/pack-spk.sh / build/FPK/pack-fpk.sh 一致）：
+#  路径可用环境变量覆盖（与 build/build-common.sh / build/spk/pack-spk.sh / build/fpk/pack-fpk.sh 一致）：
 #    D_STAGING=... D_REL=...
 # ============================================================
 set -uo pipefail
@@ -23,7 +23,7 @@ WS="$(cd "$(dirname "$0")/.." && pwd)"
 D_BUILD="${D_BUILD:-$WS/build}"
 D_STAGING="${D_STAGING:-$D_BUILD/staging}"
 D_REL="${D_REL:-$WS/release}"
-_CFG="$WS/build-config.yaml"
+_CFG="$WS/build/config/build-config.yaml"
 
 if [ -f "$_CFG" ]; then
   eval "$(python3 - "$_CFG" <<'PY' 2>/dev/null || true
@@ -47,7 +47,7 @@ _DSH_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/lib/common.sh
 [ -f "$_DSH_LIB" ] && . "$_DSH_LIB"
 command -v die >/dev/null 2>&1 || { echo "✗ 缺少公共函数库: $_DSH_LIB" >&2; exit 1; }
 
-[ -d "$D_STAGING" ] || die "暂存目录不存在: $D_STAGING（先跑 build/build-common.sh + build/SPK/pack-spk.sh 或 build/FPK/pack-fpk.sh）"
+[ -d "$D_STAGING" ] || die "暂存目录不存在: $D_STAGING（先跑 build/build-common.sh + build/spk/pack-spk.sh 或 build/fpk/pack-fpk.sh）"
 mkdir -p "$D_REL"
 
 list_staging(){

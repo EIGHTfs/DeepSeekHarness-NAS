@@ -28,10 +28,10 @@
 set -euo pipefail
 
 # ── 本脚本引用的脚本/目录路径（常量；改路径只改这里，引用点一律用常量） ──
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # build/SPK/
-WS="$(cd "$SCRIPT_DIR/../.." && pwd)"                        # 工作区根（脚本在 build/SPK/ 下）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # build/spk/
+WS="$(cd "$SCRIPT_DIR/../.." && pwd)"                        # 工作区根（脚本在 build/spk/ 下）
 BUILD_ROOT="$WS/build"
-CONFIG_FILE="$SCRIPT_DIR/../build-config.yaml"
+CONFIG_FILE="$SCRIPT_DIR/../config/build-config.yaml"
 BUILD_META_DIR="$BUILD_ROOT/master-build"                    # build-common.sh 产物根（原 spk-build → master-build）
 PRUNE_SCRIPT="$BUILD_ROOT/prune-target.sh"                   # 通用裁剪（留 build/ 根）
 BUILD_COMMON_SCRIPT="$BUILD_ROOT/build-common.sh"            # 公共预编译（通用留根）

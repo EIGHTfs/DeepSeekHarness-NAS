@@ -2,7 +2,7 @@
 #===============================================================================
 # apply-wizard-ports.test.sh — 验证 SPK installer 的端口逻辑（三场景）
 #===============================================================================
-# 【被测对象】build/SPK/pack-spk.sh 的 installer 母版中 apply_wizard_ports()：
+# 【被测对象】build/spk/pack-spk.sh 的 installer 母版中 apply_wizard_ports()：
 #   最终生效端口 = 向导值 → 历史 ports 文件 → 打包默认；并**无条件**把 ui/config
 #   门户端口同步为最终值（重装未填端口时不再跳过同步）。
 #
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUILD_SPK="$SCRIPT_DIR/../build/SPK/pack-spk.sh"
+BUILD_SPK="$SCRIPT_DIR/../build/spk/pack-spk.sh"
 [ -f "$BUILD_SPK" ] || { echo "✗ 未找到 pack-spk.sh: $BUILD_SPK" >&2; exit 1; }
 
 WORK="$(mktemp -d)"

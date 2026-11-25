@@ -38,7 +38,7 @@
 #     ③ 它是否属于**平台专有回调**（DSM 的 preinst/postinst/preuninst/postuninst/start/status，
 #        fnOS 的 install_callback/service_*）？这类由平台按名调用，名字本身是接口，不能合并。
 #   已确认的误报（保留各自实现，勿动）：
-#     · log_msg —— build/FPK/pack-fpk.sh 里出现两次，但都在 **heredoc 生成的 fnOS 运行时
+#     · log_msg —— build/fpk/pack-fpk.sh 里出现两次，但都在 **heredoc 生成的 fnOS 运行时
 #       脚本**内（写 ${LOG_FILE}/${TRIM_PKGVAR} 日志），与构建侧日志**不是一回事**。
 #     · load_variables_from_file —— pack-fpk.sh:364 是 fnOS 运行时要求的**空桩**，
 #       :479 才是打包器自己的实现；二者同名不同作用域。
@@ -46,7 +46,7 @@
 #       install_callback/service_*（fnOS 专有）—— 平台专有，保留各自实现。
 #     · scripts/fix-login-shell.sh、fetch-release-mt.sh 的领域逻辑。
 #     · **打包器里嵌入目标运行时的 rm -rf 也不要收口**（甄别启发式的假阴性）：
-#       例 build/SPK/pack-spk.sh 的 preuninst/postuninst 段（与 synouser --del 同段）——
+#       例 build/spk/pack-spk.sh 的 preuninst/postuninst 段（与 synouser --del 同段）——
 #       它**未用 \${} 转义**（值在构建期烘焙），但命令是在**目标机卸载时执行**，目标机上
 #       没有 scripts/lib/common.sh → 换成 safe_rm_rf 会直接坏包。判据同上：看**变量是否被
 #       烘焙**（未转义）+ 是否伴随 synouser/userdel/TRIM_*/PKG_VAR 等运行时语义。
@@ -71,7 +71,7 @@
 #   fetch_url / extract_tar / md5_of / b64_encode / json_get / json_set ……
 #        fetch-dsh-latest.sh、fetch-release-mt.sh、install-remote-*.sh 等
 #   load_build_meta / resolve_pkg_version / check_pkg_size / running_dsh / pkg_*
-#        …… build/SPK/pack-spk.sh 与 build/FPK/pack-fpk.sh 各一份
+#        …… build/spk/pack-spk.sh 与 build/fpk/pack-fpk.sh 各一份
 #   gen_start_sh …… 原 build/build-lib.sh（build-lib.sh 现为薄转发）
 #===============================================================================
 
@@ -90,7 +90,7 @@ warn()    { echo "  ⚠ $*" >&2; }
 miss()    { echo "  ✗ $*" >&2; }
 err()     { echo "✗ $*" >&2; }
 die()     { echo "✗ $*" >&2; exit 1; }
-# 兼容旧名（build/FPK/pack-fpk.sh 仍在用）
+# 兼容旧名（build/fpk/pack-fpk.sh 仍在用）
 log_msg() { echo "$*"; }
 # 分节标题（构建日志可读性）
 section() { echo; echo "═══ $* ═══"; }
@@ -314,15 +314,15 @@ pkg_uninstall() { /usr/syno/bin/synopkg uninstall "$1" 2>&1; }
 
 #-------------------------------------------------------------------------------
 # 六、start.sh 生成（母版占位符 → 配置值；SPK/FPK 共用，原 build/build-lib.sh）
-#   母版：$BUILD_ROOT/start.sh.example（所有可变值一律来自 build-config.yaml）
+#   母版：$BUILD_ROOT/pkgsrc/start.sh.example（所有可变值一律来自 build-config.yaml）
 #   $1 输出路径  $2 proxy 端口  $3 dsh 端口  $4 容器端口  $5 portal_desc
 #   ⚠ 第 5 参（门户描述）**必传**：SPK 与 FPK 兜底口径不同，由调用方决定。
 #-------------------------------------------------------------------------------
 gen_start_sh() {
   local out="$1" proxy="$2" dsh="$3" cont="$4"
   local desc="${5?gen_start_sh: 第 5 参 portal_desc 必传（口径由调用方决定）}"
-  [ -f "${BUILD_ROOT:?gen_start_sh: 需先定义 BUILD_ROOT}/start.sh.example" ] || {
-    err "gen_start_sh: 找不到母版 $BUILD_ROOT/start.sh.example"; return 1; }
+  [ -f "${BUILD_ROOT:?gen_start_sh: 需先定义 BUILD_ROOT}/pkgsrc/start.sh.example" ] || {
+    err "gen_start_sh: 找不到母版 $BUILD_ROOT/pkgsrc/start.sh.example"; return 1; }
   sed -e "s|__PROXY_PORT__|${proxy}|g" \
       -e "s|__DSH_PORT__|${dsh}|g" \
       -e "s|__CONTAINER_PORT__|${cont}|g" \
@@ -333,7 +333,7 @@ gen_start_sh() {
       -e "s|__FPK_VERSION__|${FPK_VERSION}|g" \
       -e "s|__PORTAL_TITLE__|${CFG_TITLE}|g" \
       -e "s|__PORTAL_DESC__|${desc}|g" \
-      "$BUILD_ROOT/start.sh.example" > "$out"
+      "$BUILD_ROOT/pkgsrc/start.sh.example" > "$out"
   chmod +x "$out"
   if grep -qE "__PROXY_PORT__|__DSH_PORT__|__CONTAINER_PORT__|__APP_NAME__|__APP_ID__|__BRAND_NAME__|__BRAND_VERSION_ORDER__|__FPK_VERSION__|__PORTAL_TITLE__|__PORTAL_DESC__" "$out"; then
     err "start.sh 占位符未全部替换: $out"; return 1

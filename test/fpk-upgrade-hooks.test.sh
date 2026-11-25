@@ -12,7 +12,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SRC="$ROOT/build/FPK/pack-fpk.sh"
+SRC="$ROOT/build/fpk/pack-fpk.sh"
 PASS=0
 FAIL=0
 

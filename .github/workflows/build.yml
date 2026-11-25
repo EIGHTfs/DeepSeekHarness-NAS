@@ -156,15 +156,15 @@ jobs:
           for L in $LOGS; do
             bash scripts/learn-prune-whitelist.sh --log "$L" --apply || true
           done
-          if git diff --quiet -- build/build-prune-whitelist.json; then
+          if git diff --quiet -- build/config/build-prune-whitelist.json; then
             echo "… 白名单无变化（本次失败不是缺包导致）→ 不提交、不重建"
             exit 0
           fi
           git config user.name EIGHTfs
           git config user.email EIGHTfs@users.noreply.github.com
-          git add build/build-prune-whitelist.json
+          git add build/config/build-prune-whitelist.json
           git commit -q -m "chore(prune): CI 自动学习并入构建必需包（方案 B）"
-          git --no-pager diff --stat HEAD~1 -- build/build-prune-whitelist.json || true
+          git --no-pager diff --stat HEAD~1 -- build/config/build-prune-whitelist.json || true
           # ★ 先写输出再推送（实测教训）：原顺序是 push 在前，一旦 push 被拒
           #   （并发提交很正常：人手推的修复可能刚落到 main），本步被标 failure →
           #   changed 从未写出 → "入库后自动重建"那步的 if 不成立 → 直接 skipped，
@@ -210,10 +210,10 @@ jobs:
       - uses: ./.github/actions/pack-with-target
 
       - name: 打 SPK（源码链路）
-        run: ./build/SPK/pack-spk.sh
+        run: ./build/spk/pack-spk.sh
 
       - name: 打 FPK（源码链路）
-        run: ./build/FPK/pack-fpk.sh
+        run: ./build/fpk/pack-fpk.sh
 
       - name: 汇总产物到 dist-main（供后续检查与发布）
         run: |
