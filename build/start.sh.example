@@ -1113,15 +1113,20 @@ code{padding:.1rem .4rem;background:#f0f1f3;border-radius:4px;font-size:.9em}
     //     上面 ⓪ 的局域网硬闸已经限定了来源，因此这里改为：
     //     局域网内 + 无 token + 无 cookie → 一律 302 带当次 token 自动登录；
     //     仅当拿不到 token（dshToken 为空）时才回落到 403 提示页。
+    //   官方远程登录页（?login=qr）必须放行给 dsh 自己处理：若在这里补 token，
+    //   等于绕过配对直接发会话，官方「设备配对 / 一次性链接」就形同虚设。
     if (dshToken && clientReq.method === 'GET' &&
         !clientReq.url.includes('token=') &&
+        !clientReq.url.includes('login=qr') &&
         !hasAuth &&
         !clientReq.headers.upgrade &&
         !isAssetRequest(clientReq.url)) {
       autoAuthRedirect(clientReq, clientRes);
       return;
     }
-    if (!hasAuth && isDirectAccess(clientReq)) {
+    //   官方远程登录页（?login=qr）必须可达：它本身就是未认证入口（凭一次性链接或配对码换会话），
+    //   若在这里 403，外面的人永远进不到登录页，官方远程登录等于不可用。
+    if (!hasAuth && isDirectAccess(clientReq) && !clientReq.url.includes('login=qr')) {
       clientRes.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
       clientRes.end(FORBIDDEN_PAGE);
       return;
