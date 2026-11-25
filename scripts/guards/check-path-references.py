@@ -42,6 +42,10 @@ MATERIAL_PREFIXES = (
     "build/PACKAGE_ICON", "build/build-lib.sh", "build/build-common.sh",
 )
 
+# 运行期才生成、仓库里本就不存在的路径（构建脚本自己会建），不算漏改
+RUNTIME_PATTERNS = ("assets/pnpm-store", "assets/pnpm-cache", "assets/tmp-home",
+                    "assets/pnpm-install.log", "assets/build-pnpm")
+
 REFERENCE = re.compile(r"(\$\{?[A-Z_]+\}?)/([\w./*-]+)")
 SKIP_FILES = ("node_modules", "src", ".git", ".trash", "master-build", "staging", "__pycache__", "release")
 
@@ -85,6 +89,8 @@ def main():
                     continue
                 candidate = resolve(rel, variable, tail)
                 if not candidate.startswith(MATERIAL_PREFIXES):
+                    continue
+                if any(candidate.startswith(item) for item in RUNTIME_PATTERNS):
                     continue
                 checked += 1
                 if not os.path.exists(os.path.join(ROOT, candidate)):
