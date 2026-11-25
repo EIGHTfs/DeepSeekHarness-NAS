@@ -41,7 +41,7 @@ CONFIG_FILE="$SCRIPT_DIR/../config/build-config.yaml"               # 配置在 
 BUILD_META_DIR="$BUILD_ROOT/master-build"                    # 源码链路 target 元数据根（原 spk-build → master-build）
 NPM_META_DIR="$BUILD_ROOT/master-build"                      # npm 链路 app 元数据根（同根目录，不同子目录）
 NPM_APP_SCRIPT="$BUILD_ROOT/build-npm-app.sh"        # FPK npm 链路脚本（本目录）
-EXCLUDES_FILE="$BUILD_ROOT/build-excludes.json"              # tar 排除规则（通用，build/ 根）
+EXCLUDES_FILE="$BUILD_ROOT/config/build-excludes.json"              # tar 排除规则（通用，build/ 根）
 BUILD_LIB="$BUILD_ROOT/build-lib.sh"                         # 公共函数库（构建级共用）
 
 # 公共函数库：gen_start_sh 等（SPK/FPK 共用，改一处生效；库头有完整梳理口径）

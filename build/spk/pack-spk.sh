@@ -35,7 +35,7 @@ CONFIG_FILE="$SCRIPT_DIR/../config/build-config.yaml"
 BUILD_META_DIR="$BUILD_ROOT/master-build"                    # build-common.sh 产物根（原 spk-build → master-build）
 PRUNE_SCRIPT="$BUILD_ROOT/prune-target.sh"                   # 通用裁剪（留 build/ 根）
 BUILD_COMMON_SCRIPT="$BUILD_ROOT/build-common.sh"            # 公共预编译（通用留根）
-EXCLUDES_FILE="$BUILD_ROOT/build-excludes.json"              # tar 排除规则（通用，build/ 根）
+EXCLUDES_FILE="$BUILD_ROOT/config/build-excludes.json"              # tar 排除规则（通用，build/ 根）
 BUILD_LIB="$BUILD_ROOT/build-lib.sh"                         # 公共函数库（构建级共用）
 
 # ── 参数：--work-dir 指定 build-common.sh 的产物根 ──
