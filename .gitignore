@@ -55,3 +55,6 @@ node_modules.orig/
 
 # 16M 无效 spksrc 压缩包（非有效 zip、无任何脚本引用）——不入库
 /tools/spksrc.zip
+
+# 套件源索引：每次发版由 scripts/gen-pkg-source.py 现场生成并发布到静态地址，不入库（避免入库陈旧版本）
+/pkg-source/
