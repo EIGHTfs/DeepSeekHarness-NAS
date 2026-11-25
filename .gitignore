@@ -58,3 +58,6 @@ node_modules.orig/
 
 # 套件源索引：每次发版由 scripts/gen-pkg-source.py 现场生成并发布到静态地址，不入库（避免入库陈旧版本）
 /pkg-source/
+
+# 套件源索引落盘目录（pkg-source-server.py 缺省输出；含 md5 等生成信息，不入库）
+/.pkg-source/

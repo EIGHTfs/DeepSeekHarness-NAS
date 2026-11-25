@@ -302,6 +302,23 @@ jobs:
             ./build/release-note.sh > /tmp/release-body-main.md
           echo "TITLE=$(./build/release-note.sh title)" >> "$GITHUB_OUTPUT"
 
+      - name: 生成套件源索引（随 Release 发布，供局域网套件源拉取）
+        # 为什么放在发布前、且产出到 dist-main：索引里的 md5/size 必须来自本次真实产物，
+        # 只有构建机手上才有 spk。生成成 Release 资产后，局域网那台只要拉几 KB 的 JSON，
+        # 不必为了算 md5 去下载上百 MB 的 spk。
+        if: steps.check.outputs.HAS_FILES == 'yes'
+        run: |
+          set -e
+          ARGS=()
+          for f in dist-main/*.spk; do [ -f "$f" ] && ARGS+=(--spk "$f"); done
+          if [ ${#ARGS[@]} -eq 0 ]; then
+            echo "无 spk 产物，跳过套件源索引"
+            exit 0
+          fi
+          python3 scripts/gen-pkg-source.py "${ARGS[@]}" \
+            --base-url "https://github.com/${{ github.repository }}/releases/download/${{ steps.reltag.outputs.TAG }}" \
+            --out-dir dist-main
+
       - name: 发布源码链路 Release（tag=官方 tag）
         if: steps.check.outputs.HAS_FILES == 'yes'
         uses: softprops/action-gh-release@v3
