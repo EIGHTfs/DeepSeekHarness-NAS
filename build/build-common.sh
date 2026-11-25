@@ -427,10 +427,16 @@ fi
 # 版本（官方完整版本 = FPK 版本；前三位 = SPK 版本）
 # ----------------------------------------------------------------------------
 PKG_VER="$(python3 -c "import json;print(json.load(open('$SRC/package.json'))['version'])")"
-MAIN_VER="$(echo "$PKG_VER" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+')"
-SPK_VERSION="${MAIN_VER}"
+# SPK 版本：群晖 INFO 要求每段纯数字，预发布信息只能编码进 build 段。
+#   映射表与边界（阶段基数、序号上限、未知阶段报错）全在 build/spk-version.py，
+#   对应测试在 test/spk-version-scheme.test.sh，规则说明见 docs/打包规范.md「版本号」。
+SPK_VERSION="$(python3 "$WS/build/spk-version.py" "$PKG_VER")" || {
+  echo "✗ 无法把官方版本 $PKG_VER 映射成群晖版本号（映射表见 build/spk-version.py）" >&2
+  exit 1
+}
+SPK_BETA="$(python3 "$WS/build/spk-version.py" "$PKG_VER" --field beta 2>/dev/null || echo no)"
 FPK_VERSION="${PKG_VER}"
-echo "官方版本 : $PKG_VER  |  SPK 版本: $SPK_VERSION（前三位）  |  FPK 版本: $FPK_VERSION（完整）"
+echo "官方版本 : $PKG_VER  |  SPK 版本: $SPK_VERSION（beta=$SPK_BETA）  |  FPK 版本: $FPK_VERSION（完整）"
 
 # commit hash（注入 DSH_CLIENT_COMMIT_HASH）
 COMMIT_HASH=""
@@ -1049,6 +1055,7 @@ APP_ID='${APP_ID}'
 APP_NAME_LOWER='${APP_NAME_LOWER}'
 PKG_VER='${PKG_VER}'
 SPK_VERSION='${SPK_VERSION}'
+SPK_BETA='${SPK_BETA}'
 FPK_VERSION='${FPK_VERSION}'
 DESC='${DESC}'
 COMMIT_HASH='${COMMIT_HASH}'

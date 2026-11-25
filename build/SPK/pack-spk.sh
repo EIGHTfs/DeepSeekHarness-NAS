@@ -194,11 +194,13 @@ mkdir -p "$ASSEMBLE"
 # 由 start.sh 自带 gen-portal 生成（端口/appname 同一份构建配置，无静态模板）
 "$TARGET/start.sh" gen-portal --type url --key-prefix "SYNO.SDS." --all-users false > "$TARGET/ui/config"
 
-# INFO（版本 = SPK 前三位；desc/displayname/maintainer 等一律来自 build-config.yaml）。
-#   仅 DESC 在配置留空时回退 build-meta.env 的 README 摘要。
+# INFO（版本 = <官方三段>-<build>：群晖要求纯数字，预发布阶段编码进 build 段；
+#   desc/displayname/maintainer 等一律来自 build-config.yaml，仅 DESC 留空时回退 build-meta.env）。
+#   beta 字段让套件中心把预发布标成 Beta 版（官方语义见 docs/官方文档/spk/synology_package__INFO_optional_fields.md）。
 cat > "$ASSEMBLE/INFO" <<EOF
 package="${APP_NAME}"
 version="${SPK_VERSION}"
+beta="${SPK_BETA:-no}"
 description="${CFG_DESC:-$DESC}"
 arch="$SPK_ARCH"
 maintainer="${CFG_MAINTAINER}${CFG_DISTRIBUTOR:+ / $CFG_DISTRIBUTOR}"
@@ -211,7 +213,7 @@ displayname="${CFG_DISPLAY_NAME} NAS"
 dsmuidir="ui"
 dsmappname="SYNO.SDS.${APP_ID}.Application"
 checksum=""
-changelog="[独立包名 ${APP_NAME}] dsh ${PKG_VER} 全源码编译; 品牌 ${CFG_BRAND_NAME}; 版本号自动取官方前三位"
+changelog="[独立包名 ${APP_NAME}] dsh ${PKG_VER} 全源码编译; 品牌 ${CFG_BRAND_NAME}; 套件版本 ${SPK_VERSION}（预发布阶段编码进 build 段，${PKG_VER} 为原始 tag）"
 EOF
 
 # 套件中心「帮助 / 支持」链接：只在配置给了值时才写（留空则整行不出现，避免详情页挂空链接）
