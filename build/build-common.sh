@@ -187,9 +187,9 @@ BUILD_ROOT="$SCRIPT_DIR"
 WORK_ROOT="${D_WORK_ROOT:-$BUILD_ROOT/master-build}"         # 构建中间产物根（原 spk-build → master-build）
 PRUNE_SCRIPT="$BUILD_ROOT/prune-target.sh"                   # 裁剪脚本（通用，本目录）
 GEN_WHITELIST_SCRIPT="$BUILD_ROOT/gen-prune-whitelist.sh"    # 白名单生成（通用，本目录）
-SPK_BUILD_SCRIPT="$BUILD_ROOT/SPK/pack-spk.sh"              # SPK 打包（build/SPK/）
-FPK_BUILD_SCRIPT="$BUILD_ROOT/FPK/pack-fpk.sh"              # FPK 打包（build/FPK/）
-NPM_FPK_SCRIPT="$BUILD_ROOT/build-npm-app.sh"        # FPK npm 链路（build/FPK/）
+# ── 平台适配器（平台专有的一切都在 build/platform/*.sh 里，本文件不再出现） ──
+# shellcheck source=platform/select.sh
+. "$BUILD_ROOT/platform/select.sh"
 # 参数（可任意顺序）：
 #   --dry-run            只预演，不实际构建
 #   --work-dir DIR       构建中间产物根（缺省 = build/master-build，即旧行为）
@@ -424,19 +424,11 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# 版本（官方完整版本 = FPK 版本；前三位 = SPK 版本）
+# 版本：各平台换算规则不同，一律交给平台适配器（见 build/platform/*.sh）
 # ----------------------------------------------------------------------------
 PKG_VER="$(python3 -c "import json;print(json.load(open('$SRC/package.json'))['version'])")"
-# SPK 版本：群晖 INFO 要求每段纯数字，预发布信息只能编码进 build 段。
-#   映射表与边界（阶段基数、序号上限、未知阶段报错）全在 build/spk-version.py，
-#   对应测试在 test/spk-version-scheme.test.sh，规则说明见 docs/打包规范.md「版本号」。
-SPK_VERSION="$(python3 "$WS/build/spk-version.py" "$PKG_VER")" || {
-  echo "✗ 无法把官方版本 $PKG_VER 映射成群晖版本号（映射表见 build/spk-version.py）" >&2
-  exit 1
-}
-SPK_BETA="$(python3 "$WS/build/spk-version.py" "$PKG_VER" --field beta 2>/dev/null || echo no)"
-FPK_VERSION="${PKG_VER}"
-echo "官方版本 : $PKG_VER  |  SPK 版本: $SPK_VERSION（beta=$SPK_BETA）  |  FPK 版本: $FPK_VERSION（完整）"
+platform_derive_all "$PKG_VER" || exit 1
+echo "官方版本 : $PKG_VER ${PLATFORMS_DESCRIBE}"
 
 # commit hash（注入 DSH_CLIENT_COMMIT_HASH）
 COMMIT_HASH=""
@@ -473,7 +465,7 @@ if _dry; then
   echo "源码      : $SRC"
   echo "构建副本  : $BUILD_SRC"
   echo "target    : $TARGET"
-  echo "版本      : dsh $PKG_VER | SPK $SPK_VERSION | FPK $FPK_VERSION | commit $COMMIT_HASH"
+  echo "版本      : dsh $PKG_VER ${PLATFORMS_DESCRIBE} | commit $COMMIT_HASH"
   echo "应用名    : $APP_NAME"
   echo "NODE_SRC  : $NODE_SRC"
   _cc_bin="$(command -v cc 2>/dev/null || true)"
@@ -546,7 +538,7 @@ PYD
     echo "     （纯白名单裁剪：删 .pnpm 中非白名单包 + 非目标平台二进制 → target 体积骤降）"
   fi
   if _STAGE_OK install; then
-    echo "【meta】写 $WORK/build-meta.env（APP_NAME/PKG_VER/SPK_VERSION/FPK_VERSION/COMMIT/DSH_TAG）"
+    echo "【meta】写 $WORK/build-meta.env（APP_NAME/PKG_VER/各平台版本字段/COMMIT/DSH_TAG）"
   fi
   echo "════════════════ 预演结束（未执行任何动作、未改动任何文件）════════════════"
   exit 0
@@ -1054,10 +1046,7 @@ APP_NAME='${APP_NAME}'
 APP_ID='${APP_ID}'
 APP_NAME_LOWER='${APP_NAME_LOWER}'
 PKG_VER='${PKG_VER}'
-SPK_VERSION='${SPK_VERSION}'
-SPK_BETA='${SPK_BETA}'
-FPK_VERSION='${FPK_VERSION}'
-DESC='${DESC}'
+${PLATFORM_META_BLOCK}DESC='${DESC}'
 COMMIT_HASH='${COMMIT_HASH}'
 # 官方 tag（本次构建的目标版本）。用途：SKIP_BUILD 复用 target 前拿它比对，避免「旧版本的 target 被当成新版本打包」。
 # 那种错包文件名与版本号都对，内容却是别的版本。
@@ -1074,9 +1063,8 @@ echo "✅ target 预编译完成"
 touch "$WORK/.build-done"   # 断点续传标记：下次 SKIP_BUILD=1 时跳过
 echo "  target   : $TARGET ($(du -sh "$TARGET" 2>/dev/null | cut -f1))"
 echo "  元数据   : $WORK/build-meta.env"
-echo "  APP_NAME : $APP_NAME | dsh $PKG_VER | SPK $SPK_VERSION | FPK $FPK_VERSION"
+echo "  APP_NAME : $APP_NAME | dsh $PKG_VER ${PLATFORMS_DESCRIBE}"
 echo "────────────────────────────────────────────────"
-echo "后续打包（二选一或都做）:"
-echo "  ./pack-spk.sh    构建 SPK（群晖）"
-echo "  ./pack-fpk.sh    构建 FPK（飞牛）"
+echo "后续打包（按平台各取所需；平台适配器见 build/platform/）:"
+echo "  build/platform/<平台>.sh 指向对应打包入口，平台专有逻辑不进本脚本"
 echo "════════════════════════════════════════════════"
