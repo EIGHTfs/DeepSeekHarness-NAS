@@ -670,7 +670,10 @@ install_init() {
   exit 0
 }
 
-install_callback() {
+_ensure_payload_env() {
+  # 安装与升级共用的「装配后处理」：建版本数据目录 + 按 links.tar 还原软链 + ui 兜底。
+  #   升级同样必须走它 —— 新 app.tgz 里同样没有软链（打包期为过 fnOS 的 ACL 校验刻意删掉），
+  #   只在安装时还原一次的话，升级后内置插件会全部 failed to import。
   # 执行痕迹（写应用数据目录而非 /tmp：fnOS /tmp 属 root 且无 sticky，应用用户写不进）
   {
     echo "[install_callback] $(date '+%H:%M:%S') uid=$(id -u) user=$(id -un) TRIM_APPDEST=${TRIM_APPDEST:-<空>} TRIM_PKGVAR=${TRIM_PKGVAR:-<空>}"
@@ -715,6 +718,12 @@ install_callback() {
     mkdir -p "/var/apps/${APPNAME}/ui" 2>/dev/null || true
     cp -a "$APP_DIR/ui/." "/var/apps/${APPNAME}/ui/" 2>/dev/null || true
   fi
+  exit 0
+}
+
+install_callback() {
+  # 安装：跑一次装配后处理即可（卸载标记由 install_init 清掉）
+  _ensure_payload_env
   exit 0
 }
 
@@ -764,9 +773,34 @@ uninstall_callback() {
   exit 0
 }
 
-upgrade_init() { exit 0; }
+upgrade_init() {
+  # 升级前：备份用户当前的端口设置。
+  #   var/ports 随应用目录被新包整体覆盖，不备份就等于把用户改过的端口重置成打包默认值。
+  local PORT_FILE="${TRIM_APPDEST:-/var/apps/${APPNAME}}/var/ports"
+  local KEEP="${TRIM_PKGVAR:-/vol1/@appdata/${APPNAME}}/ports.pre-upgrade"
+  if [ -f "$PORT_FILE" ]; then
+    mkdir -p "$(dirname "$KEEP")" 2>/dev/null || true
+    cp -f "$PORT_FILE" "$KEEP" 2>/dev/null || true
+  fi
+  {
+    echo "[upgrade_init] $(date '+%H:%M:%S') 端口备份 → ${KEEP}"
+  } >> "${TRIM_PKGVAR:-/var/apps/${APPNAME}}/upgrade.trace" 2>/dev/null || true
+  exit 0
+}
 
-upgrade_callback() { exit 0; }
+upgrade_callback() {
+  # 升级后：先做装配后处理（关键是把软链还原回来），再回填升级前的端口设置。
+  _ensure_payload_env
+  local PORT_FILE="${TRIM_APPDEST:-/var/apps/${APPNAME}}/var/ports"
+  local KEEP="${TRIM_PKGVAR:-/vol1/@appdata/${APPNAME}}/ports.pre-upgrade"
+  if [ -f "$KEEP" ]; then
+    cp -f "$KEEP" "$PORT_FILE" 2>/dev/null || true
+    {
+      echo "[upgrade_callback] 已回填升级前端口: $(tr '\n' ' ' < "$KEEP" 2>/dev/null)"
+    } >> "${TRIM_PKGVAR:-/var/apps/${APPNAME}}/upgrade.trace" 2>/dev/null || true
+  fi
+  exit 0
+}
 
 config_init() { exit 0; }
 
