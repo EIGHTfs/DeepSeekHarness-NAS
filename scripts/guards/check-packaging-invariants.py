@@ -196,7 +196,7 @@ def main():
     #     fnOS 读的是应用目录里的 ui/config。"按钮消失"的真因是应用中心判启动失败 10330
     #     （缺 running_dsh 定义 / 端口变量用错，已修）。本条只防误删该段代码。
     try:
-        _fpk = open(os.path.join(ROOT, 'build', 'FPK', 'pack-fpk.sh'), encoding='utf-8').read()
+        _fpk = open(os.path.join(ROOT, 'build', 'fpk', 'pack-fpk.sh'), encoding='utf-8').read()
     except Exception:
         _fpk = ''
     #   ★ 必须先剥掉注释行再检查：我固化时把命令原文写进了注释，而"注释里含该字符串"
@@ -254,7 +254,7 @@ def main():
     #     运行时为空 → running_dsh 拿到空端口 → status 恒失败 → fnOS 记启动失败(10330)。
     #     真机实测：修成 ${DSH_PORT:-$FPK_DSH_PORT} 后 10330 不再新增、status rc=0。
     try:
-        _fpkgen = _code_only(open(os.path.join(ROOT, 'build', 'FPK', 'pack-fpk.sh'), encoding='utf-8').read())
+        _fpkgen = _code_only(open(os.path.join(ROOT, 'build', 'fpk', 'pack-fpk.sh'), encoding='utf-8').read())
     except Exception:
         _fpkgen = ''
     chk(21, 'running_dsh "${DSH_PORT:-$FPK_DSH_PORT}"' in _fpkgen
@@ -268,7 +268,7 @@ def main():
     #     两处原因与 FPK 同款：端口用了打包期变量 $SPK_DSH_PORT（引号 heredoc 运行时空）；
     #     只 sleep 5 就判定（DSH 冷启动约 10 秒）。chk(21) 只管 FPK，这里补 SPK。
     try:
-        _spk = _code_only(open(os.path.join(ROOT, 'build', 'SPK', 'pack-spk.sh'), encoding='utf-8').read())
+        _spk = _code_only(open(os.path.join(ROOT, 'build', 'spk', 'pack-spk.sh'), encoding='utf-8').read())
     except Exception:
         _spk = ''
     chk(22, ('running_dsh "${DSH_PORT:-$SPK_DSH_PORT}"' in _spk)
@@ -299,8 +299,8 @@ def main():
 
     try:
         _ssex = _code_only(open(os.path.join(ROOT, 'build', 'pkgsrc', 'start.sh.example'), encoding='utf-8').read())
-        _spkex = _code_only(open(os.path.join(ROOT, 'build', 'SPK', 'pack-spk.sh'), encoding='utf-8').read())
-        _fpkex = _code_only(open(os.path.join(ROOT, 'build', 'FPK', 'pack-fpk.sh'), encoding='utf-8').read())
+        _spkex = _code_only(open(os.path.join(ROOT, 'build', 'spk', 'pack-spk.sh'), encoding='utf-8').read())
+        _fpkex = _code_only(open(os.path.join(ROOT, 'build', 'fpk', 'pack-fpk.sh'), encoding='utf-8').read())
     except Exception:
         _ssex = _spkex = _fpkex = ''
     chk(24, ('已卸载' in _ssex) and ('DSH_UNINSTALLING' in _ssex) and ('.uninstalling' in _ssex)
