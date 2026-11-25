@@ -59,7 +59,10 @@ set -euo pipefail
 export LEFTHOOK="${LEFTHOOK:-0}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WS="$(cd "$SCRIPT_DIR/.." && pwd)"              # 工作区根（脚本在 build/ 子目录）
+WS="$(cd "$SCRIPT_DIR/.." && pwd)"                # 工作区根（脚本在 build/ 子目录）
+# 环境工具层（node/pnpm 自探测、目录树复制、日志助手）：必须早于任何使用点
+# shellcheck source=core/env.sh
+. "$SCRIPT_DIR/core/env.sh"
 CONFIG_FILE="$SCRIPT_DIR/config/build-config.yaml"     # 配置文件在 build 目录内
 # 构建中间产物放 assets/（rw 工作区内），避免写到 /vol2 只读挂载
 PNPM_STORE="${PNPM_STORE_DIR:-$WS/assets/pnpm-store}"
@@ -139,8 +142,6 @@ GEN_WHITELIST_SCRIPT="$BUILD_ROOT/gen-prune-whitelist.sh"    # 白名单生成�
 # ── 平台适配器（平台专有的一切都在 build/platform/*.sh 里，本文件不再出现） ──
 # shellcheck source=platform/select.sh
 . "$BUILD_ROOT/platform/select.sh"
-# shellcheck source=core/env.sh
-. "$BUILD_ROOT/core/env.sh"
 # 参数（可任意顺序）：
 #   --dry-run            只预演，不实际构建
 #   --work-dir DIR       构建中间产物根（缺省 = build/master-build，即旧行为）
