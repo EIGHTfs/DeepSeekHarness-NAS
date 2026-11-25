@@ -860,7 +860,7 @@ mkdir -p "$TARGET/var/logs" "$TARGET/var/data" "$TARGET/.dsh-home/.dsh"
 
 # 门户图标资源统一放 target/ui/images（DSM 与 fnOS 门户都读 application 位于 ui/）
 mkdir -p "$TARGET/ui/images"
-cp "$D_ASSETS/ui/images/"*.png "$TARGET/ui/images/" 2>/dev/null || true
+cp "$D_ASSETS/pkgsrc/ui/images/"*.png "$TARGET/ui/images/" 2>/dev/null || true
 
 # ── 门户图标命名归一化（必需）：门户模板只认短横线命名 ────────────────────────
 #   fnOS/群晖的门户条目用 "icon": "images/icon-{0}.png" 模板（【短横线】），而仓库里的图标资产是 icon_256.png / 64.png。

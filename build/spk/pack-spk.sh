@@ -231,7 +231,7 @@ fi
 # conf: privilege（应用用户名按 APP_NAME 替换）+ resource（脚本管理时必须 {}）。
 #   DSM 7 postinst worker 无法为 port-config/data-share 建系统资源 → 276 失败。
 mkdir -p "$ASSEMBLE/conf"
-sed "s/deepseek-harness-nas/${APP_NAME}/g" "$D_ASSETS/conf/privilege" > "$ASSEMBLE/conf/privilege"
+sed "s/deepseek-harness-nas/${APP_NAME}/g" "$D_ASSETS/pkgsrc/conf/privilege" > "$ASSEMBLE/conf/privilege"
 printf '{}' > "$ASSEMBLE/conf/resource"
 
 # scripts/installer：生命周期钩子（包名取运行期 $SYNOPKG_PKGNAME，零硬编码）
@@ -584,7 +584,7 @@ fi
 
 # 门户图标 + 外层 ui/config（与 target 同源）
 mkdir -p "$ASSEMBLE/ui/images"
-cp "$D_ASSETS/ui/images/"*.png "$ASSEMBLE/ui/images/" 2>/dev/null || true
+cp "$D_ASSETS/pkgsrc/ui/images/"*.png "$ASSEMBLE/ui/images/" 2>/dev/null || true
 cp "$TARGET/ui/config" "$ASSEMBLE/ui/config"
 cp "$D_ASSETS/PACKAGE_ICON.PNG" "$D_ASSETS/PACKAGE_ICON_256.PNG" "$ASSEMBLE/"
 

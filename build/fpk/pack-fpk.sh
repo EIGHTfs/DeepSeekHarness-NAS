@@ -226,8 +226,8 @@ echo "  ✓ fpk var/ports 已按 FPK 端口段重写"
 #   type=url：门户点击直接跳转 URL 打开（非 iframe 内嵌）。
 #   --key-id APP_NAME：FPK 键名须带连字符与 manifest desktop_applaunchname 对齐。
 mkdir -p "$FPK_SRC/ui/images" "$FPK_APP/ui/images"
-cp "$D_ASSETS/ui/images/"*.png "$FPK_SRC/ui/images/" 2>/dev/null || true
-cp "$D_ASSETS/ui/images/"*.png "$FPK_APP/ui/images/" 2>/dev/null || true
+cp "$D_ASSETS/pkgsrc/ui/images/"*.png "$FPK_SRC/ui/images/" 2>/dev/null || true
+cp "$D_ASSETS/pkgsrc/ui/images/"*.png "$FPK_APP/ui/images/" 2>/dev/null || true
 
 # ── 门户图标命名归一化（必需）：门户模板只认短横线命名 ────────────────────────
 #   fnOS/群晖的门户条目用 "icon": "images/icon-{0}.png" 模板（【短横线】），而仓库里的图标资产是 icon_256.png / 64.png。
@@ -822,8 +822,8 @@ cat > "$FPK_SRC/config/privilege" <<EOF
     "groupname": "${APP_NAME_LOWER}"
 }
 EOF
-if [ -f "$D_ASSETS/conf/resource" ]; then
-  sed "s/deepseek-harness-nas/${APP_NAME_LOWER}/g; s/DeepSeekHarness-NAS/${APP_NAME_LOWER}/g" "$D_ASSETS/conf/resource" > "$FPK_SRC/config/resource" 2>/dev/null || \
+if [ -f "$D_ASSETS/pkgsrc/conf/resource" ]; then
+  sed "s/deepseek-harness-nas/${APP_NAME_LOWER}/g; s/DeepSeekHarness-NAS/${APP_NAME_LOWER}/g" "$D_ASSETS/pkgsrc/conf/resource" > "$FPK_SRC/config/resource" 2>/dev/null || \
     printf '{"data-share":{"shares":[{"name":"%s","permission":{"rw":["%s"]}}]}}' "$APP_NAME" "$APP_NAME_LOWER" > "$FPK_SRC/config/resource"
 else
   printf '{"data-share":{"shares":[{"name":"%s","permission":{"rw":["%s"]}}]}}' "$APP_NAME" "$APP_NAME_LOWER" > "$FPK_SRC/config/resource"
