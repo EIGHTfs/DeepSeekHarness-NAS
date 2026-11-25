@@ -346,8 +346,8 @@ def main():
     #     → 脚本是 set -euo pipefail → "line 130: SPK_ARCH: unbound variable" 直接中止 ✗
     #     另：优先级必须是 环境变量 ARCH > YAML(SPKCFG_ARCH/FPKCFG_ARCH) > 默认（README 口径）
     _arch_ok = True
-    for _f, _var, _cfg in (('SPK/pack-spk.sh', 'SPK_ARCH', 'SPKCFG_ARCH'),
-                           ('FPK/pack-fpk.sh', 'FPK_ARCH', 'FPKCFG_ARCH')):
+    for _f, _var, _cfg in (('spk/pack-spk.sh', 'SPK_ARCH', 'SPKCFG_ARCH'),
+                           ('fpk/pack-fpk.sh', 'FPK_ARCH', 'FPKCFG_ARCH')):
         try:
             _t = open(os.path.join(ROOT, 'build', _f), encoding='utf-8').read()
         except Exception:
