@@ -3,8 +3,8 @@
 """check-package-parity.py —— 拿「安装成功过的包」当基准，比对另一个包的结构差异。
 
 用法:
-    ./scripts/check-package-parity.py <基准包> <候选包> [--verbose]
-    ./scripts/check-package-parity.py <基准包> <候选包> --baseline-self   # 只体检基准包
+    ./scripts/guards/check-package-parity.py <基准包> <候选包> [--verbose]
+    ./scripts/guards/check-package-parity.py <基准包> <候选包> --baseline-self   # 只体检基准包
 支持 .fpk（飞牛 fnOS）与 .spk（群晖），自动识别；纯只读，不解包到磁盘。
 
 为什么需要它（每一条都对应实际踩过的坑）：

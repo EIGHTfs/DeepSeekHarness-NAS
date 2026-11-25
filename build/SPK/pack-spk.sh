@@ -106,7 +106,7 @@ SPK_DSH_PORT="${SPKCFG_DSH_PORT:-30801}"
 SPK_CONTAINER_PORT="${SPKCFG_CONTAINER_PORT:-30802}"
 
 # ── 无 PyYAML 时的标量兜底（只覆盖少量键，不替代完整解析）──
-#   为什么需要：本机 DSM 与 CI runner 都没有装 PyYAML（scripts/check-build-config.py 的注释也写明
+#   为什么需要：本机 DSM 与 CI runner 都没有装 PyYAML（scripts/guards/check-build-config.py 的注释也写明
 #   这点），上面的 `import yaml` 会失败并走 `|| true` → 所有 SPKCFG_* 静默落空、退回脚本默认值。
 #   对现有键恰好默认值相同所以看不出来，但新增键（如 helpurl/support_url）就会永远拿不到配置值。
 #   取值范围限定 defaults 与 spk 两段（后者覆盖前者），不读 fpk 段。

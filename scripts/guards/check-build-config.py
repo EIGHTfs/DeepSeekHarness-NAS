@@ -21,7 +21,7 @@
      且其后首个非空、非注释行必须**缩进**（证明是块映射；若是标量，值会内联在冒号后）。
   2) 有 PyYAML：追加 `yaml.safe_load` 后 `isinstance(dict)` 的精确断言（双保险）。
 
-用法：python3 scripts/check-build-config.py [--file <path>] [--list]
+用法：python3 scripts/guards/check-build-config.py [--file <path>] [--list]
 退出码：0 通过 / 1 违规
 """
 import argparse
@@ -29,7 +29,7 @@ import os
 import re
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_FILE = os.path.join(ROOT, "build", "build-config.yaml")
 
 # 必须为映射的端口段（与 README「build-config.yaml（端口权威配置）」一致）

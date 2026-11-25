@@ -9,14 +9,14 @@
 豁免：字符串里的文字（log "rm -rf ..."）与注释不计；`safe_rm_rf` 自身实现允许
       出现 `rm -rf --one-file-system`。
 
-用法：python3 scripts/check-destructive-ops.py [--list]
+用法：python3 scripts/guards/check-destructive-ops.py [--list]
 退出码：0 通过 / 1 违规
 """
 import os
 import re
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SENSITIVE = re.compile(r"@app(data|store|conf|home|temp|share)\b|/volume[0-9]")
 RM = re.compile(r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f|\brm\s+-[a-zA-Z]*f[a-zA-Z]*r")
 SAFE_FLAG = "--one-file-system"

@@ -92,8 +92,8 @@ SKIP_BUILD=1 ./build/build-common.sh   # 复用已有 target（秒级）
 | `scripts/fetch-release-mt.sh` | 下载本仓 Release 资产；`[--tag <tag>] [--only spk\|fpk] [--threads N]` |
 | `scripts/promote-release.sh` | staging → release 提升；`D_REL=<dir>` 可覆盖输出目录 |
 | `scripts/prune-release-assets.py` | 清理 Release 改名残留资产；`--tag <tag> --keep-from <dir> [--dry-run]` |
-| `scripts/check-release-assets.py` | 核对某 tag 的四资产是否齐套（缺件告警）；`--repo <owner/name> --tag <tag> [--token] [--strict] [--json]` |
-| `scripts/check-node-engines.py` | 校验随包 node 是否满足官方 engines.node；`--engines "<范围>" --node <路径>` 或 `--node-version <版本>` |
+| `scripts/guards/check-release-assets.py` | 核对某 tag 的四资产是否齐套（缺件告警）；`--repo <owner/name> --tag <tag> [--token] [--strict] [--json]` |
+| `scripts/guards/check-node-engines.py` | 校验随包 node 是否满足官方 engines.node；`--engines "<范围>" --node <路径>` 或 `--node-version <版本>` |
 | `scripts/gen-pkg-source.py` | 生成群晖套件源索引；`--spk <spk>`（可重复）`[--base-url <前缀>] [--out-dir pkg-source] [--dry-run]` |
 | `scripts/pkg-source-server.py` | 独立跑局域网套件源（自己起端口、从 Release 取索引、定时刷新）；`--port <端口> [--interval <秒>] [--once] [--from-spk-dir <dir>]` |
 | `scripts/update-release-note.sh` | 单独刷新某个 Release 正文（不重新构建）；`--tag <tag> [--trigger <名>] [--dry-run]`，`--tag` 可空=最新 |
@@ -115,18 +115,18 @@ SKIP_BUILD=1 ./build/build-common.sh   # 复用已有 target（秒级）
 
 | 名称 | 检查内容 |
 |---|---|
-| `scripts/check-readme-coverage.py` | 代码里的脚本名/开关名必须在 README 出现；`--list` 只列不失败 |
-| `scripts/check-workflow-yaml.py` | `.github/**` YAML 结构、步骤缩进、`needs` 引用悬空 |
-| `scripts/check-build-config.py` | `build/build-config.yaml` 的 `defaults`/`spk`/`fpk` 必须是映射；`--file <path>` / `--list` |
-| `scripts/check-build-naming.py` | 命名规范 + 全部 `.sh`/`.py` 语法与可执行位 |
-| `scripts/check-common-functions.py` | 公共函数不得在其它脚本重复定义 |
-| `scripts/check-destructive-ops.py` | 敏感路径 `rm -rf` 必须 `--one-file-system` |
-| `scripts/check-packaging-invariants.py` | 打包不变量（含生成函数自包含、按声明范围选版本、出货裁剪并入 `_autoLearned`）；`--verbose` 列出每条检查 |
-| `scripts/check-platform-boundary.py` | 平台边界守卫：公共构建内核不得出现平台专有词，适配器三钩子齐备；`--verbose` 逐项列出 |
-| `scripts/check-package-parity.py` | 两包结构比对（软链/悬空/manifest）；`<基准包> <候选包> [--verbose] [--baseline-self]` |
+| `scripts/guards/check-readme-coverage.py` | 代码里的脚本名/开关名必须在 README 出现；`--list` 只列不失败 |
+| `scripts/guards/check-workflow-yaml.py` | `.github/**` YAML 结构、步骤缩进、`needs` 引用悬空 |
+| `scripts/guards/check-build-config.py` | `build/build-config.yaml` 的 `defaults`/`spk`/`fpk` 必须是映射；`--file <path>` / `--list` |
+| `scripts/guards/check-build-naming.py` | 命名规范 + 全部 `.sh`/`.py` 语法与可执行位 |
+| `scripts/guards/check-common-functions.py` | 公共函数不得在其它脚本重复定义 |
+| `scripts/guards/check-destructive-ops.py` | 敏感路径 `rm -rf` 必须 `--one-file-system` |
+| `scripts/guards/check-packaging-invariants.py` | 打包不变量（含生成函数自包含、按声明范围选版本、出货裁剪并入 `_autoLearned`）；`--verbose` 列出每条检查 |
+| `scripts/guards/check-platform-boundary.py` | 平台边界守卫：公共构建内核不得出现平台专有词，适配器三钩子齐备；`--verbose` 逐项列出 |
+| `scripts/guards/check-package-parity.py` | 两包结构比对（软链/悬空/manifest）；`<基准包> <候选包> [--verbose] [--baseline-self]` |
 | `scripts/verify-pkg-arch.py` | 验包架构（spk/fpk 通用）：读 `bin/node` 的 ELF `e_machine` 并核 native 平台目录；`<包路径> [--arch x86_64\|arm64] [--keep]` |
 | `scripts/migrate-dsh-home.sh` | 跨版本迁移实例数据（默认含会话）：`list` / `migrate --from <旧版本> --dry-run` / `--confirm` / `prune --version <旧版本> --confirm`；`--config-only` 只迁配置，`--target` 指定目标版本，`--package`/`--group` 指向其它套件；环境变量 `DSH_PACKAGE_NAME` / `DSH_PACKAGE_GROUP` 同义 |
-| `scripts/check-fpk-payload.py` | FPK 载荷（`app.tgz` 不含软链、权限）；`<包路径> [--expect-pkg <名>]` |
+| `scripts/guards/check-fpk-payload.py` | FPK 载荷（`app.tgz` 不含软链、权限）；`<包路径> [--expect-pkg <名>]` |
 | `test/learner-dryrun.test.sh` | 白名单学习器 dry-run 回归；`bash test/learner-dryrun.test.sh` |
 | `test/prune-release-assets.test.sh` | Release 资产清理回归；`bash test/prune-release-assets.test.sh` |
 | `test/safe-rm-rf.test.sh` | 含挂载点目录绝不被删的回归；`bash test/safe-rm-rf.test.sh` |

@@ -81,15 +81,15 @@ jobs:
       - name: 守卫套件（README 覆盖度 / 公共函数唯一性 / 破坏性操作 / 命名 / 构建配置 / 打包不变量）
         run: |
           set -e
-          python3 scripts/check-workflow-yaml.py
-          python3 scripts/check-readme-coverage.py
-          python3 scripts/check-common-functions.py
-          python3 scripts/check-destructive-ops.py
-          python3 scripts/check-build-naming.py
-          python3 scripts/check-build-config.py
-          python3 scripts/check-packaging-invariants.py
+          python3 scripts/guards/check-workflow-yaml.py
+          python3 scripts/guards/check-readme-coverage.py
+          python3 scripts/guards/check-common-functions.py
+          python3 scripts/guards/check-destructive-ops.py
+          python3 scripts/guards/check-build-naming.py
+          python3 scripts/guards/check-build-config.py
+          python3 scripts/guards/check-packaging-invariants.py
           # 平台边界：公共构建内核里不许出现平台专有词（否则无法复用到新平台）
-          python3 scripts/check-platform-boundary.py
+          python3 scripts/guards/check-platform-boundary.py
           # 学习器回归（dry-run，夹具见 test/fixtures/learner/）
           bash test/learner-dryrun.test.sh
           # Release 资产清理回归（架构维度，见 test/prune-release-assets.test.sh）
@@ -129,7 +129,7 @@ jobs:
           ls -la "$target_dir/bin" 2>/dev/null || echo "（无 bin 目录）"
           echo "—— native 平台目录 ——"
           ls -1 "$target_dir/native/system/packages" 2>/dev/null || echo "（无 native/system/packages）"
-          python3 scripts/check-target-arch.py "$target_dir" --arch "${{ inputs.arch }}"
+          python3 scripts/guards/check-target-arch.py "$target_dir" --arch "${{ inputs.arch }}"
 
       # ── 方案 B：构建失败时自动学习缺失依赖并入库 ──────────────
       # 为什么需要：上游新增构建期脚本可能 import 被裁剪剥掉的根 devDep（实测某 alpha 版的
@@ -229,7 +229,7 @@ jobs:
           FPK="$(ls -t build/staging/*.fpk 2>/dev/null | head -1)"
           if [ -z "$FPK" ]; then echo "✗ 没有产出 fpk"; exit 1; fi
           echo "验包: $FPK"
-          python3 scripts/check-fpk-payload.py "$FPK" \
+          python3 scripts/guards/check-fpk-payload.py "$FPK" \
             --expect-pkg commander --expect-pkg js-yaml --expect-pkg @deepseek-ai/cordis
 
       - name: 解析官方 tag（指定则用指定值，与官方同 tag 发布）
@@ -359,6 +359,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python3 scripts/check-release-assets.py \
+          python3 scripts/guards/check-release-assets.py \
             --repo "${{ github.repository }}" \
             --tag "${{ steps.reltag.outputs.TAG }}"

@@ -27,7 +27,7 @@
      （fnOS 套件打开与地址栏直连都发 sec-fetch-site=none，无法区分；
       403 在前 → 套件图标打开必吃 403，真机实测症状）
 
-用法：./scripts/check-packaging-invariants.py [--verbose]
+用法：./scripts/guards/check-packaging-invariants.py [--verbose]
 退出码 0 = 全部满足，1 = 有回归。
 """
 import io
@@ -35,7 +35,7 @@ import os
 import re
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RED = "\033[31m" if sys.stdout.isatty() else ""
 GRN = "\033[32m" if sys.stdout.isatty() else ""
 RST = "\033[0m" if sys.stdout.isatty() else ""

@@ -924,7 +924,7 @@ cp "$NODE_SRC" "$TARGET/bin/node" 2>/dev/null && chmod +x "$TARGET/bin/node" || 
 if [ -f "$BUILD_SRC/package.json" ] && [ -x "$TARGET/bin/node" ]; then
   _NODE_ENGINES="$(python3 -c 'import json,sys;print((json.load(open(sys.argv[1])).get("engines") or {}).get("node",""))' "$BUILD_SRC/package.json" 2>/dev/null || true)"
   if [ -n "$_NODE_ENGINES" ]; then
-    python3 "$WS/scripts/check-node-engines.py" --engines "$_NODE_ENGINES" --node "$TARGET/bin/node"
+    python3 "$WS/scripts/guards/check-node-engines.py" --engines "$_NODE_ENGINES" --node "$TARGET/bin/node"
     _node_eng_rc=$?
     if [ "$_node_eng_rc" = "1" ]; then
       echo "✗ 随包 node 不满足官方 engines.node（$_NODE_ENGINES）→ 换合规 node 后重跑" >&2

@@ -8,14 +8,14 @@
    **不同作用域**，不是重复 —— 详见 scripts/lib/common.sh 头部的「勿收口清单」。
    剔除后仍重复 = 真分叉，必须改为调用公共库。
 
-用法：python3 scripts/check-common-functions.py [--list]
+用法：python3 scripts/guards/check-common-functions.py [--list]
 退出码：0 通过 / 1 违规
 """
 import os
 import re
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 LIB = os.path.join(ROOT, "scripts", "lib", "common.sh")
 SKIP_DIRS = {".git", "node_modules", "dist", ".trash"}
 

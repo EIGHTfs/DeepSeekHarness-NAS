@@ -17,8 +17,8 @@
 【豁免】仅在一次调用内传递、外部无需知道的内部变量列入 EXEMPT；新增豁免必须在此说明理由。
 
 【用法】
-  python3 scripts/check-readme-coverage.py          # CI：有缺口则退出码 1
-  python3 scripts/check-readme-coverage.py --list   # 只列缺口，始终退出 0
+  python3 scripts/guards/check-readme-coverage.py          # CI：有缺口则退出码 1
+  python3 scripts/guards/check-readme-coverage.py --list   # 只列缺口，始终退出 0
 """
 import os
 import re
@@ -94,7 +94,7 @@ def collect(root):
 
 
 def main():
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     readme = os.path.join(root, 'README.md')
     list_only = '--list' in sys.argv
     if not os.path.isfile(readme):

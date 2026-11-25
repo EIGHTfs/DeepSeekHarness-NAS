@@ -18,8 +18,8 @@
 （`docs/官方文档/` 下是上游原文，可能含示例串，不作为本仓的凭据风险）。
 
 用法：
-    python3 scripts/check-no-secrets.py            # 扫全仓
-    python3 scripts/check-no-secrets.py <路径>...  # 只扫指定文件/目录
+    python3 scripts/guards/check-no-secrets.py            # 扫全仓
+    python3 scripts/guards/check-no-secrets.py <路径>...  # 只扫指定文件/目录
 退出码：0 = 干净；1 = 发现问题
 """
 

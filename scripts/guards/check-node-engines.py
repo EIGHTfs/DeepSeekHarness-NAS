@@ -9,8 +9,8 @@
   所以打包后立刻比对一次：不合规就当场失败，而不是等用户装完才发现。
 
 用法：
-  python3 scripts/check-node-engines.py --engines "^24.22.3 || >=26.13.1" --node bin/node
-  python3 scripts/check-node-engines.py --engines ">=24.9.0" --node-version v24.22.3
+  python3 scripts/guards/check-node-engines.py --engines "^24.22.3 || >=26.13.1" --node bin/node
+  python3 scripts/guards/check-node-engines.py --engines ">=24.9.0" --node-version v24.22.3
 
 退出码：
   0  满足

@@ -14,7 +14,7 @@
 #   等价于直接 source scripts/lib/common.sh，只是路径更短、且兼容旧调用点。
 #
 # 【约定】
-#   · 本文件**不再定义任何函数**。这不是风格问题：scripts/check-common-functions.py（CI 守卫）
+#   · 本文件**不再定义任何函数**。这不是风格问题：scripts/guards/check-common-functions.py（CI 守卫）
 #     会从公共库派生函数清单并断言全仓库无第二处定义，此处一旦新增同名函数 CI 立即变红。
 #     （注：守卫文件是 .py；早期文档曾误写为 .sh，已修正。）
 #   · 新增公共函数一律加到 scripts/lib/common.sh，不要加回这里。

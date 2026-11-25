@@ -3,7 +3,7 @@
 """check-fpk-payload.py —— **出货级**守卫：直接验构建出来的 FPK 载荷对不对。
 
 用法:
-    ./scripts/check-fpk-payload.py <包.fpk> [--expect-pkg 名字]...
+    ./scripts/guards/check-fpk-payload.py <包.fpk> [--expect-pkg 名字]...
 
 为什么需要它：
   已有守卫全是**源码级**的（check-packaging-invariants 检查脚本文本、

@@ -8,7 +8,7 @@ name: Repo hygiene
 # 两者触发条件与失败含义都不同，放一起会让「构建失败」这个信号变得含糊。
 #
 # 当前检查项：
-#   · 凭据扫描（scripts/check-no-secrets.py）：防止把本机填入的 GitHub token 误提交。
+#   · 凭据扫描（scripts/guards/check-no-secrets.py）：防止把本机填入的 GitHub token 误提交。
 #     背景：scripts/watch-official-local.sh 按部署口径把 token 写成脚本内常量，入库版本留空，
 #     本机部署时手动填入 —— 一旦 git add -A 就会把真实 token 带进公开仓库。
 
@@ -32,4 +32,4 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: 凭据扫描（不得出现令牌或非空 GITHUB_TOKEN）
-        run: python3 scripts/check-no-secrets.py
+        run: python3 scripts/guards/check-no-secrets.py

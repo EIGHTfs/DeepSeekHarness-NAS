@@ -11,9 +11,9 @@
   所以发布后要有一道「四件是否齐全」的独立核对：缺件时说清楚缺哪几件。
 
 用法：
-  python3 scripts/check-release-assets.py --repo owner/name --tag dsh-v<版本> [--token TOKEN]
-  python3 scripts/check-release-assets.py --repo owner/name --tag dsh-v<版本> --strict   # 缺件返回 1
-  python3 scripts/check-release-assets.py --repo owner/name --tag dsh-v<版本> --json
+  python3 scripts/guards/check-release-assets.py --repo owner/name --tag dsh-v<版本> [--token TOKEN]
+  python3 scripts/guards/check-release-assets.py --repo owner/name --tag dsh-v<版本> --strict   # 缺件返回 1
+  python3 scripts/guards/check-release-assets.py --repo owner/name --tag dsh-v<版本> --json
 
 退出码：
   0  四件齐全；或不齐但未加 --strict（只告警）

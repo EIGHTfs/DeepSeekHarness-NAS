@@ -20,14 +20,14 @@
   5. workflow 调 action 时 `with:` 的键必须是该 action 已声明的 input
      （实测：传了未声明的 arch → GitHub 报 "Unexpected input(s) 'arch'"）
 
-用法：python3 scripts/check-workflow-yaml.py [--list]
+用法：python3 scripts/guards/check-workflow-yaml.py [--list]
 退出码：0 通过 / 1 违规
 """
 import os
 import re
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TARGETS = [".github/workflows/build.yml"] + [
     os.path.join(".github/actions", d, "action.yml")
     for d in sorted(os.listdir(os.path.join(ROOT, ".github", "actions")))

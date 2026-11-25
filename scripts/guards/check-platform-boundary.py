@@ -12,8 +12,8 @@
     ② 每个平台适配器必须实现三个钩子并注册自己。
 
 用法：
-  python3 scripts/check-platform-boundary.py            # 校验（CI 与本地都用它）
-  python3 scripts/check-platform-boundary.py --verbose   # 列出每个文件逐项结果
+  python3 scripts/guards/check-platform-boundary.py            # 校验（CI 与本地都用它）
+  python3 scripts/guards/check-platform-boundary.py --verbose   # 列出每个文件逐项结果
 
 退出码：0 通过；1 越界
 """
@@ -24,7 +24,7 @@ import os
 import re
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 公共内核：只允许平台无关内容
 CORE_FILE = os.path.join(ROOT, "build", "build-common.sh")

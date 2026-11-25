@@ -5,7 +5,7 @@
 # 设计口径：
 #   审计出的重复实现一律收进本文件，各脚本只允许**调用**，不允许再定义同名副本。
 #
-#   【谁在强制】scripts/check-common-functions.py（CI 守卫套件的一环，见 README「脚本一览」）。
+#   【谁在强制】scripts/guards/check-common-functions.py（CI 守卫套件的一环，见 README「脚本一览」）。
 #   它从本文件**派生**出允许被定义/被调用的函数清单，再断言全仓库不存在第二处同名定义。
 #   因此：**新增公共函数只需写在本文件**，守卫会自动纳入白名单；反之，若在别处新定义同名函数，
 #   CI 会直接红——这是有意的，防止公共化成果被后续改动悄悄拆掉。
@@ -59,7 +59,7 @@
 #       - `base64` 有一半是 **python 语言级**用法（源码里 `import base64`），
 #         与 shell 的 b64_encode 无关。
 #
-#   → 因此 scripts/check-common-functions.sh（第 7 步守卫）必须**先剔除 heredoc 生成区段**
+#   → 因此 scripts/guards/check-common-functions.sh（第 7 步守卫）必须**先剔除 heredoc 生成区段**
 #     再做"唯一性"判定，否则会误伤上述代码。
 #
 # 【本文件收口的重复项（原散落位置）】

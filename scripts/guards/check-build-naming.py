@@ -8,14 +8,14 @@
                   `build/<FMT>/<pack|build>-<小写>.sh`（FMT ∈ SPK/FPK）
   · scripts/    ：`<kebab-case>.sh|.py`
 
-用法：python3 scripts/check-build-naming.py [--list]
+用法：python3 scripts/guards/check-build-naming.py [--list]
 退出码：0 通过 / 1 违规
 """
 import os
 import re
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 WF = os.path.join(ROOT, ".github", "workflows", "build.yml")
 VERBS = ("build", "pack", "release")
 KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
