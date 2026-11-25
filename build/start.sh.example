@@ -1571,6 +1571,41 @@ cmd_check() {
   else
     echo "   ⚠ 未找到 $link_dir（依赖尚未安装？）"
   fi
+  # ── ⑦ 插件兼容性（升级后最容易静默坏的地方）──────────────────────────
+  #   插件版本落后于宿主时有两种失效，表现完全不同：
+  #     a) dsh 自己在启动日志里禁用不兼容插件 —— 有明确一行，查得到；
+  #     b) 插件在客户端抢注全局钩子（如 __DSH_FILE_UPLOAD__）顶掉内置实现 ——
+  #        日志里一个字都没有，表现为「点上传/拖文件立刻失败」，只能静态扫出来。
+  echo "⑦ 插件兼容性（禁用记录 + 全局钩子抢注）"
+  _chk_log="$(ls -t "$DSH_HOME_PARENT"/*.log 2>/dev/null | head -1)"
+  if [ -n "$_chk_log" ]; then
+    _disabled="$(grep -c 'disabling profile plugin' "$_chk_log" 2>/dev/null || true)"
+    [ -z "$_disabled" ] && _disabled=0
+    if [ "$_disabled" -gt 0 ]; then
+      echo "   ✗ 启动日志里有 $_disabled 条插件被禁用（与当前 dsh 版本不兼容）"
+      grep 'disabling profile plugin' "$_chk_log" 2>/dev/null | tail -3 | sed 's/^/       /'
+      echo "       修复：把被禁用的插件升到声明支持当前 dsh 版本的版本，然后重启"
+      rc=1
+    else
+      echo "   ✓ 启动日志里无 'disabling profile plugin'"
+    fi
+  else
+    echo "   ⚠ 未找到启动日志，跳过禁用检查"
+  fi
+  _chk_profiles="$DSH_HOME_DIR/profiles"
+  if [ -d "$_chk_profiles" ]; then
+    _hook_owners="$(grep -rlE '__DSH_FILE_UPLOAD__[[:space:]]*=' \
+      "$_chk_profiles"/*/node_modules "$_chk_profiles"/*/local-plugins 2>/dev/null | head -5 || true)"
+    if [ -n "$_hook_owners" ]; then
+      echo "   ⚠ 有插件在客户端抢注上传钩子 __DSH_FILE_UPLOAD__（会整体顶掉内置上传传输）"
+      printf '%s\n' "$_hook_owners" | sed "s|$_chk_profiles/||" | head -5 | sed 's/^/       /'
+      echo "       判据：该插件必须声明支持当前 dsh 版本；『上传秒失败且无请求发出』先查这里"
+    else
+      echo "   ✓ 无插件抢注上传钩子"
+    fi
+  else
+    echo "   ⚠ 未找到 profiles 目录，跳过钩子扫描"
+  fi
   echo
   echo "═══════════════════════════════════════"
   if [ "$rc" = 0 ]; then echo "自检结果: 无致命项"; else echo "自检结果: 存在致命项（见上方 ✗）"; fi

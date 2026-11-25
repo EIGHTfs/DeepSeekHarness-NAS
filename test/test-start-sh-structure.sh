@@ -31,5 +31,11 @@ printf '%s' "$out" | grep -q '用法:' && chk_bad "source 触发了 main 的用�
 bash -c 'source "$1" 2>/dev/null; declare -F resolve_environment >/dev/null && declare -F cmd_self_check >/dev/null' _ "$SRC" \
   && chk_ok "source 后解析/自检函数可用" || chk_bad "source 后函数不可用"
 
+# ⑦ 插件兼容性体检（升级后最容易静默坏的地方：插件抢注全局钩子 / 被宿主禁用）
+grep -q '⑦ 插件兼容性' "$SRC" && chk_ok "自检含插件兼容性项" || chk_bad "自检缺插件兼容性项"
+grep -q "disabling profile plugin" "$SRC" && chk_ok "体检覆盖「被宿主禁用的插件」" || chk_bad "体检未覆盖插件禁用"
+grep -q '__DSH_FILE_UPLOAD__\[\[:space:\]\]\*=' "$SRC" \
+  && chk_ok "体检覆盖「抢注上传钩子」" || chk_bad "体检未覆盖上传钩子抢注"
+
 echo "═══ 结果: $PASS 通过 / $FAIL 失败 ═══"
 [ "$FAIL" -eq 0 ]
