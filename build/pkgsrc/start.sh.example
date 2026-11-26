@@ -187,22 +187,32 @@ ensure_tmpfile_writable() {
 # ---------- 解析区：所有"值计算"集中于此，可被 source 后单独调用 ----------
 resolve_environment() {
 DSH_DIR="$(find_dsh_dir)"
-PKG_VERSION="$(resolve_pkg_version "$DSH_DIR")"
+# 显式指定的 PKG_VERSION 优先：容器里用 PKG_VERSION=current 让数据目录不随镜像版本漂移；
+#   未指定时才从包内解析（平台变量与探测只作为兜底，不能反过来盖掉调用方意图）。
+PKG_VERSION="${PKG_VERSION:-$(resolve_pkg_version "$DSH_DIR")}"
 [ -z "$PKG_VERSION" ] && PKG_VERSION="__FPK_VERSION__"
 # 名牌名称（网页左上角；由打包脚本依 build-config.yaml brand_name 注入）
 BRAND_NAME="__BRAND_NAME__"
 # 外部数据区优先：TRIM_PKGVAR（fnOS 生命周期注入）或 SYNOPKG_PKGVAR / PKG_VAR（群晖注入），按版本分子目录
-if [ -n "${TRIM_PKGVAR:-}" ]; then
+# 优先级：PKG_VAR ＞ DSH_HOME ＞ 平台注入变量（TRIM_PKGVAR、SYNOPKG_PKGVAR）＞ 探测。
+#   为什么显式优先：平台变量会**继承**（在 DSH 自己的 shell 里跑本脚本时 SYNOPKG_PKGVAR 已在环境中），
+#   若让它抢先，调用方传进来的 PKG_VAR / PKG_VERSION 会被静默忽略 —— 实测就这么踩过：
+#   本想隔离到 <新根>/current 起一个测试实例，结果落到了正在运行的正式实例的 PID 上。
+if [ -n "${PKG_VAR:-}" ]; then
+  DSH_PKG_VAR_ROOT="$PKG_VAR"
+  DSH_HOME_PARENT="$PKG_VAR/$PKG_VERSION"
+  DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
+elif [ -n "${DSH_HOME:-}" ]; then
+  DSH_HOME_DIR="$DSH_HOME"
+  DSH_HOME_PARENT="$(dirname "$DSH_HOME")"
+  DSH_PKG_VAR_ROOT="$(dirname "$DSH_HOME_PARENT")"
+elif [ -n "${TRIM_PKGVAR:-}" ]; then
   DSH_PKG_VAR_ROOT="$TRIM_PKGVAR"
   DSH_HOME_PARENT="$TRIM_PKGVAR/$PKG_VERSION"
   DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
 elif [ -n "${SYNOPKG_PKGVAR:-}" ]; then
   DSH_PKG_VAR_ROOT="$SYNOPKG_PKGVAR"
   DSH_HOME_PARENT="$SYNOPKG_PKGVAR/$PKG_VERSION"
-  DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
-elif [ -n "${PKG_VAR:-}" ]; then
-  DSH_PKG_VAR_ROOT="$PKG_VAR"
-  DSH_HOME_PARENT="$PKG_VAR/$PKG_VERSION"
   DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
 else
   # 手动启动（无 TRIM_PKGVAR / SYNOPKG_PKGVAR / PKG_VAR 注入，如 SSH 直跑 ./start.sh）：
@@ -1360,6 +1370,20 @@ DSH_REPAIR_EOF
 )
 
 # ---------- 工具 ----------
+# ── 实例身份校验：只认「同一个实例」的进程 ────────────────────────────
+#   为什么要三重校验：同一份载荷（同一个 DSH_DIR）可以在不同数据根上并存多个实例
+#   （正式实例 + 测试实例 + 容器内实例）。只看 PID 存活或只看命令行含载荷路径都不够 ——
+#   前者会被别的实例的 PID 文件骗过，后者会把兄弟实例一起杀掉。
+_pid_is_this_instance() {
+  local pid="$1"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  [ -r "/proc/$pid/cmdline" ] || return 1
+  tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -qF -- "$DSH_DIR" || return 1
+  [ -r "/proc/$pid/environ" ] || return 1
+  tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qxF "DSH_HOME=$DSH_HOME_DIR"
+}
+
 is_running() {
   if [ -f "$PID_FILE" ]; then
     local pid
@@ -1368,12 +1392,11 @@ is_running() {
   fi
   # 升级后残留：PID 文件还躺在旧版本目录里（历史布局），进程也还活着 —— 仍然算「在运行」，
   #   否则 start 会再起一个实例、撞端口；stop 也能据此把它清掉。
-  local _legacy
+  local _legacy _pid
   for _legacy in "${DSH_PKG_VAR_ROOT:-}"/*/"${APP_NAME}.pid"; do
     [ -f "$_legacy" ] || continue
-    local _pid
     _pid="$(cat "$_legacy" 2>/dev/null)"
-    [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null && return 0
+    _pid_is_this_instance "$_pid" && return 0
   done
   return 1
 }
@@ -1393,7 +1416,7 @@ kill_stale_instances() {
       [ -f "$_legacy" ] || continue
       pid="$(cat "$_legacy" 2>/dev/null)"
       [ -n "$pid" ] || continue
-      if kill -0 "$pid" 2>/dev/null; then
+      if _pid_is_this_instance "$pid"; then
         found=$((found + 1))
         if [ "$dry" = "--dry-run" ]; then
           echo "  旧 PID 文件残留 pid=$pid（$_legacy）"
@@ -1413,6 +1436,7 @@ kill_stale_instances() {
       *"$DSH_DIR/apps/cli/lib/bin.js"*|*"DSH_REPAIR_DIR=$DSH_DIR"*) ;;
       *) continue ;;
     esac
+    _pid_is_this_instance "$pid" || continue
     found=$((found + 1))
     if [ "$dry" = "--dry-run" ]; then
       echo "  残留 pid=$pid cmd=$(printf '%s' "$cmd" | cut -c1-70)"
@@ -1805,7 +1829,7 @@ DSH_WRAPPER_EOF
     fi
   fi
   if is_running; then
-    echo "DSH 已在运行 (PID $(cat "$PID_FILE"))"
+    echo "DSH 已在运行 (PID $(cat "$PID_FILE" 2>/dev/null))"
     local TOKEN
     TOKEN=$(get_token)
     if [ -n "$TOKEN" ]; then

@@ -1,0 +1,17 @@
+{
+  "_note": [
+    "工作区别名清单：entrypoint 会把每项在 /workspace/<name> 建一个指向宿主路径的软链。",
+    "path 必须是「宿主目录在容器内的同路径」—— 即 compose 里 /a/b:/a/b 这样挂，否则别名指向空处。",
+    "name 只允许字母、数字与 . _ -；不填也不会报错，只是没有短入口。"
+  ],
+  "workspaces": [
+    {
+      "name": "projects",
+      "path": "/volume1/projects"
+    },
+    {
+      "name": "downloads",
+      "path": "/volume1/Downloads"
+    }
+  ]
+}

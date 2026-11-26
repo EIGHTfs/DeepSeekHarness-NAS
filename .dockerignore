@@ -1,0 +1,11 @@
+# Docker 构建上下文瘦身：只保留镜像需要的目录，避免把 .git / 源码 / 依赖误送进构建上下文。
+# 注意 build/master-build 不能整体排除 —— target 就在里面，由 --build-arg TARGET_DIR 指定。
+.git
+node_modules
+src
+release
+dist-in
+dist-main
+assets
+docs/images
+test

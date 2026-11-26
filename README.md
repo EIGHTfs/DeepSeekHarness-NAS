@@ -197,6 +197,7 @@ SKIP_BUILD=1 ./build/build-common.sh   # 复用已有 target（秒级）
 - [群晖资源限制](docs/群晖资源限制.md) — DSM 下 taskset 绑核 / MemoryLimit / cgroup 归属
 - [可行性-OpenWrt与iStoreOS](docs/可行性-OpenWrt与iStoreOS.md) — 换平台打包的实测事实与路线
 - [故障排查指南](docs/故障排查指南.md) — 症状 → 判据 → 处置
+- [Docker 版](docs/Docker.md) — 容器化运行、数据/工作区挂载、权限与限制
 
 ## 许可证
 

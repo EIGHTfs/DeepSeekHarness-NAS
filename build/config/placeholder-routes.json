@@ -42,9 +42,15 @@
     },
     {
       "name": "docker",
-      "desc": "容器环节（预留）：Dockerfile 与 entrypoint 的占位符注入；未启用时 templates 为空即自动跳过",
-      "templates": [],
-      "injectors": []
+      "desc": "容器环节：Dockerfile / entrypoint / compose 示例里的占位符注入（当前无占位符，配置到位以便后续新增时自动校验）",
+      "templates": [
+        "build/docker/Dockerfile",
+        "build/docker/entrypoint.sh",
+        "build/docker/docker-compose.example.yml"
+      ],
+      "injectors": [
+        "build/docker/*.sh"
+      ]
     }
   ]
 }
