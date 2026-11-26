@@ -15,6 +15,12 @@
       "--exclude=./**/__test__",
       "--exclude=./**/*.test.*",
       "--exclude=./**/*.spec.*",
+      "_comment_non_target_platform_binaries",
+      "--exclude=./**/tmeet-Windows-*",
+      "--exclude=./**/tmeet-macOS-*",
+      "--exclude=./**/prebuilds/win32-*",
+      "--exclude=./**/prebuilds/darwin-*",
+      "--exclude=./**/*.pdb",
       "--exclude=./**/test",
       "--exclude=./**/tests",
 

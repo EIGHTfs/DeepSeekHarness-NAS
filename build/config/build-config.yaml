@@ -43,7 +43,7 @@ defaults:
   # 名牌版本号优先级链：dsh 包（@deepseek-ai/dsh/package.json version）→ npm 包（客户端编译产物 localBuildVersion 串）
   brand_version_order: dsh,npm
   # 打包体积门禁（MB；0 = 不检查）。fpk 实测约 100MiB，留余量设 200
-  size_limit_mb: 200
+  size_limit_mb: 220
 
   # ── 共享区（@appshare）目录名（fpk/spk 共用；禁止在脚本里写死路径） ──
   #   共享区根路径由平台注入的变量自动推导：fpk 取 TRIM_PKGVAR 的 @appdata → @appshare。

@@ -117,6 +117,28 @@ def _check(path):
     return bad, True
 
 
+# 架构专属标记：build-excludes.json 由 x86_64 与 armv8 两次构建共用，
+#   一旦写进这些词，就等于把另一个架构包自己需要的二进制裁掉（曾真实发生过）。
+ARCH_SPECIFIC = ("linux-x64", "linux-arm64", "linux-armv7", "armv8", "aarch64", "x86_64")
+
+
+def check_excludes_arch_neutral():
+    path = os.path.join(ROOT, "build", "config", "build-excludes.json")
+    if not os.path.isfile(path):
+        return []
+    problems = []
+    with open(path, encoding="utf-8") as handle:
+        for number, line in enumerate(handle, 1):
+            text = line.strip()
+            if not text.startswith('"--exclude='):
+                continue
+            lowered = text.lower()
+            for token in ARCH_SPECIFIC:
+                if token in lowered:
+                    problems.append("build/config/build-excludes.json:%d 含架构专属词 %r（共享文件，会打坏另一个架构的包）" % (number, token))
+    return problems
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="断言 build-config.yaml 的端口段是映射")
     ap.add_argument("--file", default=DEFAULT_FILE, help="待检查的文件（默认 build/config/build-config.yaml）")
@@ -132,6 +154,7 @@ def main(argv=None):
         return 1
 
     bad, used_yaml = _check(args.file)
+    bad = bad + check_excludes_arch_neutral()
     if bad:
         sys.stderr.write("✗ build-config 守卫失败（%d 项）：\n" % len(bad))
         for b in bad:
