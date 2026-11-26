@@ -31,9 +31,10 @@ services:
       # DSH_PUBLIC_URL: "https://dsh.example.com"
       # DSH_TRUSTED_HOSTS: "dsh.example.com"
     volumes:
-      - /volume1/docker/dsh/data:/data                 # ① 数据（本地盘！）
-      - /volume1/projects:/volume1/projects            # ② 工作区：同路径挂载
-      - /volume1/Downloads:/volume1/Downloads
+      # 宿主路径按自己的系统改：DSM 常见 /volume1/docker/dsh/data，其它 Linux 用 /srv 之类；
+      # 数据必须放本地盘（CIFS/SMB 共享会因 noexec 与 chmod EPERM 让 pnpm 装插件失败）
+      - ${DSH_DATA_DIR:-/srv/dsh/data}:/data                                  # ① 数据
+      - ${DSH_WORKSPACE_HOST:-/srv/dsh/workspace}:${DSH_WORKSPACE_HOST:-/srv/dsh/workspace}   # ② 工作区（同路径挂载）
       - ./workspaces.example.json:/etc/dsh/workspaces.json:ro   # ③ 别名清单
     ports:
       - "3080:30800"                # 只暴露反代端口；30801 留在容器内

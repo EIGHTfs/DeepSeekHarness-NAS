@@ -2290,7 +2290,7 @@ cmd_fix_deps() {
 # 【病症】随包发布的 node_modules/.modules.yaml 里记着**打包机**的 store 路径，目标机上
 #   pnpm 解析到另一个（常常是空的）store → pnpm 报 storeDir 不匹配，此后 dsh plugin add
 #   等一切 pnpm 操作都失败（实测 193：记录是 0.1.6 迁移前的路径，pnpm 现解析
-#   /volume1/.pnpm-store/v11，仅 27M 近乎空）。
+#   <共享盘>/.pnpm-store/v11，仅 27M 近乎空）。
 # 【修法】把**记录里的** store 写进同级 pnpm-workspace.yaml 的 storeDir，让 pnpm 解析回
 #   那个已经装了内容的 store —— 无需重装、不下载任何包（193 实测该 store 有 825M 内容）。
 # 【为什么不是别的做法】

@@ -7,11 +7,11 @@
   "workspaces": [
     {
       "name": "projects",
-      "path": "/volume1/projects"
+      "path": "/srv/projects"
     },
     {
       "name": "downloads",
-      "path": "/volume1/Downloads"
+      "path": "/srv/downloads"
     }
   ]
 }

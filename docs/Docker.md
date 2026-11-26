@@ -46,14 +46,14 @@ docker compose -f build/docker/docker-compose.example.yml up -d
 
 | 机制 | 做法 | 作用 |
 |---|---|---|
-| 数据 | `-v /volume1/docker/dsh/data:/data` | 配置/会话/插件；bind 挂载，File Station 可见、能直接备份 |
-| 同路径挂载 | `-v /volume1/projects:/volume1/projects` | 会话记录里的绝对路径与裸机一致，跨部署迁移不用改写 |
+| 数据 | `-v <宿主数据目录>:/data` | 配置/会话/插件；bind 挂载，File Station 可见、能直接备份 |
+| 同路径挂载 | `-v <宿主工程目录>:<同一条路径>` | 会话记录里的绝对路径与裸机一致，跨部署迁移不用改写 |
 | 别名清单 | `-v ./workspaces.json:/etc/dsh/workspaces.json:ro` | entrypoint 在 `/workspace/<名>` 建软链，给人短入口 |
 
 清单格式：
 
 ```json
-{"workspaces": [{"name": "projects", "path": "/volume1/projects"}]}
+{"workspaces": [{"name": "projects", "path": "<宿主工程目录在容器内的同路径>"}]}
 ```
 
 `path` 必须是**宿主目录在容器内的同路径**，否则别名指向空处（entrypoint 会在日志里打 `⚠ 跳过工作区 …（宿主目录没有挂进容器）`）。
@@ -77,7 +77,7 @@ docker compose -f build/docker/docker-compose.example.yml up -d
 |---|---|
 | 镜像构建 | `debian:12-slim` + `target/`（821 MB 上下文），构建通过 |
 | 启动 | `PUID=1000 PGID=1000` 降权成功；`DSH_HOME=/data/current/.dsh`；日志与 PID 落在 var 根 |
-| 别名 | `/workspace/ws-a → /volume1/docker-test/ws-a` 建链成功；未挂载的项按预期跳过并提示 |
+| 别名 | `/workspace/<名> → <宿主同路径>` 建链成功；未挂载的项按预期跳过并提示 |
 | 访问 | 首页 302（门户跳转）；`start.sh status` rc=0；`HEALTHCHECK` 转为 `healthy` |
 | 属主 | 宿主侧生成文件均为 `1000:1000`（不再出现 root 文件） |
 | 重启 | `docker restart` 后 302、同一 `DSH_HOME`、别名仍在（`PKG_VERSION=current` 生效） |
@@ -85,6 +85,10 @@ docker compose -f build/docker/docker-compose.example.yml up -d
 两个在容器里才暴露的问题（已修）：① `/workspace` 由 root 预建并 chown，否则降权后连 `mkdir` 都不允许、别名静默失败；② 非 root 时 `/usr/bin`、`/usr/local/bin` 都不可写，wrapper 写入必须「失败即返回非 0」才能落到兜底路径，且错误要静默（否则每次启动刷两条 Permission denied）。
 
 容器内没有 `dsh` 命令在 PATH 上（wrapper 只能落到 `$HOME/.local/bin`，而 `HOME` 指工作区根）；需要 CLI 时直接调 `/opt/dsh/bin/dsh`。
+
+## 6.1 镜像里不带宿主路径
+
+镜像构建时会清理「随包带进来的运行期残留」（`var/logs`、`var/ports`、`bin/dsh` 陈旧 wrapper —— 实测曾把打包机上一个已删除目录硬编码进 wrapper），并在构建期断言镜像内不出现群晖专属绝对路径（`/volumeN/`）。所以同一个镜像能直接跑在任意 Linux 或 NAS 上，路径差异全部由挂载与 `PKG_VAR` / `DSH_ADVERTISE_URL` 决定。
 
 ## 7. 已知限制
 

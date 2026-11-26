@@ -32,7 +32,19 @@ ARG TARGET_DIR=build/master-build/dsh/target
 COPY ${TARGET_DIR}/ /opt/dsh/
 
 COPY build/docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh /opt/dsh/start.sh 2>/dev/null || true
+
+# 清掉「随包带进来的运行期残留」：这些是打包机/上一次运行留下的，进镜像会泄漏宿主路径、
+#   也会让容器以为是上一次的实例（实测发现 /opt/dsh/bin/dsh 里硬编码了一个已删除的宿主目录，
+#   var/ 里还留着 ports 与历史日志）。bin/dsh 属于运行时生成物，容器里由 start.sh 重新安装。
+RUN rm -rf /opt/dsh/var/logs /opt/dsh/var/ports /opt/dsh/var/data /opt/dsh/bin/dsh \
+    && mkdir -p /opt/dsh/var \
+    && chmod +x /entrypoint.sh /opt/dsh/start.sh 2>/dev/null || true
+
+# 构建期断言：镜像里不允许出现群晖专属绝对路径（/volume1、/volume2 …）。
+#   为什么：这个镜像要能跑在任意 Linux 上，带进宿主路径说明「某个文件是从机器上顺手拷进来的」。
+RUN if grep -rlE "/volume[0-9]+/" /opt/dsh /entrypoint.sh 2>/dev/null | grep -v '^$' >/tmp/v.txt; then \
+      echo "✗ 镜像里出现群晖专属路径：" && cat /tmp/v.txt && exit 1; \
+    fi
 
 # PKG_VERSION=current：让数据目录恒为 /data/current/.dsh，换镜像版本后旧数据仍可见。
 # 端口沿用套件默认：30800 是对外反代（门户/token），30801 是 dsh 本体，只留容器内。

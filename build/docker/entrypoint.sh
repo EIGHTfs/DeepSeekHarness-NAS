@@ -9,7 +9,7 @@
 #        同时保留宿主原路径（同路径挂载）以便会话记录里的绝对路径与裸机一致。
 #
 # 挂载清单（可选，默认 /etc/dsh/workspaces.json）：
-#   {"workspaces":[{"name":"projects","path":"/volume1/projects"}, ...]}
+#   {"workspaces":[{"name":"projects","path":"/srv/projects"}, ...]}
 #   · path 必须是**宿主目录在容器内的同路径**（即 compose 里 /a/b:/a/b 这样挂），否则别名指向空处；
 #   · name 只用于别名，取字母数字与连字符。
 #
