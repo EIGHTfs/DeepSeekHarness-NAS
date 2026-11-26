@@ -188,12 +188,15 @@ PKG_VERSION="$(resolve_pkg_version "$DSH_DIR")"
 BRAND_NAME="__BRAND_NAME__"
 # 外部数据区优先：TRIM_PKGVAR（fnOS 生命周期注入）或 SYNOPKG_PKGVAR / PKG_VAR（群晖注入），按版本分子目录
 if [ -n "${TRIM_PKGVAR:-}" ]; then
+  DSH_PKG_VAR_ROOT="$TRIM_PKGVAR"
   DSH_HOME_PARENT="$TRIM_PKGVAR/$PKG_VERSION"
   DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
 elif [ -n "${SYNOPKG_PKGVAR:-}" ]; then
+  DSH_PKG_VAR_ROOT="$SYNOPKG_PKGVAR"
   DSH_HOME_PARENT="$SYNOPKG_PKGVAR/$PKG_VERSION"
   DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
 elif [ -n "${PKG_VAR:-}" ]; then
+  DSH_PKG_VAR_ROOT="$PKG_VAR"
   DSH_HOME_PARENT="$PKG_VAR/$PKG_VERSION"
   DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
 else
@@ -214,6 +217,7 @@ else
     done
   done
   if [ -n "$SYNODATA" ]; then
+    DSH_PKG_VAR_ROOT="$SYNODATA"
     DSH_HOME_PARENT="$SYNODATA/$PKG_VERSION"
     DSH_HOME_DIR="$DSH_HOME_PARENT/.dsh"
   else
@@ -252,7 +256,10 @@ APP_NAME="__APP_NAME__"
 #   /tmp/dsh-repair-<uid>.log: 权限不够 → 启动直接失败（实机实测）。
 # 统一放应用自己的版本数据目录（DSH_HOME_PARENT，安装期 chown 给应用用户）：
 #   <PKG_VAR>/<version>/<APP_NAME>.pid 与 .log
-PID_DIR="${DSH_HOME_PARENT:-$DSH_HOME_DIR}"
+# PID 文件必须**跨版本稳定**：放在 var 根而不是 var/<版本>/。
+#   否则升级后新版本的 stop 会去新版本目录找 PID，永远找不到旧实例 → 旧进程存活、
+#   端口被占、start 撞端口失败，DSM 把「启动失败」报给用户（真实经历过停不掉/卸不掉）。
+PID_DIR="${DSH_PKG_VAR_ROOT:-${DSH_HOME_PARENT:-$DSH_HOME_DIR}}"
 PID_FILE="${PID_DIR}/${APP_NAME}.pid"
 LOG_FILE="${PID_DIR}/${APP_NAME}.log"
 # 崩溃记录（【追加】写、跨启动保留）：任何一次非正常退出都留一条带时间戳的记录 + 日志尾部。
@@ -1349,10 +1356,84 @@ DSH_REPAIR_EOF
 
 # ---------- 工具 ----------
 is_running() {
-  [ -f "$PID_FILE" ] || return 1
-  local pid
-  pid=$(cat "$PID_FILE" 2>/dev/null)
-  [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+  if [ -f "$PID_FILE" ]; then
+    local pid
+    pid=$(cat "$PID_FILE" 2>/dev/null)
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0
+  fi
+  # 升级后残留：PID 文件还躺在旧版本目录里（历史布局），进程也还活着 —— 仍然算「在运行」，
+  #   否则 start 会再起一个实例、撞端口；stop 也能据此把它清掉。
+  local _legacy
+  for _legacy in "${DSH_PKG_VAR_ROOT:-}"/*/"${APP_NAME}.pid"; do
+    [ -f "$_legacy" ] || continue
+    local _pid
+    _pid="$(cat "$_legacy" 2>/dev/null)"
+    [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null && return 0
+  done
+  return 1
+}
+
+# ── 扫描并清理「属于本套件的残留进程」────────────────────────────────
+#   为什么需要：升级（套件中心手动更新或自动更新）时，上一个实例的 PID 未必在
+#   PID 文件里（可能由别的途径拉起、或上次没停干净）。于是 stop 报"未运行"、
+#   端口仍被占，紧接着 start 撞端口失败 —— DSM 把「启动失败」报给用户，
+#   而实际服务是通的（旧实例在跑），形成「更新成功却报启动失败」的假故障。
+#   DSM 上没有 pgrep/pkill，这里直接扫 /proc；只匹配「本套件路径下」的进程，
+#   不会误伤其它实例。输出清理到的进程数（供调用方判断）。
+kill_stale_instances() {
+  local dry="${1:-}" found=0 pid cmd d _legacy
+  # 旧版本目录里的 PID 文件（历史上 PID 曾放在 var/<版本>/）→ 指向的进程也要清
+  if [ -n "${DSH_PKG_VAR_ROOT:-}" ] && [ -d "$DSH_PKG_VAR_ROOT" ]; then
+    for _legacy in "$DSH_PKG_VAR_ROOT"/*/"${APP_NAME}.pid"; do
+      [ -f "$_legacy" ] || continue
+      pid="$(cat "$_legacy" 2>/dev/null)"
+      [ -n "$pid" ] || continue
+      if kill -0 "$pid" 2>/dev/null; then
+        found=$((found + 1))
+        if [ "$dry" = "--dry-run" ]; then
+          echo "  旧 PID 文件残留 pid=$pid（$_legacy）"
+        else
+          kill "$pid" 2>/dev/null
+        fi
+      fi
+      [ "$dry" = "--dry-run" ] || rm -f "$_legacy" 2>/dev/null
+    done
+  fi
+  for d in /proc/[0-9]*; do
+    pid="${d#/proc/}"
+    [ "$pid" = "$$" ] && continue
+    [ -r "$d/cmdline" ] || continue
+    cmd="$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)"
+    case "$cmd" in
+      *"$DSH_DIR/apps/cli/lib/bin.js"*|*"DSH_REPAIR_DIR=$DSH_DIR"*) ;;
+      *) continue ;;
+    esac
+    found=$((found + 1))
+    if [ "$dry" = "--dry-run" ]; then
+      echo "  残留 pid=$pid cmd=$(printf '%s' "$cmd" | cut -c1-70)"
+    else
+      kill "$pid" 2>/dev/null
+    fi
+  done
+  if [ "$dry" != "--dry-run" ] && [ "$found" -gt 0 ]; then
+    local i alive
+    for i in 1 2 3 4 5; do
+      alive=0
+      for d in /proc/[0-9]*; do
+        pid="${d#/proc/}"
+        cmd="$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)"
+        case "$cmd" in *"$DSH_DIR/apps/cli/lib/bin.js"*|*"DSH_REPAIR_DIR=$DSH_DIR"*) alive=$((alive + 1)) ;; esac
+      done
+      [ "$alive" -eq 0 ] && break
+      sleep 1
+    done
+    for d in /proc/[0-9]*; do
+      pid="${d#/proc/}"
+      cmd="$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)"
+      case "$cmd" in *"$DSH_DIR/apps/cli/lib/bin.js"*|*"DSH_REPAIR_DIR=$DSH_DIR"*) kill -9 "$pid" 2>/dev/null ;; esac
+    done
+  fi
+  printf '%s' "$found"
 }
 
 get_token() {
@@ -1661,6 +1742,14 @@ cmd_start() {
   # pnpm storeDir 记录自愈：随包记录来自打包机，目标机可能不匹配 → 一切 pnpm 操作失败。
   #   只读几个小文件、无网络；仅在真改动或异常时打印（正常启动零噪音）。
   fix_pnpm_store_dir 2>&1 | grep -v "已一致" || true
+  # 升级/自动更新后常见：PID 文件里没有，但上个实例还占着端口 → 先清掉再起，
+  #   否则下面 start 撞端口失败、DSM 把「启动失败」报给用户（而服务其实会通）。
+  if ! is_running; then
+    _stale="$(kill_stale_instances)"
+    if [ "${_stale:-0}" -gt 0 ] 2>/dev/null; then
+      echo "⚠ 已清理 $_stale 个本套件残留进程（PID 文件缺失但端口被占时会出现）"
+    fi
+  fi
   # dsh 命令软链：让系统里直接敲 `dsh` 调 DSH CLI（优先 /usr/bin——
   # 群晖 SSH 的 PATH 只含 /usr/bin:/bin:/usr/sbin:/sbin，不含 /usr/local/bin）。
   # 放在 is_running 之前：无论 DSH 是否已在运行，start 时都确保软链存在；
@@ -1814,6 +1903,11 @@ cmd_stop() {
     # ★ 卸载流程里这句会以弹窗形式弹给用户，观感像"出错" ✗
     #   卸载钩子会先置 DSH_UNINSTALLING=1 或写 .uninstalling 标记 →
     #   此时说"已卸载"（符合事实 ✓）；普通手动 stop 仍说"DSH 未运行"（便于排障 ✓）。
+    _stale="$(kill_stale_instances)"
+    if [ "${_stale:-0}" -gt 0 ] 2>/dev/null; then
+      echo "已清理 $_stale 个本套件残留进程（PID 文件里没有，但占着端口）"
+      return 0
+    fi
     if [ -n "${DSH_UNINSTALLING:-}" ] || [ -f "${PID_DIR:-/tmp}/.uninstalling" ]; then
       echo "已卸载"
     else
@@ -1830,13 +1924,9 @@ cmd_stop() {
     kill -0 "$pid" 2>/dev/null || break
     sleep 1
   done
-  # 兜底：清理孤儿 DSH web 进程（cwd 匹配本实例）
-  for p in $(pgrep -f "bin.ts web|bin.js web" 2>/dev/null); do
-    cwd=$(readlink /proc/$p/cwd 2>/dev/null)
-    if [ "$cwd" = "$DSH_DIR" ]; then
-      kill -9 "$p" 2>/dev/null
-    fi
-  done
+  # 兜底：清理孤儿 DSH web 进程（DSM 无 pgrep，统一走 /proc 扫描）
+  _stale_killed="$(kill_stale_instances)"
+  [ "${_stale_killed:-0}" -gt 0 ] 2>/dev/null && echo "  已清理 $_stale_killed 个孤儿进程"
   # 清理构建进度占位进程（精简包构建中 stop：占位是 nohup 后台，主进程 kill 不到）
   PH_PID_FILE="$DSH_HOME_PARENT/.build-placeholder.pid"
   if [ -f "$PH_PID_FILE" ]; then

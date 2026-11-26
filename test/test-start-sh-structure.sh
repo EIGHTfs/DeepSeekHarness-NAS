@@ -37,5 +37,19 @@ grep -q "disabling profile plugin" "$SRC" && chk_ok "体检覆盖「被宿主禁
 grep -q '__DSH_FILE_UPLOAD__\[\[:space:\]\]\*=' "$SRC" \
   && chk_ok "体检覆盖「抢注上传钩子」" || chk_bad "体检未覆盖上传钩子抢注"
 
+# ⑧ 升级场景：必须能清理「PID 文件里没有但占着端口」的残留实例
+grep -q 'kill_stale_instances()' "$SRC" && chk_ok "存在残留实例清理函数" || chk_bad "缺残留实例清理函数"
+grep -q '已清理 $_stale' "$SRC" && chk_ok "stop 会清理残留并如实报告" || chk_bad "stop 未处理残留实例"
+if grep -E 'pgrep|pkill' "$SRC" | grep -vE '^[[:space:]]*#' | grep -q .; then
+  chk_bad "代码里仍依赖 pgrep/pkill（DSM 无这些命令）"
+else
+  chk_ok "代码不依赖 pgrep/pkill（仅在注释里说明）"
+fi
+
+# ⑨ PID 文件必须跨版本稳定（放在 var 根，而非 var/<版本>/）
+grep -q 'PID_DIR="${DSH_PKG_VAR_ROOT' "$SRC" \
+  && chk_ok "PID 目录取 var 根（跨版本稳定）" || chk_bad "PID 目录仍随版本变化"
+grep -q 'DSH_PKG_VAR_ROOT' "$SRC" && chk_ok "定义 var 根变量" || chk_bad "缺 var 根变量"
+
 echo "═══ 结果: $PASS 通过 / $FAIL 失败 ═══"
 [ "$FAIL" -eq 0 ]
