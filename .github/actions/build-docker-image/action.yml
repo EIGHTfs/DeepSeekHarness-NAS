@@ -149,6 +149,12 @@ runs:
           if docker cp smoke:/data smoke-cp >/dev/null 2>&1; then
             echo "── 容器内服务日志：" >&2
             tail -60 smoke-cp/*.log 2>/dev/null >&2 || true
+            echo "── 容器内日志全文（含 crash 记录）：" >&2
+            for f in smoke-cp/*.log; do
+              [ -f "$f" ] || continue
+              echo "===== $f =====" >&2
+              tail -80 "$f" >&2 || true
+            done
             echo "── 容器内 /data 内容：" >&2
             find smoke-cp -maxdepth 2 2>/dev/null | head -20 >&2 || true
             echo "── 宿主侧 smoke-data：" >&2
