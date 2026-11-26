@@ -548,9 +548,20 @@ def collect(args, pattern, token):
 
 
 def _dump_json(path, payload):
-    with io.open(path, "w", encoding="utf-8", newline="\n") as handle:
+    """原子写入目录文件：先写临时文件、fsync，再 rename 覆盖。
+
+    直接覆盖写有真实风险：套件中心每小时会来取好几次，如果它正好读到写了一半
+    的文件就会拿到不完整 JSON，进而把该源里的包判定成「套件丢失」。
+    rename 在同一文件系统内是原子的，读方要么看到旧文件、要么看到新文件。
+    """
+    directory = os.path.dirname(path) or "."
+    temp_path = os.path.join(directory, ".%s.tmp" % os.path.basename(path))
+    with io.open(temp_path, "w", encoding="utf-8", newline="\n") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temp_path, path)
 
 
 def write_catalog(best, out_dir):
