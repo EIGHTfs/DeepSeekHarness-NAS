@@ -51,5 +51,13 @@ grep -q 'PID_DIR="${DSH_PKG_VAR_ROOT' "$SRC" \
   && chk_ok "PID 目录取 var 根（跨版本稳定）" || chk_bad "PID 目录仍随版本变化"
 grep -q 'DSH_PKG_VAR_ROOT' "$SRC" && chk_ok "定义 var 根变量" || chk_bad "缺 var 根变量"
 
+# ⑩ 依赖兜底必须同时认 package 与 module（原生二进制缺失报的是 MODULE）
+grep -q 'Cannot find (package|module)' "$SRC" \
+  && chk_ok "依赖缺失检测覆盖 package 与 module" || chk_bad "只认 package，会漏掉原生包缺失"
+grep -q 'rescue_deps' "$SRC" && chk_ok "存在在线补包兜底" || chk_bad "缺在线补包兜底"
+grep -q 'DEP_RESCUE_REGISTRY' "$SRC" && chk_ok "补包 registry 可配" || chk_bad "补包 registry 未定义"
+# 过滤路径型缺失（只保留裸包名，避免把 /abs/path 或 ./rel 当包名去装）
+grep -qF "grep -vE '^(\\.|/|[A-Za-z]:)'" "$SRC" && chk_ok "过滤路径型缺失" || chk_bad "未过滤路径型缺失"
+
 echo "═══ 结果: $PASS 通过 / $FAIL 失败 ═══"
 [ "$FAIL" -eq 0 ]

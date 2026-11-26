@@ -1910,7 +1910,7 @@ DSH_WRAPPER_EOF
   # 直接把日志里的致命原因抛出来，不让用户自己翻大日志
   # （旧行为只有一句"请查看日志"，193 那次的真因是 credentials 权限，藏在几千行之后）
   local hit
-  hit=$(grep -m1 -E "startup failed|required plugin did not activate|readable beyond its owner|Cannot find package|EADDRINUSE" "$LOG_FILE" 2>/dev/null || true)
+  hit=$(grep -m1 -E "startup failed|required plugin did not activate|readable beyond its owner|Cannot find (package|module)|EADDRINUSE" "$LOG_FILE" 2>/dev/null || true)
   if [ -n "$hit" ]; then
     echo "  ── 检测到的根因 ──"
     echo "  $hit"
@@ -2069,8 +2069,15 @@ resolve_missing_spec() {
 # 从最近启动日志提取 "Cannot find package 'X'" 的包名（去重）
 missing_from_log() {
   [ -f "$LOG_FILE" ] || return 0
-  grep -oE "Cannot find package '[^']+'" "$LOG_FILE" 2>/dev/null \
-    | sed "s/Cannot find package '//; s/'\$//" | sort -u
+  # 同时认 "Cannot find package" 与 "Cannot find module"：
+  #   原生二进制缺失报的是 MODULE（实测 node-addon-require-builtin-linux-arm64-gnu 缺失
+  #   时日志为 Cannot find module '...'），只认 package 会漏掉整类原生包缺失、导致
+  #   「依赖兜底」永不触发（armv8 坏包装上去就只能启动失败，无法自愈）。
+  grep -oE "Cannot find (package|module) '[^']+'" "$LOG_FILE" 2>/dev/null \
+    | sed -E "s/Cannot find (package|module) '//; s/'\$//" \
+    | grep -vE '^(\.|/|[A-Za-z]:)' \
+    | grep -vE '\.\.' \
+    | sort -u
 }
 
 # 列出某棵树里所有悬空软链（绝对路径，每行一条）
@@ -2273,7 +2280,7 @@ cmd_fix_deps() {
   local pkgs
   pkgs="$(missing_from_log)"
   if [ -z "$pkgs" ]; then
-    echo "  最近日志未发现 'Cannot find package' 记录（$LOG_FILE）"
+    echo "  最近日志未发现 'Cannot find package/module' 记录（$LOG_FILE）"
     echo "  提示: 先 start 一次让缺包暴露；或指定要补的包:"
     echo "        DSH_RESCUE_PKGS='foo@1.2.3 @scope/bar' $0 fix-deps"
   fi
