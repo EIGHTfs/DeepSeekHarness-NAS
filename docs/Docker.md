@@ -59,7 +59,22 @@ docker compose -f build/docker/docker-compose.example.yml up -d
 | 数据目录必须本地盘 | CIFS/SMB 共享是 noexec + chmod EPERM，`pnpm` 装插件必失败 |
 | DSM 的 ACL 在容器内不可见 | 容器只看 Linux 权限位；两套权限模型要各自设对 |
 
-## 6. 已知限制
+## 6. 实测记录（本机真容器验证）
+
+| 项 | 结果 |
+|---|---|
+| 镜像构建 | `debian:12-slim` + `target/`（821 MB 上下文），构建通过 |
+| 启动 | `PUID=1000 PGID=1000` 降权成功；`DSH_HOME=/data/current/.dsh`；日志与 PID 落在 var 根 |
+| 别名 | `/workspace/ws-a → /volume1/docker-test/ws-a` 建链成功；未挂载的项按预期跳过并提示 |
+| 访问 | 首页 302（门户跳转）；`start.sh status` rc=0；`HEALTHCHECK` 转为 `healthy` |
+| 属主 | 宿主侧生成文件均为 `1000:1000`（不再出现 root 文件） |
+| 重启 | `docker restart` 后 302、同一 `DSH_HOME`、别名仍在（`PKG_VERSION=current` 生效） |
+
+两个在容器里才暴露的问题（已修）：① `/workspace` 由 root 预建并 chown，否则降权后连 `mkdir` 都不允许、别名静默失败；② 非 root 时 `/usr/bin`、`/usr/local/bin` 都不可写，wrapper 写入必须「失败即返回非 0」才能落到兜底路径，且错误要静默（否则每次启动刷两条 Permission denied）。
+
+容器内没有 `dsh` 命令在 PATH 上（wrapper 只能落到 `$HOME/.local/bin`，而 `HOME` 指工作区根）；需要 CLI 时直接调 `/opt/dsh/bin/dsh`。
+
+## 7. 已知限制
 
 | 限制 | 说明 |
 |---|---|
@@ -68,7 +83,7 @@ docker compose -f build/docker/docker-compose.example.yml up -d
 | 反代与门户 | 容器内保留套件那层（token 门户 / cookie / 入口收敛）；要 HTTPS 就在宿主再加一层 Caddy/Traefik 指向 3080 |
 | 公网入口 | 经隧道/公网进来时来源非私网，套件那层「局域网硬闸」会拦，需要放行开关（尚未实现） |
 
-## 7. 升级
+## 8. 升级
 
 ```bash
 docker compose pull && docker compose up -d
@@ -76,7 +91,7 @@ docker compose pull && docker compose up -d
 
 `PKG_VERSION=current` 让数据目录不变；旧镜像的容器数据仍在同一 `/data` 下，无需迁移脚本。
 
-## 8. 排错
+## 9. 排错
 
 | 现象 | 检查 |
 |---|---|

@@ -28,9 +28,12 @@ log() { echo "[entrypoint] $*"; }
 #   为什么必须降权：容器内以 root 写文件会在宿主留下 root 属主，DSM 上普通用户既改不动也删不掉；
 #   而 workspace 里产出的是用户的工程文件，必须与宿主属主一致。
 if [ "$(id -u)" = "0" ] && [ -n "${PUID:-}" ] && [ -n "${PGID:-}" ]; then
-  log "以 PUID=${PUID} PGID=${PGID} 运行（数据目录 $DATA_ROOT 会 chown 对齐）"
+  log "以 PUID=${PUID} PGID=${PGID} 运行（数据目录与别名根会 chown 对齐）"
   mkdir -p "$DATA_ROOT"
   chown -R "${PUID}:${PGID}" "$DATA_ROOT" 2>/dev/null || log "⚠ 数据目录 chown 失败（挂载可能是只读或非本地盘）"
+  # 别名根必须由 root 先建：/ 归 root，降权后连 mkdir 都不允许（实测别名因此静默失败）
+  mkdir -p "$ALIAS_ROOT" 2>/dev/null && chown "${PUID}:${PGID}" "$ALIAS_ROOT" 2>/dev/null \
+    || log "⚠ 别名根 $ALIAS_ROOT 创建失败（别名会不可用，同路径挂载不受影响）"
   exec setpriv --reuid "$PUID" --regid "$PGID" --clear-groups "$0" "$@"
 fi
 
@@ -53,16 +56,21 @@ if [ -f "$MANIFEST" ] && [ -x "$DSH_ROOT/bin/node" ]; then
       try { stat = fs.statSync(target); } catch (error) { console.log("MISS " + name + " " + target + "（宿主目录没有挂进容器）"); continue; }
       if (!stat.isDirectory()) { console.log("MISS " + name + " " + target + "（不是目录）"); continue; }
       const alias = require("path").join(aliasRoot, name);
-      try { fs.rmSync(alias, { force: true, recursive: false }); } catch (error) {}
-      fs.symlinkSync(target, alias);
-      console.log("LINK " + name + " " + target);
+      try {
+        try { fs.rmSync(alias, { force: true, recursive: false }); } catch (error) {}
+        fs.symlinkSync(target, alias);
+        console.log("LINK " + name + " " + target);
+      } catch (error) {
+        console.log("FAIL " + name + " 建链失败：" + error.message);
+      }
     }
-  ' "$MANIFEST" "$ALIAS_ROOT" 2>/dev/null | while read -r kind rest; do
+  ' "$MANIFEST" "$ALIAS_ROOT" | while read -r kind rest; do
     case "$kind" in
       LINK) log "工作区别名：$ALIAS_ROOT/${rest%% *} → ${rest#* }" ;;
       MISS) log "⚠ 跳过工作区 ${rest}" ;;
       SKIP) log "⚠ 跳过工作区 ${rest}" ;;
       BAD)  log "⚠ 挂载清单无法解析：${rest}" ;;
+      FAIL) log "⚠ 工作区别名失败 ${rest}" ;;
     esac
   done
 else

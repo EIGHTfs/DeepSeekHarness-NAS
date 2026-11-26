@@ -1800,7 +1800,9 @@ cmd_start() {
     #   「exec 自己」的 8 行 wrapper → dsh 命令无限递归、退出码 0 但零输出（实测踩到）。
     #   删掉（含软链本身）再写，目标就是独立实文件，不会波及真身。
     rm -f "$target" 2>/dev/null || true
-    cat > "$target" <<DSH_WRAPPER_EOF
+    # 写失败必须返回非 0，否则调用方的 fallback 链会被短路：实测容器里（非 root）
+    #   /usr/bin 不可写，cat 失败但函数返回 0 → 不再尝试 $HOME/.local/bin → dsh 命令整个缺失。
+    if ! { cat > "$target" <<DSH_WRAPPER_EOF
 #!/bin/sh
 # DSH CLI wrapper —— 由 start.sh 生成，请勿手改：
 # 注入本实例的 DSH_HOME，避免 dsh 落到 \$HOME/.dsh 导致插件装错位置。
@@ -1810,7 +1812,12 @@ if [ -z "\${DSH_HOME:-}" ] && [ -d "$DSH_HOME_DIR" ]; then
 fi
 exec "$real" "\$@"
 DSH_WRAPPER_EOF
+    } 2>/dev/null
+    then
+      return 1
+    fi
     chmod 0755 "$target" 2>/dev/null || true
+    [ -x "$target" ] || return 1
   }
   if [ -f "$DSH_DIR/bin/dsh" ]; then
     if ! install_dsh_wrapper /usr/bin/dsh "$DSH_DIR/bin/dsh"; then
