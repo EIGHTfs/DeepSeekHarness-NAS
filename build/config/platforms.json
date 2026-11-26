@@ -1,0 +1,87 @@
+{
+  "_note": [
+    "CI 平台注册表：新增产物平台只加一条，build.yml 不改（matrix 由本文件展开）。",
+    "watch：该平台的输入路径（glob）。git diff 命中任一即视为「有变化、需要构建」。",
+    "needs_target：是否需要公共 target（build-common 的产物）。false 表示纯脚本类产物。",
+    "build：打包命令（在仓库根执行）。artifacts：产物 glob，供发布步骤汇总。",
+    "runner：按架构指定 runner；不写则用 ubuntu-24.04（原生 arm64 用 ubuntu-24.04-arm）。",
+    "publish：release 表示汇总进 Release；registry 表示推镜像仓库（需要 packages: write）。"
+  ],
+  "platforms": [
+    {
+      "name": "spk",
+      "desc": "群晖 SPK 套件",
+      "watch": [
+        "build/spk/**",
+        "build/pkgsrc/**",
+        "build/config/build-config.yaml",
+        "build/build-lib.sh",
+        "scripts/lib/common.sh"
+      ],
+      "needs_target": true,
+      "build": "./build/spk/pack-spk.sh",
+      "artifacts": [
+        "build/staging/*.spk"
+      ],
+      "publish": "release",
+      "runner": {
+        "x86_64": "ubuntu-24.04",
+        "arm64": "ubuntu-24.04-arm"
+      }
+    },
+    {
+      "name": "fpk",
+      "desc": "飞牛 fnOS FPK 应用",
+      "watch": [
+        "build/fpk/**",
+        "build/pkgsrc/**",
+        "build/config/build-config.yaml",
+        "build/build-lib.sh",
+        "scripts/lib/common.sh"
+      ],
+      "needs_target": true,
+      "build": "./build/fpk/pack-fpk.sh",
+      "artifacts": [
+        "build/staging/*.fpk"
+      ],
+      "publish": "release",
+      "runner": {
+        "x86_64": "ubuntu-24.04",
+        "arm64": "ubuntu-24.04-arm"
+      }
+    },
+    {
+      "name": "docker",
+      "desc": "容器镜像（推 GHCR）",
+      "watch": [
+        "build/docker/**",
+        "build/pkgsrc/**",
+        "build/config/build-config.yaml",
+        ".github/actions/build-docker-image/**",
+        ".github/workflows/docker.yml"
+      ],
+      "needs_target": true,
+      "build": "bash build/docker/build-image.sh",
+      "artifacts": [],
+      "publish": "registry",
+      "runner": {
+        "x86_64": "ubuntu-24.04",
+        "arm64": "ubuntu-24.04-arm"
+      }
+    }
+  ],
+  "target": {
+    "_note": "影响公共 target 内容的路径（与 build-target 的缓存 key 保持一致）。命中则 target 缓存会失效、必须重新构建；未命中则可直接复用缓存。",
+    "watch": [
+      "build/build-common.sh",
+      "build/build-lib.sh",
+      "build/prune-target.sh",
+      "build/tools/prune_common.py",
+      "build/config/build-prune-whitelist.json",
+      "build/config/build-config.yaml",
+      "scripts/lib/common.sh",
+      ".github/actions/build-target/action.yml",
+      ".github/actions/pack-with-target/action.yml"
+    ]
+  }
+}

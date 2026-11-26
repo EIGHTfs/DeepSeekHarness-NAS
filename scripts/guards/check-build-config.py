@@ -145,6 +145,49 @@ def check_whitelist_arch_neutral():
     return problems
 
 
+def check_platform_registry():
+    """CI 平台注册表必须自洽：每条有 build 命令、runner、产物声明；name 唯一。
+
+    为什么需要：build.yml 的 matrix 完全由 build/config/platforms.json 展开 ——
+    注册表写错（漏 build、重名、产物 glob 拼错）会表现为「CI 里某个平台静默不出包」，
+    而 workflow 本身语法完全合法，很难看出问题。
+    """
+    path = os.path.join(ROOT, "build", "config", "platforms.json")
+    if not os.path.isfile(path):
+        return []
+    import json
+    problems = []
+    with open(path, encoding="utf-8") as handle:
+        data = json.load(handle)
+    platforms = data.get("platforms") or []
+    if not platforms:
+        return ["build/config/platforms.json 里没有任何平台"]
+    seen = set()
+    for entry in platforms:
+        name = entry.get("name") or ""
+        if not name:
+            problems.append("build/config/platforms.json 有一条平台缺少 name")
+            continue
+        if name in seen:
+            problems.append("build/config/platforms.json 平台重名：%s" % name)
+        seen.add(name)
+        if not entry.get("build"):
+            problems.append("平台 %s 缺少 build 命令" % name)
+        if not (entry.get("runner") or {}).get("x86_64"):
+            problems.append("平台 %s 缺少 runner.x86_64" % name)
+        if entry.get("publish") not in ("release", "registry"):
+            problems.append("平台 %s 的 publish 必须是 release 或 registry（当前 %r）"
+                            % (name, entry.get("publish")))
+        if entry.get("publish") == "release" and not (entry.get("artifacts") or []):
+            problems.append("平台 %s 是 release 型但没有声明 artifacts" % name)
+        if not (entry.get("watch") or []):
+            problems.append("平台 %s 没有 watch 路径（变化检测会永远判为未变化）" % name)
+    # target.watch 必须存在，否则「target 是否重建」无法判定
+    if not ((data.get("target") or {}).get("watch") or []):
+        problems.append("build/config/platforms.json 缺少 target.watch")
+    return problems
+
+
 def check_excludes_arch_neutral():
     path = os.path.join(ROOT, "build", "config", "build-excludes.json")
     if not os.path.isfile(path):
@@ -178,6 +221,7 @@ def main(argv=None):
 
     bad, used_yaml = _check(args.file)
     bad = bad + check_excludes_arch_neutral()
+    bad = bad + check_platform_registry()
     bad = bad + check_whitelist_arch_neutral()
     if bad:
         sys.stderr.write("✗ build-config 守卫失败（%d 项）：\n" % len(bad))

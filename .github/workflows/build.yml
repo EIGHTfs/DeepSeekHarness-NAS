@@ -1,30 +1,52 @@
-name: Build SPK + FPK (DeepSeekHarness-NAS)
+# build.yml —— 公共 target + 平台产物（注册表驱动、按变化动态调度）
+#
+# 设计要点（为什么要这么排）：
+#   ① **平台清单来自 build/config/platforms.json**：新增产物平台（spk/fpk/docker 之外的）
+#      只需在注册表里加一条 + 写一个可执行打包命令，本文件不用改 —— matrix 由
+#      discover 输出的 JSON 展开。
+#   ② **动态执行**：每个平台声明 watch 路径，discover 用 git diff 判定「所属部分有没有变化」；
+#      没变化的平台在 pack 里整段跳过（step 级 if 引用 matrix —— job 级 if 不支持 matrix，
+#      这一点实测踩过 422）。
+#   ③ **只改启动脚本不重建公共包**：start.sh 模板/打包器都不在 target 的缓存 key 里，
+#      所以这类改动会命中 target 缓存、只重打产物（日志会明确写「复用缓存」）。
+#   ④ **dry_run**：只跑 discover 并把计划写进 Summary，不执行任何构建 —— 用来验证判定逻辑，
+#      一分钟内跑完。
+#
+# 触发：
+#   · push tag v*        → 全量（发版语义）
+#   · workflow_dispatch  → 按 diff 判定；可 force_all 强制全量、可 dry_run 只看计划
+#   · workflow_call      → 供 rebuild-many.yml 批量调用
+name: Build (target + platforms)
 
 on:
-  # 已删除「每日 04:00 UTC」定时触发。
-  #   原因：看门狗 watch-official.yml 每 30 分钟比对官方 tag，且**成功后暂停 6 小时**；
-  #   而每日 cron 是【无条件】构建 → 若上次成功在 1 小时前，它照样跑 → 直接破坏 6 小时规则。
-  #   看门狗本身就是 48 次/天的兜底，cron 的兜底价值已归零；且同一 tag 重建只会浪费 20 分钟。
-  #   现在触发只剩：① 看门狗自动对齐 ② Actions 页手动 workflow_dispatch ③ 推送 v* tag。
-  workflow_dispatch:          # 手动触发（Actions 页点按钮）
+  workflow_dispatch:
     inputs:
       dsh_tag:
-        description: '指定官方 tag（如 dsh-v<版本>）；留空 = 官方最新。用于补全历史版本的 FPK/SPK'
+        description: '指定官方 tag（如 dsh-v<版本>）；留空 = 官方最新'
         required: false
         default: ''
       arch:
-        description: '目标架构：x86_64（默认）或 arm64（→ SPK arch=armv8 / FPK platform=arm）'
+        description: '目标架构'
         required: false
         type: choice
         options: ['x86_64', 'arm64']
         default: 'x86_64'
+      targets:
+        description: '只构建这些平台（逗号分隔；留空 = 全部；如 spk,fpk）'
+        required: false
+        default: ''
+      force_all:
+        description: '强制全部构建（忽略变化检测）'
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        description: '只输出构建计划，不执行任何构建'
+        required: false
+        type: boolean
+        default: false
   push:
-    tags: ['v*']              # 打 v* tag 自动触发（并发布 Release）
-
-  # 供批量工作流（rebuild-many.yml）以 matrix 逐组合调用。
-  #   为什么需要：批量重建多个官方 tag 时，一个 tag 一个 job 最省事；
-  #   若改成「一个 job 内循环多个 tag」，每轮都要重置工作区，既慢又容易残留。
-  #   注意：workflow_call 的 inputs 只能声明为 string/boolean/number（无 choice）。
+    tags: ['v*']
   workflow_call:
     inputs:
       dsh_tag:
@@ -37,267 +59,367 @@ on:
         required: false
         type: string
         default: 'x86_64'
+      targets:
+        description: '只构建这些平台（逗号分隔；留空 = 全部）'
+        required: false
+        type: string
+        default: ''
+      force_all:
+        description: '强制全部构建'
+        required: false
+        type: boolean
+        default: false
+      dry_run:
+        description: '只输出计划'
+        required: false
+        type: boolean
+        default: false
 
-# 创建/更新 Release 需要写权限
 permissions:
-  contents: write
-  # 方案 B：构建失败时自动学习缺失依赖并【入库】，随后 dispatch 一次重建。
-  # dispatch workflow 需要 actions: write。
-  actions: write
-# 同一份构建不重复跑 —— 新运行主动停掉还在跑的同一个。
-# 但「同一个」的粒度必须含 tag：不同官方 tag 是不同产物，曾经因为 group 只有 arch，
-#   批量重建多个 tag 时后来的直接把前面的取消掉（实测：连发两个 tag，只剩最后一个）。
-# 故 group 里加入 tag（dispatch 用 inputs.dsh_tag；push/tag 触发用 ref_name 兜底）。
+  contents: write     # 发 Release
+  packages: write     # 推 GHCR（docker 平台）
+  actions: write      # 清理/查询 workflow 记录
+
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.arch || 'x86_64' }}-${{ inputs.dsh_tag || github.ref_name }}
   cancel-in-progress: true
 
-
-
-# ── 构建开关（仓库变量 vars.* 控制；未设置均默认构建）───────────────────────
-#   BUILD_SPK = 'false'   关闭 SPK 构建（不设置或 'true' = 构建）
-#   BUILD_FPK = 'false'   关闭 FPK 构建
-#   PRUNE_OLD_ASSETS = 'false'  关闭「清理 Release 里改名后残留的旧产物资产」
-#       （不设置或 'true' = 清理，即**默认启用**）。
-#       背景：action-gh-release 只替换同名资产，产物改名后旧名字会残留（实测同一 Release
-#       挂过新旧两个 SPK）。清理规则见 scripts/prune-release-assets.py 头部注释：
-#       只清理「本次确实产出过的类别」，未产出的类别一律不动（BUILD_FPK=false 时不会误删 FPK）。
-#   FPK 链路：**源码构建 + npm 链路一律都构建**
-#       原先由 vars.FPK_MODE（both/source/npm）选择，现取消该参数：
-#       两条链路产物用途不同（源码版验证完整链路；npm 版体积小、装得快），
-#       单链路开关只会让 Release 缺项、文案出现"跳过"，故固定都构建。
-#       要少跑一条链路请直接改本文件（临时排障），不要恢复成仓库变量开关。
-#   设置方式：Settings → Secrets and variables → Actions → Variables；
-#   也可用 API：PUT /repos/{owner}/{repo}/actions/variables/{NAME}
+env:
+  REGISTRY: ghcr.io
+  IMAGE: eightfs/deepseekharness-nas
 
 jobs:
-  # ── 群晖 SPK：源码链路（需完整 pnpm install + build + 裁剪）──
-  build-target:
-    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
-
+  # ── 计划：解析平台清单 + 变化检测 ───────────────────────────────────────────
+  plan-platforms:
+    name: 计划（平台/变化检测）
+    runs-on: ubuntu-24.04
+    outputs:
+      platforms: ${{ steps.plan.outputs.platforms }}
+      need_target: ${{ steps.plan.outputs.need_target }}
+      target_changed: ${{ steps.plan.outputs.target_changed }}
+      has_registry: ${{ steps.plan.outputs.has_registry }}
+      arch: ${{ steps.meta.outputs.arch }}
+      dsh_tag: ${{ steps.meta.outputs.dsh_tag }}
+      dry_run: ${{ steps.meta.outputs.dry_run }}
     steps:
       - uses: actions/checkout@v5
-
-      - name: 守卫套件（README 覆盖度 / 公共函数唯一性 / 破坏性操作 / 命名 / 构建配置 / 打包不变量）
-        run: |
-          set -e
-          python3 scripts/guards/check-workflow-yaml.py
-          python3 scripts/guards/check-readme-coverage.py
-          python3 scripts/guards/check-common-functions.py
-          python3 scripts/guards/check-destructive-ops.py
-          python3 scripts/guards/check-build-naming.py
-          python3 scripts/guards/check-build-config.py
-          python3 scripts/guards/check-packaging-invariants.py
-          # 平台边界：公共构建内核里不许出现平台专有词（否则无法复用到新平台）
-          python3 scripts/guards/check-platform-boundary.py
-          # 物料路径：脚本里引用的 config/ pkgsrc/ tools/ 等必须真实存在（搬家后最易漏）
-          python3 scripts/guards/check-path-references.py
-          # 占位符：模板里的 __X__ 必须有注入点（漏加替换会把字面量漏进最终产物）
-          python3 scripts/guards/check-start-placeholders.py
-          # 学习器回归（dry-run，夹具见 test/fixtures/learner/）
-          bash test/learner-dryrun.test.sh
-          # Release 资产清理回归（架构维度，见 test/prune-release-assets.test.sh）
-          bash test/prune-release-assets.test.sh
-          bash test/safe-rm-rf.test.sh
-
-      # 唯一构建：install + build + 裁剪一次做完，target 作为 artifact 传给各打包 job
-      - uses: ./.github/actions/build-target
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          dsh_tag: ${{ inputs.dsh_tag }}
-          arch: ${{ inputs.arch }}
+          fetch-depth: 0      # 变化检测要 diff，必须完整历史
 
-      # 产物架构自检（出包前最后一道闸）
-      # 为什么必须有：曾出现 x86_64 安装包里塞进 arm64 的 bin/node 与 linux-arm64 原生模块
-      #   —— 起因是两架构并行构建共用了不含架构的 target 缓存。这类产物能装、文件齐、
-      #   结构对比与 sha256 全部正常，要等套件起不来或运行期第一次走 flock 才暴露。
-      #   这里用 ELF 头把 bin/node 的 e_machine 钉死，并核对 native 平台目录是否为目标架构。
-      # 路径依据（不是推断）：build-target/action.yml 第 159-160 行明确校验 `build/master-build/build/target`
-      #   存在且是唯一的 target 位置；`find` 那版写法在 CI 上没命中（日志已归档拿不到原因），
-      #   所以改回这个被 action 自己断言过的固定路径，并先打印目录内容 —— 万一再失败，
-      #   日志能直接看出「路径不对」还是「target 里真没有 bin/node」。
-      - name: 校验产物架构与目标一致
+      - name: 解析输入
+        id: meta
         shell: bash
         run: |
-          set -e
-          target_dir="build/master-build/build/target"
-          echo "目标架构: ${{ inputs.arch }}"
-          echo "target 目录: $target_dir"
-          if [ ! -d "$target_dir" ]; then
-            echo "✗ target 目录不存在，实测 build/master-build 结构如下：" >&2
-            ls -la build/master-build 2>/dev/null >&2 || true
-            find build/master-build -maxdepth 3 -type d -name target 2>/dev/null >&2 || true
-            exit 1
+          set -euo pipefail
+          echo "arch=${{ inputs.arch || 'x86_64' }}" >> "$GITHUB_OUTPUT"
+          echo "dsh_tag=${{ inputs.dsh_tag }}" >> "$GITHUB_OUTPUT"
+          # push tag 与 force_all 都按「全量」处理；dry_run 透传
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "dry_run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "dry_run=${{ inputs.dry_run || 'false' }}" >> "$GITHUB_OUTPUT"
           fi
-          echo "—— bin 目录 ——"
-          ls -la "$target_dir/bin" 2>/dev/null || echo "（无 bin 目录）"
-          echo "—— native 平台目录 ——"
-          ls -1 "$target_dir/native/system/packages" 2>/dev/null || echo "（无 native/system/packages）"
-          python3 scripts/guards/check-target-arch.py "$target_dir" --arch "${{ inputs.arch }}"
 
-      # ── 方案 B：构建失败时自动学习缺失依赖并入库 ──────────────
-      # 为什么需要：上游新增构建期脚本可能 import 被裁剪剥掉的根 devDep（实测某 alpha 版的
-      #   scripts/primary-runtime/prune-python-tests.ts → papaparse → TS2307 构建挂掉），
-      #   而学习器此前只靠人工调用。这里接上闭环：学 → 入库 → 自动重建一次。
-      # 边界：只从【真实失败日志】学（--log 模式，抓 Cannot find module 'X'），不猜；
-      #   白名单无变化就绝不提交（说明这次失败不是缺包导致）→ 不会造成重建死循环。
-      - name: 自动学习缺失依赖并入库（方案 B）
-        id: selfheal
-        if: failure()
+      - name: 计算变化检测基准
+        id: base
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=""; head="${{ github.sha }}"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            # push：与推送前对比；新建 tag/branch 时 before 是全零 → 交给脚本走 no-baseline
+            before="${{ github.event.before }}"
+            case "$before" in
+              ''|0000000000000000000000000000000000000000) base="" ;;
+              *) base="$before" ;;
+            esac
+          else
+            # 手动/被调用：与「上一次成功的本 workflow」对比，找不到就空（脚本会保守全量）
+            base="$(gh run list --workflow="${{ github.workflow }}" --status=success \
+                      --limit=1 --json headSha --jq '.[0].headSha' 2>/dev/null || true)"
+            # 上一次成功的可能就是当前 sha（重跑场景）→ 用它的前一个提交，避免「与自己比 = 无变化」
+            if [ "$base" = "$head" ]; then
+              base="$(git rev-parse "${head}~1" 2>/dev/null || true)"
+            fi
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "基准: ${base:-（无）} → $head"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 本步会 git commit：显式关掉 lefthook 提交钩子（构建期不需要跑钩子；
-          # 钩子找不到可执行文件时会继续向上兜底扫描，失效路径下可能拖住整步）
-          LEFTHOOK: '0'
-        run: |
-          set -uo pipefail
-          LOGS=$(ls -1t build/master-build/*.log assets/pnpm-install.log 2>/dev/null | head -3 || true)
-          if [ -z "${LOGS:-}" ]; then
-            echo "… 未找到构建日志（build/master-build/*.log、assets/pnpm-install.log），跳过自动学习"
-            exit 0
-          fi
-          echo "… 从失败日志自动学习（$LOGS）…"
-          for L in $LOGS; do
-            bash scripts/learn-prune-whitelist.sh --log "$L" --apply || true
-          done
-          if git diff --quiet -- build/config/build-prune-whitelist.json; then
-            echo "… 白名单无变化（本次失败不是缺包导致）→ 不提交、不重建"
-            exit 0
-          fi
-          git config user.name EIGHTfs
-          git config user.email EIGHTfs@users.noreply.github.com
-          git add build/config/build-prune-whitelist.json
-          git commit -q -m "chore(prune): CI 自动学习并入构建必需包（方案 B）"
-          git --no-pager diff --stat HEAD~1 -- build/config/build-prune-whitelist.json || true
-          # ★ 先写输出再推送（实测教训）：原顺序是 push 在前，一旦 push 被拒
-          #   （并发提交很正常：人手推的修复可能刚落到 main），本步被标 failure →
-          #   changed 从未写出 → "入库后自动重建"那步的 if 不成立 → 直接 skipped，
-          #   学到的白名单条目随被拒的提交一起丢失。
-          echo "changed=yes" >> "$GITHUB_OUTPUT"
-          # push 抗竞争：先把远端新提交 rebase 进来再推；失败也不阻断（输出已写出，
-          # 重建会用远端最新 main —— 那里可能已经含有人手推的同名修复）。
-          git fetch -q origin main || true
-          git rebase -q origin/main || { git rebase --abort 2>/dev/null || true; }
-          git push origin HEAD:main || echo "  ⚠ push 被拒（远端已有新提交）→ 不阻断；重建将使用远端最新 main"
-          echo "… 已入库（或远端已有更新），下一步自动重建一次 …"
-          exit 0
 
-      - name: 入库后自动重建一次
-        # ★ 必须用 always()（实测教训）：只用 failure() 时，一旦上一步自身被判失败，
-        #   这一步会被 skipped（实测 #84：自学步 failure → 重建步 skipped → 白名单条目丢失）。
-        #   always() 保证"只要自愈确实改了白名单"就一定重建。
-        if: always() && steps.selfheal.outputs.changed == 'yes'
+      - name: 生成计划（ci-plan.py）
+        id: plan
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -e
-          curl -sS -o /dev/null -w '  触发重建 HTTP %{http_code}\n' -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/dispatches" \
-            -d '{"ref":"main"}'
+          set -euo pipefail
+          force_flag=""
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.force_all || 'false' }}" = "true" ]; then
+            force_flag="--force-all"
+          fi
+          python3 scripts/ci-plan.py \
+            --arch "${{ steps.meta.outputs.arch }}" \
+            --targets "${{ inputs.targets }}" \
+            --base "${{ steps.base.outputs.base }}" \
+            --head "${{ steps.base.outputs.head }}" \
+            $force_flag --format text | tee /tmp/plan.txt
+          json="$(python3 scripts/ci-plan.py \
+            --arch "${{ steps.meta.outputs.arch }}" \
+            --targets "${{ inputs.targets }}" \
+            --base "${{ steps.base.outputs.base }}" \
+            --head "${{ steps.base.outputs.head }}" \
+            $force_flag --format json)"
+          echo "platforms=$(printf '%s' "$json" | python3 -c 'import json,sys;print(json.dumps(json.load(sys.stdin)["platforms"],ensure_ascii=False))')" >> "$GITHUB_OUTPUT"
+          echo "need_target=$(printf '%s' "$json" | python3 -c 'import json,sys;print(str(json.load(sys.stdin)["need_target"]).lower())')" >> "$GITHUB_OUTPUT"
+          echo "target_changed=$(printf '%s' "$json" | python3 -c 'import json,sys;print(str(json.load(sys.stdin)["target_changed"]).lower())')" >> "$GITHUB_OUTPUT"
+          echo "has_registry=$(printf '%s' "$json" | python3 -c 'import json,sys;print(str(any(p["changed"] and p["publish"]=="registry" for p in json.load(sys.stdin)["platforms"])).lower())')" >> "$GITHUB_OUTPUT"
 
-  # ── 打包：SPK · 源码链路（复用 build-target 的 artifact，不重复构建）──────────
-  pack-and-release:
-    needs: [build-target]
+      - name: 写入 Summary（计划表）
+        shell: bash
+        run: |
+          {
+            echo "## 构建计划（架构 ${{ steps.meta.outputs.arch }}）"
+            echo ''
+            if [ "${{ steps.meta.outputs.dry_run }}" = "true" ]; then
+              echo '> **DRY-RUN**：只输出计划，未执行任何构建。'
+              echo ''
+            fi
+            echo '```'
+            cat /tmp/plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ── 公共 target（缓存命中则跳过编译，约 2 分钟）─────────────────────────────
+  build-target:
+    name: 公共 target（${{ needs.plan-platforms.outputs.arch }}）
+    needs: plan-platforms
+    if: needs.plan-platforms.outputs.need_target == 'true' && needs.plan-platforms.outputs.dry_run != 'true'
+    runs-on: ${{ needs.plan-platforms.outputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: 唯一构建（预编译 + 裁剪）
+        uses: ./.github/actions/build-target
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          dsh_tag: ${{ needs.plan-platforms.outputs.dsh_tag }}
+          arch: ${{ needs.plan-platforms.outputs.arch }}
+          artifact-name: build-target-${{ needs.plan-platforms.outputs.arch }}
+
+  # ── 平台产物（matrix 来自注册表；未变化的平台整段跳过）──────────────────────
+  pack:
+    name: ${{ matrix.name }}
+    needs: [plan-platforms, build-target]
+    # build-target 可能因「无需 target」而 skipped —— 只要 discover 成功就继续
+    if: always() && needs.plan-platforms.result == 'success' && needs.plan-platforms.outputs.dry_run != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan-platforms.outputs.platforms) }}
+    runs-on: ${{ matrix.runner }}
     env:
-      ARCH: ${{ inputs.arch }}
-    # 构建失败时不跑（口径：宁失败不发缺项；artifact 缺失时本就无法打包）
-    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
-    permissions:
-      contents: write
-
+      ARCH: ${{ needs.plan-platforms.outputs.arch }}
+      PLATFORM_NAME: ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v5
 
-      # ── 打包（复用 build-target 的 artifact，不重复构建）──
-      - uses: ./.github/actions/pack-with-target
+      - name: 下载并解包公共 target
+        if: matrix.changed && matrix.needs_target
+        uses: ./.github/actions/pack-with-target
+        with:
+          artifact-name: build-target-${{ needs.plan-platforms.outputs.arch }}
 
-      - name: 打 SPK（源码链路）
-        run: ./build/spk/pack-spk.sh
-
-      - name: 打 FPK（源码链路）
-        run: ./build/fpk/pack-fpk.sh
-
-      - name: 汇总产物到 dist-main（供后续检查与发布）
+      # ── 发布型平台（spk/fpk 等）：执行注册表里声明的打包命令 ──
+      - name: 打包（${{ matrix.name }}）
+        if: matrix.changed && matrix.publish == 'release'
+        shell: bash
         run: |
-          set -e
-          # dist-npm 仅为兼容后续检查步骤而建空目录（FPK npm 链路已留档、CI 不执行）
-          mkdir -p dist-main dist-npm
-          cp -a build/staging/*.spk build/staging/*.fpk dist-main/ 2>/dev/null || true
-          ls -lh dist-main || true
+          set -euo pipefail
+          echo "执行: ${{ matrix.build }}"
+          ${{ matrix.build }}
 
-      - name: 出货级验包（载荷检查；不合格即失败）
+      - name: 出货级验包（载荷 + 原生实体）
+        if: matrix.changed && matrix.publish == 'release'
+        shell: bash
         run: |
-          set -e
-          FPK="$(ls -t build/staging/*.fpk 2>/dev/null | head -1)"
-          if [ -z "$FPK" ]; then echo "✗ 没有产出 fpk"; exit 1; fi
-          echo "验包: $FPK"
-          python3 scripts/guards/check-fpk-payload.py "$FPK" \
-            --expect-pkg commander --expect-pkg js-yaml --expect-pkg @deepseek-ai/cordis
-
-          # 原生实体闸：白名单点名的「本架构必需原生包」必须在载荷里有实体。
-          #   为什么必须有：armv8 包曾出现"只有悬空软链、没有 .node 二进制"，
-          #   按路径条目数做的检查完全看不出来，装上去 DSH 启动即 Cannot find module、
-          #   进程退出 code=1（完全无法启动）。这里按实体文件校验，缺一个就拦下。
-          echo "── 原生实体闸（$ARCH）"
+          set -euo pipefail
+          shopt -s nullglob
           for PKG in build/staging/*.spk build/staging/*.fpk; do
-            [ -f "$PKG" ] || continue
+            echo "── 验包: $PKG"
             python3 scripts/guards/check-native-entity.py "$PKG" --arch "$ARCH"
           done
+          for FPK in build/staging/*.fpk; do
+            python3 scripts/guards/check-fpk-payload.py "$FPK" \
+              --expect-pkg commander --expect-pkg js-yaml --expect-pkg @deepseek-ai/cordis
+          done
 
-      - name: 解析官方 tag（指定则用指定值，与官方同 tag 发布）
+      - name: 收集产物
+        if: matrix.changed && matrix.publish == 'release'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for pattern in ${{ join(matrix.artifacts, ' ') }}; do
+            cp -a $pattern dist/ 2>/dev/null || true
+          done
+          ls -lh dist || true
+
+      - uses: actions/upload-artifact@v7
+        if: matrix.changed && matrix.publish == 'release'
+        with:
+          name: platform-${{ matrix.name }}
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        if: matrix.changed && matrix.publish == 'registry'
+        with:
+          name: image-ref-${{ matrix.name }}-${{ needs.plan-platforms.outputs.arch }}
+          path: dist/image-ref-*.txt
+          retention-days: 3
+          if-no-files-found: error
+
+      # ── 镜像型平台（docker 等）：调注册表里声明的构建命令，脚本内部负责推+冒烟 ──
+      - name: 构建镜像（${{ matrix.name }}）
+        if: matrix.changed && matrix.publish == 'registry'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          out="$(${{ matrix.build }} build/master-build/build/target \
+            --arch "$ARCH" --push --registry "$REGISTRY" --image "$IMAGE")"
+          printf '%s\n' "$out"
+          ref="$(printf '%s\n' "$out" | grep -m1 '^IMAGE_REF=' | cut -d= -f2-)"
+          [ -n "$ref" ] || { echo "✗ 没拿到镜像引用"; exit 1; }
+          mkdir -p dist
+          printf '%s\n' "$ref" > "dist/image-ref-${ARCH}.txt"
+
+  # ── 多架构 manifest（仅当有 registry 型平台且两个架构都产出时）──────────────
+  manifest:
+    name: 合并 manifest
+    needs: [plan-platforms, pack]
+    if: >-
+      always() && needs.plan-platforms.result == 'success'
+      && needs.plan-platforms.outputs.dry_run != 'true'
+      && needs.plan-platforms.outputs.has_registry == 'true'
+      && needs.pack.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - name: 下载镜像引用
+        uses: actions/download-artifact@v8
+        with:
+          pattern: image-ref-*
+          path: refs
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: 计算版本
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 版本从 build-image.sh 落下的 IMAGE_REF 取（形如 ghcr.io/ns/name:<版本>-amd64），
+          #   不靠猜 tag 格式，也不依赖 spk 平台本次是否构建
+          ref="$(cat refs/image-ref-*.txt 2>/dev/null | head -1)"
+          [ -n "$ref" ] || { echo "✗ 没拿到镜像引用"; exit 1; }
+          ver="$(printf '%s' "$ref" | sed -E 's/.*:([^-]+(-[a-z]+\.[0-9]+)?)-(amd64|arm64)$/\1/')"
+          [ -n "$ver" ] || { echo "✗ 无法从 $ref 解析版本"; exit 1; }
+          echo "PKG_VER=$ver" >> "$GITHUB_OUTPUT"
+          echo "版本: $ver（来自 $ref）"
+      - name: 登录并合并
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          echo "$GITHUB_TOKEN" | docker login "$REGISTRY" -u "$GITHUB_ACTOR" --password-stdin >/dev/null
+          ver="${{ steps.ver.outputs.PKG_VER }}"
+          base="${REGISTRY}/${IMAGE}:${ver}"
+          # 只在两个架构 tag 都存在时合并；缺一个就跳过（不制造半成品 manifest）
+          have_amd64=0; have_arm64=0
+          docker manifest inspect "${base}-amd64" >/dev/null 2>&1 && have_amd64=1 || true
+          docker manifest inspect "${base}-arm64" >/dev/null 2>&1 && have_arm64=1 || true
+          if [ "$have_amd64" = 1 ] && [ "$have_arm64" = 1 ]; then
+            docker buildx imagetools create -t "${base}" "${base}-amd64" "${base}-arm64"
+            case "$ver" in
+              *-alpha*) docker buildx imagetools create -t "${REGISTRY}/${IMAGE}:alpha" "${base}-amd64" "${base}-arm64" ;;
+              *-beta*)  docker buildx imagetools create -t "${REGISTRY}/${IMAGE}:beta"  "${base}-amd64" "${base}-arm64" ;;
+              *)        docker buildx imagetools create -t "${REGISTRY}/${IMAGE}:latest" "${base}-amd64" "${base}-arm64" ;;
+            esac
+            echo "✓ 已合并 ${base}"
+          else
+            echo "· 只有单架构（amd64=$have_amd64 arm64=$have_arm64），跳过 manifest 合并"
+          fi
+
+  # ── 发布（汇总各平台产物，逻辑沿用原 pack-and-release 的发布段）──────────────
+  release:
+    name: 发布 Release
+    needs: [plan-platforms, pack]
+    if: >-
+      always() && needs.plan-platforms.result == 'success'
+      && needs.plan-platforms.outputs.dry_run != 'true'
+      && needs.pack.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 下载各平台产物
+        uses: actions/download-artifact@v8
+        with:
+          pattern: platform-*
+          path: dist-main
+          merge-multiple: true
+        # 全部平台都跳过（无变化）时没有 artifact，这一步不该让 job 红
+        continue-on-error: true
+
+      - name: 检查产物
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ls dist-main/* >/dev/null 2>&1; then
+            echo "HAS_FILES=yes" >> "$GITHUB_OUTPUT"
+            ls -lh dist-main
+          else
+            echo "HAS_FILES=no" >> "$GITHUB_OUTPUT"
+            echo "（无产物，跳过发布）"
+          fi
+          echo "SPK_STATUS=success" >> "$GITHUB_ENV"
+          echo "SPK_DESC=源码链路" >> "$GITHUB_ENV"
+          echo "FPK_SOURCE_STATUS=success" >> "$GITHUB_ENV"
+          echo "FPK_SOURCE_DESC=源码构建,${{ needs.plan-platforms.outputs.arch == 'arm64' && 'arm' || 'x86' }}" >> "$GITHUB_ENV"
+          echo "FPK_NPM_STATUS=skipped" >> "$GITHUB_ENV"
+          echo "FPK_NPM_DESC=npm 链路,${{ needs.plan-platforms.outputs.arch == 'arm64' && 'arm' || 'x86' }}" >> "$GITHUB_ENV"
+          if ls dist-main/* >/dev/null 2>&1; then
+            echo "dist_main_SHA<<EOF" >> "$GITHUB_ENV"
+            (cd dist-main && sha256sum *) 2>/dev/null >> "$GITHUB_ENV" || true
+            echo "EOF" >> "$GITHUB_ENV"
+          fi
+
+      - name: 解析官方 tag
         id: reltag
+        shell: bash
+        env:
+          DS_FETCH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -n "${{ inputs.dsh_tag }}" ]; then
             echo "TAG=${{ inputs.dsh_tag }}" >> "$GITHUB_OUTPUT"
           else
             echo "TAG=$(./scripts/fetch-dsh-latest.sh --print-tag)" >> "$GITHUB_OUTPUT"
           fi
-        env:
-          DS_FETCH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 按链路分别下载到各自目录：两条链路产物不再共用一个 artifact、也不再靠
-      # 文件名（*-npm.fpk）分拣
-      - name: 检查产物 + 记录状态 + 计算 SHA256
-        id: check
-        run: |
-          # 两条链路各自独立 artifact，已分别落在 dist-main / dist-npm
-          has_main=no; ls dist-main/* >/dev/null 2>&1 && has_main=yes
-          has_npm=no;  ls dist-npm/*  >/dev/null 2>&1 && has_npm=yes
-          echo "HAS_MAIN=$has_main" >> "$GITHUB_ENV"
-          echo "HAS_NPM=$has_npm"   >> "$GITHUB_ENV"
-          if [ "$has_main" = yes ] || [ "$has_npm" = yes ]; then
-            echo "HAS_FILES=yes" >> "$GITHUB_OUTPUT"
-            ls -lh dist-main dist-npm 2>/dev/null || true
-          else
-            echo "HAS_FILES=no" >> "$GITHUB_OUTPUT"
-            echo "（无任何产物，跳过发布）"
-          fi
-          # 状态徽标数据：拆分后每条链各自 job 的结果，互不牵连
-          _status() { case "$1" in success) echo success ;; skipped) echo skipped ;; *) echo fail ;; esac; }
-          # 修正：job 重构后已无 build-spk/build-fpk-source 等旧 job，
-          #   needs.*.result 求值为空 → _status 落到 *) fail → 正文被写成"❌ 缺失"。
-          #   本 job 依赖 build-target 成功才会运行，故源码链路两个产物即 success；
-          #   npm 链路按设计留档不执行 → skipped。
-          echo "SPK_STATUS=success" >> "$GITHUB_ENV"
-          echo "SPK_DESC=源码链路" >> "$GITHUB_ENV"
-          echo "FPK_SOURCE_STATUS=success" >> "$GITHUB_ENV"
-          echo "FPK_SOURCE_DESC=源码构建,${{ inputs.arch == 'arm64' && 'arm' || 'x86' }}" >> "$GITHUB_ENV"
-          echo "FPK_NPM_STATUS=skipped" >> "$GITHUB_ENV"
-          echo "FPK_NPM_DESC=npm 链路,${{ inputs.arch == 'arm64' && 'arm' || 'x86' }}" >> "$GITHUB_ENV"
-          # 产物 SHA256 校验值（发布描述自带，作验证依据）
-          for _d in dist-main dist-npm; do
-            if ls "$_d"/* >/dev/null 2>&1; then
-              echo "${_d}_SHA<<EOF" >> "$GITHUB_ENV"
-              (cd "$_d" && sha256sum *) 2>/dev/null >> "$GITHUB_ENV" || true
-              echo "EOF" >> "$GITHUB_ENV"
-            fi
-          done
-
-      - name: 生成源码链路 Release 文案 + 标题（release-note.sh MODE=main）
+      - name: 生成 Release 文案 + 标题
         id: note-main
-        if: steps.check.outputs.HAS_FILES == 'yes' && env.HAS_MAIN == 'yes'
+        if: steps.check.outputs.HAS_FILES == 'yes'
         env:
           MODE: main
           TRIGGER: ${{ github.event_name }}
@@ -307,35 +429,25 @@ jobs:
           FPK_SOURCE_STATUS: ${{ env.FPK_SOURCE_STATUS }}
           FPK_SOURCE_DESC: ${{ env.FPK_SOURCE_DESC }}
           SHA256: ${{ env.dist_main_SHA }}
-          # 更新日志抓取（api.github.com）带上 token，避免匿名限流
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # ★ 构建时间必须【每次运行现取】+ 必须【内联】传给本条命令 ✗
-          #   真机 bug：写成 `echo BUILD_TIME=… >> $GITHUB_ENV` 却与 release-note.sh
-          #   在【同一个 step】→ $GITHUB_ENV 只对后续 step 生效 ✗ → 正文里打印成 "构建时间: ?" ✗
-          #   另：原用 UTC（date -u）→ 北京时间凌晨的构建会显示成【前一天】✗ → 改用北京时间 ✓
+          # 构建时间必须每次现取并内联传给本条命令（写 $GITHUB_ENV 只对后续 step 生效）
           BUILD_TIME="$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S +08:00')" \
             ./build/release-note.sh > /tmp/release-body-main.md
           echo "TITLE=$(./build/release-note.sh title)" >> "$GITHUB_OUTPUT"
 
-      - name: 发布源码链路 Release（tag=官方 tag）
+      - name: 发布 Release
         if: steps.check.outputs.HAS_FILES == 'yes'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.reltag.outputs.TAG }}
-          # 标题文案由 build/release-note.sh 的 title() 统一控制，workflow 不写字面文案
           name: ${{ steps.note-main.outputs.TITLE }}
           body_path: /tmp/release-body-main.md
           files: dist-main/*
           prerelease: false
           fail_on_unmatched_files: false
 
-      - name: 清理旧名资产（改名后残留；vars.PRUNE_OLD_ASSETS=false 可关闭）
-        # 为什么需要：发布用的 action-gh-release 只**替换同名资产**，一旦产物改名
-        # （如本次 SPK 从 <ver>.spk 改成 <ver>-alpha.1.spk），旧名字的资产会一直留在 Release 里，
-        # 让下载者选错包（实测遇到同一 Release 挂新旧两个 SPK）。
-        # 安全规则见脚本注释：只清理「本次确实产出过的类别」（架构+后缀+链路），
-        # 未产出的类别一律不动 —— 例如 BUILD_FPK=false 时绝不删上一轮留下的 FPK。
+      - name: 清理旧名资产
         if: steps.check.outputs.HAS_FILES == 'yes' && vars.PRUNE_OLD_ASSETS != 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -346,12 +458,8 @@ jobs:
             --tag "${{ steps.reltag.outputs.TAG }}" \
             --keep-from dist-main
 
-      # 四资产齐套检查：同一 tag 需要 x86_64 与 arm64 各跑一次构建才凑齐四件。
-      #   任一架构失败时，那个 Release 会永久只挂一半资产，而成功那次的 job 是绿的 —— 没人会发现。
-      #   这里发布后独立核对四件是否齐全；缺件只告警（失败架构的 job 本来已经红过，
-      #   不该让另一个成功架构的 run 也变红）。
       - name: 校验四资产齐套（缺件告警，不阻断另一架构）
-        if: always()
+        if: always() && steps.check.outputs.HAS_FILES == 'yes'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

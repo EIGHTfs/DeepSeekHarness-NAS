@@ -17,7 +17,9 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 WF = os.path.join(ROOT, ".github", "workflows", "build.yml")
-VERBS = ("build", "pack", "release")
+# plan：CI 的计划/调度阶段（读平台注册表 + 变化检测，决定后面跑什么）。
+#   与 build/pack/release 并列，不是「构建产物」但同属流水线阶段。
+VERBS = ("build", "pack", "release", "plan")
 KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 # yml 里出现的脚本引用：scripts/xxx.sh、./build/xxx.sh、test/xxx.py 等

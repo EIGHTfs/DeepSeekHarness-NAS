@@ -115,6 +115,10 @@ jobs:
     with:
       dsh_tag: ${{ matrix.tag }}
       arch: ${{ matrix.arch }}
+      # 批量重建是「补历史版本」，必须全量（不能靠变化检测跳过）
+      force_all: true
+      # 批量重建只出套件（镜像按 tag 单独发，避免批量时把 GHCR 刷爆）
+      targets: spk,fpk
     secrets: inherit
 
   summary:
