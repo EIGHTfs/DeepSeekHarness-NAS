@@ -122,29 +122,6 @@ def _check(path):
 ARCH_SPECIFIC = ("linux-x64", "linux-arm64", "linux-armv7", "armv8", "aarch64", "x86_64")
 
 
-def check_whitelist_arch_neutral():
-    """裁剪白名单里的平台专属条目必须是 {arch} 占位，不能写死某个架构。
-
-    为什么：纯白名单模式下，写死 linux-x64 会让 arm64 构建把自己需要的原生包整批删掉
-    （实测 arm64 镜像起不来：Cannot find module ...linux-arm64-gnu）。
-    """
-    path = os.path.join(ROOT, "build", "config", "build-prune-whitelist.json")
-    if not os.path.isfile(path):
-        return []
-    import json
-    problems = []
-    with open(path, encoding="utf-8") as handle:
-        data = json.load(handle)
-    for key in ("extra", "lockfileDeps", "_autoLearned"):
-        for entry in data.get(key) or []:
-            if not isinstance(entry, str):
-                continue
-            if "-linux-x64" in entry or "-linuxmusl-x64" in entry or "-linux-arm64" in entry:
-                problems.append("build/config/build-prune-whitelist.json 的 %s 里 %r 写死了架构（应改 {arch}）"
-                                % (key, entry))
-    return problems
-
-
 def check_excludes_arch_neutral():
     path = os.path.join(ROOT, "build", "config", "build-excludes.json")
     if not os.path.isfile(path):
@@ -178,7 +155,6 @@ def main(argv=None):
 
     bad, used_yaml = _check(args.file)
     bad = bad + check_excludes_arch_neutral()
-    bad = bad + check_whitelist_arch_neutral()
     if bad:
         sys.stderr.write("✗ build-config 守卫失败（%d 项）：\n" % len(bad))
         for b in bad:

@@ -146,6 +146,23 @@ runs:
         [ -f "$T/.build-done" ] || { echo "✗ 解包后缺少 $T/.build-done（SKIP_BUILD 判据）"; exit 1; }
         echo "  ✓ .build-done 就位 → build-common.sh 会走 SKIP_BUILD 复用分支"
 
+        # ── 缓存 target 完整性校验（缺包就放弃缓存，改走完整构建）──────────────
+        #   为什么必须校验：SKIP_BUILD 复用分支会**整体跳过** fix-runtime-deps 补包
+        #   （build-common.sh 的「skip-build=1 复用 target 时整体跳过」）。缓存里的 target
+        #   一旦缺本架构原生 addon，就会一路带进镜像/套件，直到运行期才炸。
+        #   实测：arm64 镜像命中缓存后容器起不来（Cannot find module
+        #   node-addon-require-builtin-linux-arm64-gnu），而同一 tag 完整构建出的 armv8
+        #   SPK 是好的 —— 差别只在补包有没有跑。
+        ARCH_NATIVE="x64"
+        [ "${ARCH:-x86_64}" = "arm64" ] && ARCH_NATIVE="arm64"
+        if find "$T/target/node_modules/.pnpm" -maxdepth 1 -name "node-addon-require-builtin-linux-${ARCH_NATIVE}-gnu@*" 2>/dev/null | grep -q .; then
+          echo "  ✓ 缓存 target 含 ${ARCH_NATIVE} 原生 addon（可安全复用）"
+        else
+          echo "  ⚠ 缓存 target 缺 node-addon-require-builtin-linux-${ARCH_NATIVE}-gnu"
+          echo "     → 放弃缓存，改走完整构建（会跑 fix-runtime-deps 补包）"
+          rm -rf "$T"
+        fi
+
     - name: 未命中则说明将完整构建
       if: steps.cache-target.outputs.cache-hit != 'true'
       shell: bash
