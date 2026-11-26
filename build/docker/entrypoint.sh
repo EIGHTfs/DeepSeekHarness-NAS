@@ -31,6 +31,9 @@ if [ "$(id -u)" = "0" ] && [ -n "${PUID:-}" ] && [ -n "${PGID:-}" ]; then
   log "以 PUID=${PUID} PGID=${PGID} 运行（数据目录与别名根会 chown 对齐）"
   mkdir -p "$DATA_ROOT"
   chown -R "${PUID}:${PGID}" "$DATA_ROOT" 2>/dev/null || log "⚠ 数据目录 chown 失败（挂载可能是只读或非本地盘）"
+  # 只改属主不够：宿主目录可能继承成只读位（实测 DSM 共享文件夹 `dr-xr-xr-x` 的子目录里
+  #   连日志都写不进去，表现为 `line 176: /data/xxx.log: Permission denied` 反复重启）。
+  chmod u+rwx "$DATA_ROOT" 2>/dev/null || true
   # 别名根必须由 root 先建：/ 归 root，降权后连 mkdir 都不允许（实测别名因此静默失败）
   mkdir -p "$ALIAS_ROOT" 2>/dev/null && chown "${PUID}:${PGID}" "$ALIAS_ROOT" 2>/dev/null \
     || log "⚠ 别名根 $ALIAS_ROOT 创建失败（别名会不可用，同路径挂载不受影响）"

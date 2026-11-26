@@ -57,6 +57,7 @@ docker compose -f build/docker/docker-compose.example.yml up -d
 | `UMASK=0002` 组共享 | 同组用户可改，避免「只有容器用户能写」 |
 | 不要用 root 跑 | 省事但会留下一堆 root 文件 |
 | 数据目录必须本地盘 | CIFS/SMB 共享是 noexec + chmod EPERM，`pnpm` 装插件必失败 |
+| 放在 DSM 共享文件夹下要给写权限位 | 共享文件夹根常是 `dr-xr-xr-x`（555），子目录会继承成只读 —— 即使 `chown` 给对了属主，容器内仍写不了日志（实测 `line 176: /data/xxx.log: Permission denied` 并反复重启）。做法：对我们自建的数据/工作区子目录 `chmod u+rwX`，**不要动共享文件夹根**（会清 DSM 的 synoacl ACL）。entrypoint 也会对数据根补 `chmod u+rwx` 兜底 |
 | DSM 的 ACL 在容器内不可见 | 容器只看 Linux 权限位；两套权限模型要各自设对 |
 
 ## 6. 实测记录（本机真容器验证）
