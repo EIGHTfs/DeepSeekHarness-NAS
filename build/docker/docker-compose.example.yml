@@ -25,6 +25,8 @@ services:
       PGID: "100"
       UMASK: "0002"                 # 组共享：同组用户能改
       DSH_WORKSPACES_MANIFEST: /etc/dsh/workspaces.json
+      # 容器启动时会把「首次认证链接」打到 docker logs；这里填**你实际访问的地址**（宿主IP:映射端口）
+      DSH_ADVERTISE_URL: "http://<宿主IP>:3080"
       # 想用官方远程登录（一次性链接/设备配对）时再放开下面两行
       # DSH_PUBLIC_URL: "https://dsh.example.com"
       # DSH_TRUSTED_HOSTS: "dsh.example.com"

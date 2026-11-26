@@ -27,7 +27,18 @@ cp build/docker/workspaces.example.json ./workspaces.json   # 按需改名字/�
 docker compose -f build/docker/docker-compose.example.yml up -d
 ```
 
-改三处即可：镜像名、`PUID/PGID`、宿主目录。访问 `http://<宿主IP>:3080/`。
+改三处即可：镜像名、`PUID/PGID`、宿主目录、以及 `DSH_ADVERTISE_URL`（你实际访问的地址）。
+
+首次认证不需要进容器翻文件：`docker logs <容器>` 里会打印
+
+```
+[entrypoint] 首次认证（复制整条到浏览器）：
+[entrypoint]   http://<宿主IP>:3080/?token=…
+[entrypoint] 认证后直接访问：
+[entrypoint]   http://<宿主IP>:3080/
+```
+
+应用日志也会跟随到容器 stdout（`docker logs -f <容器>` 即可看运行情况）。
 
 ## 4. 工作区怎么接
 

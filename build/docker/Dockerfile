@@ -17,8 +17,12 @@ FROM debian:12-slim
 # tini：容器里 node 不是 PID 1 时收不到信号，停容器会被等 10 秒强杀；
 # ca-certificates：dsh 的远程登录与插件下载都要走 HTTPS；
 # tzdata + util-linux：时区正确、setpriv 用来做 PUID/PGID 降权（不额外装 gosu）。
+# procps / iproute2 / net-tools：套件 start.sh 的就绪判断与自检要用 `ps`、`ss`、`netstat`。
+#   缺了它们，start.sh 会误判「端口未就绪」→ 容器退出 → restart 策略反复拉起，
+#   在 DSM Container Manager 里就表现为「意外终止」（实测踩到）。
 RUN apt-get update \
     && apt-get install -y --no-install-recommends tini ca-certificates tzdata util-linux \
+       procps iproute2 net-tools \
     && rm -rf /var/lib/apt/lists/*
 
 # 构建产物目录（含随包 node、裁剪后的依赖、start.sh）；由 --build-arg 指定，避免写死工作目录名

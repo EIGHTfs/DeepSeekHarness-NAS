@@ -21,6 +21,7 @@ DSH_ROOT="${DSH_ROOT:-/opt/dsh}"
 DATA_ROOT="${PKG_VAR:-/data}"
 MANIFEST="${DSH_WORKSPACES_MANIFEST:-/etc/dsh/workspaces.json}"
 ALIAS_ROOT="${DSH_WORKSPACE_ALIAS_ROOT:-/workspace}"
+APP_NAME_FOR_LOG="${DSH_APP_NAME:-DeepSeekHarness-NAS}"
 
 log() { echo "[entrypoint] $*"; }
 
@@ -96,6 +97,37 @@ if ! ./start.sh start; then
     || tail -30 "${DATA_ROOT}"/*/DeepSeekHarness-NAS.log 2>/dev/null || true
   ./start.sh stop >/dev/null 2>&1 || true
   exit 1
+fi
+
+# ── ⑤ 把「首次认证链接」与运行日志送到容器 stdout ─────────────────────
+#   为什么要做：start.sh 把 token 写进数据目录里的日志文件，容器里 docker logs 看不到，
+#   用户还得进容器翻文件才能首次认证 —— 容器化后这步必须开箱可用。
+#   外部地址由 DSH_ADVERTISE_URL 指定（宿主映射后的地址，容器内无法自知）。
+# 日志位置：套件把服务日志写在「数据根」上（/data/<APP>.log），不是版本子目录；
+#   两种布局都探测，避免换布局后又取不到 token。
+LOG_FILE="$(ls -t "$DATA_ROOT/$APP_NAME_FOR_LOG.log" "$DATA_ROOT"/*/"$APP_NAME_FOR_LOG.log" 2>/dev/null | head -1)"
+TOKEN=""
+if [ -n "$LOG_FILE" ]; then
+  for _ in $(seq 1 30); do
+    TOKEN="$(grep -aoE 'token=[A-Za-z0-9_-]{20,}' "$LOG_FILE" 2>/dev/null | tail -1 | cut -d= -f2)"
+    [ -n "$TOKEN" ] && break
+    sleep 1
+  done
+fi
+BASE_URL="${DSH_ADVERTISE_URL:-http://<宿主IP>:<映射到 ${DSH_PROXY_PORT:-30800} 的端口>}"
+if [ -n "$TOKEN" ]; then
+  log "──────────────────────────────────────────────"
+  log "首次认证（复制整条到浏览器）："
+  log "  ${BASE_URL}/?token=${TOKEN}"
+  log "认证后直接访问："
+  log "  ${BASE_URL}/"
+  log "──────────────────────────────────────────────"
+else
+  log "⚠ 未从日志里取到 token（$LOG_FILE）；可执行：docker exec <容器> sh -c 'grep -ao \"token=[A-Za-z0-9_-]*\" /data/*/*.log | tail -1'"
+fi
+# 应用日志持续转到容器 stdout：docker logs 直接能看到启动/运行情况（旋转由 start.sh 负责，这里只跟随当前文件）
+if [ -n "$LOG_FILE" ]; then
+  tail -n 0 -F "$LOG_FILE" 2>/dev/null &
 fi
 
 trap './start.sh stop; exit 0' TERM INT
