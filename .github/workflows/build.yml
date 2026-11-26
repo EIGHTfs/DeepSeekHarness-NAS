@@ -236,6 +236,16 @@ jobs:
           python3 scripts/guards/check-fpk-payload.py "$FPK" \
             --expect-pkg commander --expect-pkg js-yaml --expect-pkg @deepseek-ai/cordis
 
+          # 原生实体闸：白名单点名的「本架构必需原生包」必须在载荷里有实体。
+          #   为什么必须有：armv8 包曾出现"只有悬空软链、没有 .node 二进制"，
+          #   按路径条目数做的检查完全看不出来，装上去 DSH 启动即 Cannot find module、
+          #   进程退出 code=1（完全无法启动）。这里按实体文件校验，缺一个就拦下。
+          echo "── 原生实体闸（$ARCH）"
+          for PKG in build/staging/*.spk build/staging/*.fpk; do
+            [ -f "$PKG" ] || continue
+            python3 scripts/guards/check-native-entity.py "$PKG" --arch "$ARCH"
+          done
+
       - name: 解析官方 tag（指定则用指定值，与官方同 tag 发布）
         id: reltag
         run: |
