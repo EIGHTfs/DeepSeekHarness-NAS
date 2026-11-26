@@ -1,31 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""pkg-source-server.py — 独立的「局域网 SPK 套件源」服务（只依赖 python3 标准库）。
+"""pkg-source-server.py — 通用「GitHub Release → 群晖 SPK 套件源」服务（仅依赖 python3 标准库）。
 
-定位：与本项目的套件、启动脚本、反代**完全解耦**。它是一个可单独运行的进程：
-  · 自己起一个 HTTP 端口，提供 DSM 套件中心要读的索引 JSON；
-  · 自己从 GitHub Release 取数据（索引资产优先，没有就下载 spk 现算 md5）；
-  · 定期自动刷新，套件中心下次检查时就能看到新版本。
+用途：给任意 GitHub 仓库，把它的 Release 资产（*.spk）变成一个 DSM 套件中心可用的套件源。
+  · 不依赖被服务仓库做任何配合（不需要它产出索引、不需要改它的 CI）；
+  · 不与被服务的项目耦合：本脚本可独立部署在任何一台能访问 GitHub 的机器上。
 
-DSM 侧一次性配置：套件中心 → 设置 → 套件来源 → 新增，填
-  http://<本机局域网IP>:<端口>/index-x86_64.json      （x86_64 机型）
-  http://<本机局域网IP>:<端口>/index-armv8.json       （armv8 机型）
-之后套件中心会显示「可更新」，用户可在那里勾自动更新。
+它自己完成三件事：
+  1. 用 GitHub API 列出目标仓库某个 Release 的全部 *.spk 资产；
+  2. 从文件名取架构（_x86_64- / _armv8-），下载后读 spk 内 INFO 得到 package/version/changelog，
+     并流式计算 md5（DSM 只认 md5，而 GitHub 只给 sha256，所以必须本地算一次）；
+  3. 起 HTTP 端口，按架构提供 index-<arch>.json；定期刷新，套件中心下次检查即可见新版本。
 
-数据来源两种模式
-  1) Release 索引资产（推荐）：CI 发布时把 index-<arch>.json 一并上传，本服务只拉几 KB。
-  2) 回退：Release 里没有索引资产时，直接下载 spk 资产并流式计算 md5（每个约 190MB，仅在版本变化时发生）。
+下载缓存：按「资产名 + 大小 + 更新时间」落盘复用，版本没变就不会重复下 190 MB。
 
 用法
-  python3 scripts/pkg-source-server.py --port 8899                     # 起服务，默认每 30 分钟刷新
-  python3 scripts/pkg-source-server.py --port 8899 --tag dsh-v<版本>    # 指定 tag（默认取最新 Release）
-  python3 scripts/pkg-source-server.py --once                           # 只生成索引后退出（给 cron 用）
-  python3 scripts/pkg-source-server.py --from-spk-dir ./build/staging \
-          --base-url https://example.com/releases --port 8899           # 离线：用本地 spk 生成索引
-  python3 scripts/pkg-source-server.py --check                          # 只打印将要生成的内容，不起服务
+  python3 scripts/pkg-source-server.py --repo EIGHTfs/DeepSeekHarness-NAS --port 8899
+  python3 scripts/pkg-source-server.py --repo <owner/repo> --tag v1.2.3 --port 8899
+  python3 scripts/pkg-source-server.py --repo <owner/repo> --check            # 只生成并打印，不起服务
+  python3 scripts/pkg-source-server.py --repo <owner/repo> --once             # 生成一次即退出（cron）
+  python3 scripts/pkg-source-server.py --from-spk-dir ./staging --base-url https://…   # 离线：用本地 spk
 
 环境变量
   GH_TOKEN / GITHUB_TOKEN   访问 GitHub API 的令牌（匿名 60 次/小时，建议给）
+
+DSM 侧（一次性）
+  套件中心 → 设置 → 套件来源 → 新增，填 http://<运行本脚本的机器IP>:<端口>/index-<架构>.json
 """
 from __future__ import print_function
 
@@ -39,41 +39,58 @@ import socket
 import sys
 import threading
 import time
-import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-EXPECTED_ARCHES = ("x86_64", "armv8")
-SPK_PATTERN = re.compile(r"_(?P<arch>x86_64|armv8)-(?P<ver>.+)\.spk$")
+ARCH_IN_NAME = re.compile(r"_(?P<arch>x86_64|armv8|aarch64)-(?P<rest>.+)\.spk$", re.IGNORECASE)
 INDEX_NAME = re.compile(r"^index-(x86_64|armv8)\.json$")
-DEFAULT_REPO = "EIGHTfs/DeepSeekHarness-NAS"
+ARCH_ALIASES = {"aarch64": "armv8"}
 
 
 def log(message):
     print("[%s] %s" % (time.strftime("%H:%M:%S"), message), flush=True)
 
 
-def http_get_json(url, token=""):
+def api_json(url, token):
     request = urllib.request.Request(url)
     request.add_header("Accept", "application/vnd.github+json")
     if token:
-        request.add_header("Authorization", "token %s" % token)
+        request.add_header("Authorization", "token " + token)
     with urllib.request.urlopen(request, timeout=45) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
-def http_download(url, dest, token=""):
-    """流式下载（spk 可能上百 MB，不能读进内存）。"""
-    request = urllib.request.Request(url)
-    if token:
-        request.add_header("Authorization", "token %s" % token)
-    with urllib.request.urlopen(request, timeout=120) as response, open(dest, "wb") as handle:
-        while True:
-            chunk = response.read(1024 * 1024)
-            if not chunk:
-                break
-            handle.write(chunk)
-    return dest
+def download(url, dest, token, expected_size=0, attempts=5):
+    """带断点续传与重试的下载：GitHub 大文件在弱网下经常被中途掐断，重下 190 MB 代价太大。"""
+    for attempt in range(1, attempts + 1):
+        have = os.path.getsize(dest) if os.path.isfile(dest) else 0
+        if expected_size and have == expected_size:
+            return dest
+        request = urllib.request.Request(url)
+        request.add_header("Accept", "application/octet-stream")
+        if token:
+            request.add_header("Authorization", "token " + token)
+        if have:
+            request.add_header("Range", "bytes=%d-" % have)
+        try:
+            with urllib.request.urlopen(request, timeout=180) as response:
+                mode = "ab" if have and response.status == 206 else "wb"
+                with open(dest, mode) as handle:
+                    while True:
+                        chunk = response.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        handle.write(chunk)
+        except Exception as exc:
+            got = os.path.getsize(dest) if os.path.isfile(dest) else 0
+            log("下载中断（第 %d/%d 次，已得 %.0f%%）：%s" % (
+                attempt, attempts, (got * 100.0 / expected_size) if expected_size else 0, exc))
+            time.sleep(min(10, 2 * attempt))
+            continue
+        if not expected_size or os.path.getsize(dest) == expected_size:
+            return dest
+    got = os.path.getsize(dest) if os.path.isfile(dest) else 0
+    raise IOError("下载未完成：%s（%d/%d 字节）" % (dest, got, expected_size))
 
 
 def md5_of(path):
@@ -88,17 +105,18 @@ def md5_of(path):
 
 
 def read_spk_info(path):
-    """读 spk 外层 tar 里的 INFO（纯 key=value 文本）。"""
+    """读 spk 外层 tar 内的 INFO（纯 key=value）。不依赖被服务项目的任何约定。"""
     import tarfile
-    with tarfile.open(path, "r:") as outer:
-        member = None
-        for candidate in outer.getmembers():
-            if candidate.name.lstrip("./") == "INFO":
-                member = candidate
-                break
-        if member is None:
-            return {}
-        raw = outer.extractfile(member).read().decode("utf-8", "replace")
+    try:
+        with tarfile.open(path, "r:") as outer:
+            for member in outer.getmembers():
+                if member.name.lstrip("./") == "INFO":
+                    raw = outer.extractfile(member).read().decode("utf-8", "replace")
+                    break
+            else:
+                return {}
+    except Exception:
+        return {}
     info = {}
     for line in raw.splitlines():
         if not line.strip() or line.strip().startswith("#") or "=" not in line:
@@ -108,145 +126,180 @@ def read_spk_info(path):
     return info
 
 
-def entry_from_spk(path, link):
-    info = read_spk_info(path)
-    version = info.get("version")
-    if not version:
-        raise ValueError("spk 内 INFO 缺 version：%s" % path)
-    return {
-        "package": info.get("package") or "DeepSeekHarness-NAS",
-        "dname": info.get("displayname") or "DeepSeekRuntime NAS",
-        "desc": "在 NAS 上以套件方式运行 DeepSeekRuntime（DSH）Web 版。",
-        "version": version,
+def make_entry(spk_path, link):
+    info = read_spk_info(spk_path)
+    package = info.get("package") or os.path.basename(spk_path).split("_")[0]
+    entry = {
+        "package": package,
+        "dname": info.get("displayname") or package,
+        "desc": info.get("description") or info.get("desc") or "",
+        "version": info.get("version") or "",
         "link": link,
-        "md5": md5_of(path),
-        "size": os.path.getsize(path),
-        "distributor": "DeepSeekHarness-NAS",
-        "distributor_url": "https://github.com/%s" % DEFAULT_REPO,
-        "maintainer": "EIGHTfs",
-        "maintainer_url": "https://github.com/EIGHTfs",
+        "md5": md5_of(spk_path),
+        "size": os.path.getsize(spk_path),
+        "distributor": info.get("distributor") or package,
+        "distributor_url": info.get("distributor_url") or "",
+        "maintainer": info.get("maintainer") or "",
+        "maintainer_url": info.get("maintainer_url") or "",
         "changelog": info.get("changelog") or "",
         "qinst": False,
         "qstart": False,
         "qupgrade": False,
         "startable": "yes",
     }
+    if not entry["version"]:
+        raise ValueError("%s 内 INFO 缺 version，DSM 无法比较版本" % os.path.basename(spk_path))
+    return entry
 
 
-def build_from_local(spk_dir, base_url, out_dir):
-    """离线模式：用本地 spk 目录生成索引。"""
-    by_arch = {}
-    for name in sorted(os.listdir(spk_dir)):
-        if not name.endswith(".spk"):
-            continue
-        matched = SPK_PATTERN.search(name)
-        if not matched:
-            continue
-        path = os.path.join(spk_dir, name)
-        link = (base_url.rstrip("/") + "/" + name) if base_url else name
-        by_arch.setdefault(matched.group("arch"), []).append(entry_from_spk(path, link))
-    return write_indexes(by_arch, out_dir)
+def cached_download(asset, work_dir, token):
+    """按「名字+大小+更新时间」缓存；版本没变就不重复下载 190 MB。"""
+    name = asset["name"]
+    stamp = "%s-%s" % (asset.get("size"), (asset.get("updated_at") or "").replace(":", ""))
+    target = os.path.join(work_dir, stamp + "-" + name)
+    if os.path.isfile(target) and os.path.getsize(target) == asset.get("size"):
+        return target
+    for stale in os.listdir(work_dir):
+        if stale.endswith("-" + name):
+            try:
+                os.remove(os.path.join(work_dir, stale))
+            except OSError:
+                pass
+    log("下载 %s（%.0f MB）" % (name, (asset.get("size") or 0) / 1048576.0))
+    return download(asset["browser_download_url"], target, token, asset.get("size") or 0)
 
 
 def write_indexes(by_arch, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     written = []
-    for arch, entries in by_arch.items():
-        target = os.path.join(out_dir, "index-%s.json" % arch)
-        with io.open(target, "w", encoding="utf-8", newline="\n") as handle:
+    for arch, entries in sorted(by_arch.items()):
+        path = os.path.join(out_dir, "index-%s.json" % arch)
+        with io.open(path, "w", encoding="utf-8", newline="\n") as handle:
             json.dump({"packages": entries}, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
-        written.append((target, len(entries)))
+        written.append((path, len(entries)))
     return written
 
 
 def resolve_release(repo, tag, token):
     if tag and tag != "latest":
-        return http_get_json("https://api.github.com/repos/%s/releases/tags/%s" % (repo, tag), token)
-    return http_get_json("https://api.github.com/repos/%s/releases/latest" % repo, token)
+        return api_json("https://api.github.com/repos/%s/releases/tags/%s" % (repo, tag), token)
+    return api_json("https://api.github.com/repos/%s/releases/latest" % repo, token)
 
 
-def build_from_release(repo, tag, token, out_dir, work_dir):
-    """优先拉 Release 里的 index 资产；没有就下载 spk 现算。"""
+def entry_from_asset(asset, arch, token, work_dir, want_md5, want_info):
+    """默认**不下载**：套件中心自己会去下 spk，我们只需要给出 index 条目。
+       版本取资产名里的 <版本> 段，size 取 API 值；md5 与 INFO 详情只在显式要求时才下载。"""
+    name = asset["name"]
+    matched = ARCH_IN_NAME.search(name)
+    version = (matched.group("rest") if matched else "").strip("-")
+    package = name.split("_")[0]
+    entry = {
+        "package": package,
+        "dname": package,
+        "version": version,
+        "link": asset["browser_download_url"],
+        "size": asset.get("size") or 0,
+        "startable": "yes",
+        "qinst": False, "qstart": False, "qupgrade": False,
+    }
+    if want_md5 or want_info:
+        local = cached_download(asset, work_dir, token)
+        if want_md5:
+            entry["md5"] = md5_of(local)
+        if want_info:
+            info = read_spk_info(local)
+            entry["package"] = info.get("package") or package
+            entry["dname"] = info.get("displayname") or entry["package"]
+            entry["version"] = info.get("version") or version
+            entry["changelog"] = info.get("changelog") or ""
+            for key in ("distributor", "distributor_url", "maintainer", "maintainer_url", "description"):
+                if info.get(key):
+                    entry["desc" if key == "description" else key] = info[key]
+    return entry
+
+
+def build_from_release(repo, tag, token, out_dir, work_dir, arches, want_md5=False, want_info=False):
     release = resolve_release(repo, tag, token)
     tag_name = release.get("tag_name") or tag
-    assets = release.get("assets") or []
-    index_assets = [a for a in assets if INDEX_NAME.match(a.get("name") or "")]
-    written = []
-    if index_assets:
-        for asset in index_assets:
-            dest = os.path.join(out_dir, asset["name"])
-            http_download(asset["browser_download_url"], dest, token)
-            with io.open(dest, encoding="utf-8") as handle:
-                count = len((json.load(handle) or {}).get("packages") or [])
-            written.append((dest, count))
-        return tag_name, written, "release-index"
-
-    os.makedirs(work_dir, exist_ok=True)
-    by_arch = {}
-    for asset in assets:
-        name = asset.get("name") or ""
-        matched = SPK_PATTERN.search(name)
+    by_arch, skipped = {}, []
+    for asset in release.get("assets") or []:
+        matched = ARCH_IN_NAME.search(asset.get("name") or "")
         if not matched:
             continue
-        local = os.path.join(work_dir, name)
-        if not os.path.isfile(local) or os.path.getsize(local) != asset.get("size"):
-            log("下载 %s（%.0f MB）" % (name, (asset.get("size") or 0) / 1048576))
-            http_download(asset["browser_download_url"], local, token)
-        by_arch.setdefault(matched.group("arch"), []).append(
-            entry_from_spk(local, asset["browser_download_url"]))
-    written = write_indexes(by_arch, out_dir)
-    return tag_name, written, "downloaded-spk"
+        arch = ARCH_ALIASES.get(matched.group("arch").lower(), matched.group("arch").lower())
+        if arches and arch not in arches:
+            continue
+        try:
+            by_arch.setdefault(arch, []).append(
+                entry_from_asset(asset, arch, token, work_dir, want_md5, want_info))
+        except Exception as exc:
+            skipped.append("%s: %s" % (asset.get("name"), exc))
+    return tag_name, write_indexes(by_arch, out_dir), skipped
+
+
+def build_from_local(spk_dir, base_url, out_dir, arches):
+    by_arch, skipped = {}, []
+    for name in sorted(os.listdir(spk_dir)):
+        matched = ARCH_IN_NAME.search(name)
+        if not matched:
+            continue
+        arch = ARCH_ALIASES.get(matched.group("arch").lower(), matched.group("arch").lower())
+        if arches and arch not in arches:
+            continue
+        link = (base_url.rstrip("/") + "/" + name) if base_url else name
+        try:
+            by_arch.setdefault(arch, []).append(make_entry(os.path.join(spk_dir, name), link))
+        except ValueError as exc:
+            skipped.append("%s: %s" % (name, exc))
+    return "(local)", write_indexes(by_arch, out_dir), skipped
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "dsh-pkg-source/1"
+    server_version = "dsh-pkg-source/2"
     state = {}
 
-    def do_GET(self):  # noqa: N802 - BaseHTTPRequestHandler 约定
+    def do_GET(self):  # noqa: N802
         name = self.path.split("?")[0].lstrip("/")
         if not INDEX_NAME.match(name):
-            self._send(404, "text/plain; charset=utf-8", b"not found\n")
+            self._send(404, b"not found\n")
             return
         target = os.path.join(Handler.state.get("out_dir", "."), name)
         try:
             with open(target, "rb") as handle:
                 body = handle.read()
         except OSError:
-            self._send(503, "text/plain; charset=utf-8", b"index not ready\n")
+            self._send(503, b"index not ready\n")
             return
-        self._send(200, "application/json; charset=utf-8", body)
+        self._send(200, body, "application/json; charset=utf-8")
 
-    def _send(self, status, content_type, body):
+    def _send(self, status, body, content_type="text/plain; charset=utf-8"):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        if body:
-            self.wfile.write(body)
+        self.wfile.write(body)
 
     def log_message(self, fmt, *args):
         log("HTTP %s" % (fmt % args))
 
 
 def refresh(args, token):
-    written = []
     try:
         if args.from_spk_dir:
-            written = build_from_local(args.from_spk_dir, args.base_url, args.out_dir)
-            tag_name, source = "(local)", "local-spk"
+            tag, written, skipped = build_from_local(args.from_spk_dir, args.base_url, args.out_dir, args.arches)
         else:
-            tag_name, written, source = build_from_release(
-                args.repo, args.tag, token, args.out_dir, args.work_dir)
+            tag, written, skipped = build_from_release(
+                args.repo, args.tag, token, args.out_dir, args.work_dir, args.arches,
+                want_md5=args.with_md5, want_info=args.deep)
     except Exception as exc:
         log("刷新失败：%s" % exc)
         return False
-    detail = "；".join("%s（%d 条）" % (os.path.basename(p), n) for p, n in written)
-    log("索引已刷新（tag=%s，来源=%s）：%s" % (tag_name, source, detail or "无产物"))
-    missing = [a for a in EXPECTED_ARCHES if not os.path.isfile(os.path.join(args.out_dir, "index-%s.json" % a))]
-    if missing:
-        log("⚠ 缺架构索引：%s（该架构的机型加源后会看不到包）" % "、".join(missing))
+    detail = "；".join("%s（%d 条）" % (os.path.basename(p), n) for p, n in written) or "无产物"
+    log("索引已刷新（tag=%s）：%s" % (tag, detail))
+    for item in skipped:
+        log("⚠ 跳过：%s" % item)
     return bool(written)
 
 
@@ -263,30 +316,35 @@ def lan_ip():
 
 def main():
     parser = argparse.ArgumentParser(add_help=True)
-    parser.add_argument("--repo", default=DEFAULT_REPO, help="owner/repo，缺省 %s" % DEFAULT_REPO)
-    parser.add_argument("--tag", default="latest", help="指定 Release tag；缺省取最新")
-    parser.add_argument("--port", type=int, default=8899, help="监听端口（缺省 8899）")
-    parser.add_argument("--bind", default="0.0.0.0", help="监听地址（缺省 0.0.0.0，局域网可达）")
+    parser.add_argument("--repo", default="EIGHTfs/DeepSeekHarness-NAS",
+                        help="被服务的 GitHub 仓库（owner/repo）；换仓库无需改脚本")
+    parser.add_argument("--tag", default="latest", help="指定 Release tag，缺省 latest")
+    parser.add_argument("--port", type=int, default=8899)
+    parser.add_argument("--bind", default="0.0.0.0")
     parser.add_argument("--interval", type=int, default=1800, help="刷新间隔秒（缺省 1800）")
-    parser.add_argument("--out-dir", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".pkg-source"),
-                        help="索引落盘目录（缺省 <repo>/.pkg-source，已 gitignore）")
-    parser.add_argument("--work-dir", default="/tmp/dsh-pkg-source", help="下载 spk 的临时目录")
-    parser.add_argument("--from-spk-dir", default="", help="离线模式：从本地 spk 目录生成索引")
-    parser.add_argument("--base-url", default="", help="离线模式下写进 link 的前缀")
-    parser.add_argument("--once", action="store_true", help="只生成索引后退出（cron 用）")
-    parser.add_argument("--check", action="store_true", help="只打印将生成的内容，不起服务")
+    parser.add_argument("--arches", nargs="*", default=[], help="只处理指定架构（x86_64 / armv8）")
+    parser.add_argument("--out-dir", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".pkg-source"))
+    parser.add_argument("--work-dir", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".pkg-source", "spk"))
+    parser.add_argument("--from-spk-dir", default="", help="离线模式：直接读本地 spk 目录")
+    parser.add_argument("--base-url", default="", help="离线模式下写入 link 的前缀")
+    parser.add_argument("--with-md5", action="store_true",
+                        help="下载 spk 计算 md5（默认不下载：下载由套件中心自己做；缺 md5 时 DSM 不做校验）")
+    parser.add_argument("--deep", action="store_true",
+                        help="下载 spk 读 INFO 取准确 package/version/changelog（默认取资产名里的版本）")
+    parser.add_argument("--once", action="store_true", help="生成一次即退出（cron 用）")
+    parser.add_argument("--check", action="store_true", help="只生成并打印，不起服务")
     args = parser.parse_args()
 
     args.out_dir = os.path.abspath(args.out_dir)
+    args.work_dir = os.path.abspath(args.work_dir)
+    os.makedirs(args.work_dir, exist_ok=True)
     token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
 
     ok = refresh(args, token)
-    if args.check:
-        return 0 if ok else 2
-    if args.once:
+    if args.check or args.once:
         return 0 if ok else 2
     if not ok:
-        log("首次生成失败，服务仍会启动（DSM 会看到 503，直到下次刷新成功）")
+        log("首次生成失败；服务仍会启动（DSM 看到 503），下次刷新成功后自动恢复")
 
     Handler.state["out_dir"] = args.out_dir
     server = ThreadingHTTPServer((args.bind, args.port), Handler)
@@ -299,9 +357,9 @@ def main():
     threading.Thread(target=loop, daemon=True).start()
 
     host = lan_ip()
-    log("套件源已就绪，DSM 套件中心 → 设置 → 套件来源 添加：")
-    log("  x86_64 机型：http://%s:%d/index-x86_64.json" % (host, args.port))
-    log("  armv8  机型：http://%s:%d/index-armv8.json" % (host, args.port))
+    log("套件源就绪（仓库 %s）。DSM 套件中心 → 设置 → 套件来源 添加：" % args.repo)
+    for arch in (args.arches or ["x86_64", "armv8"]):
+        log("  %-7s → http://%s:%d/index-%s.json" % (arch, host, args.port, arch))
     try:
         server.serve_forever()
     except KeyboardInterrupt:

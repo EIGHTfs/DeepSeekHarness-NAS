@@ -94,8 +94,7 @@ SKIP_BUILD=1 ./build/build-common.sh   # 复用已有 target（秒级）
 | `scripts/prune-release-assets.py` | 清理 Release 改名残留资产；`--tag <tag> --keep-from <dir> [--dry-run]` |
 | `scripts/guards/check-release-assets.py` | 核对某 tag 的四资产是否齐套（缺件告警）；`--repo <owner/name> --tag <tag> [--token] [--strict] [--json]` |
 | `scripts/guards/check-node-engines.py` | 校验随包 node 是否满足官方 engines.node；`--engines "<范围>" --node <路径>` 或 `--node-version <版本>` |
-| `scripts/gen-pkg-source.py` | 生成群晖套件源索引；`--spk <spk>`（可重复）`[--base-url <前缀>] [--out-dir pkg-source] [--dry-run]` |
-| `scripts/pkg-source-server.py` | 独立跑局域网套件源（自己起端口、从 Release 取索引、定时刷新）；`--port <端口> [--interval <秒>] [--once] [--from-spk-dir <dir>]` |
+| `scripts/pkg-source-server.py` | 通用套件源服务：指定任意 GitHub 仓库，把它的 Release 当 SPK 源（默认不下载，套件中心自己下）；`--repo <owner/repo> [--port] [--tag] [--arches] [--with-md5] [--deep]` |
 | `scripts/update-release-note.sh` | 单独刷新某个 Release 正文（不重新构建）；`--tag <tag> [--trigger <名>] [--dry-run]`，`--tag` 可空=最新 |
 | `scripts/collect-failure-fixtures.py` | 采集历史 CI 失败日志做回归夹具；`[--limit N] [--out <dir>] [--dry-run]` |
 
