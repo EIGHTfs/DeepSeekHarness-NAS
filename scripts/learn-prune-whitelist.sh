@@ -310,6 +310,18 @@ if json_out:
         ensure_ascii=False))
 learned -= existing_white           # 已在白名单的跳过
 
+# 平台专属名归一成 {arch}：否则从某个架构的日志学到 arm64 字面量后，另一个架构又会缺
+def _template_platform(name):
+    for suffix, repl in (('-linuxmusl-x64', '-linuxmusl-{arch}'),
+                         ('-linuxmusl-arm64', '-linuxmusl-{arch}'),
+                         ('-linux-x64', '-linux-{arch}'),
+                         ('-linux-arm64', '-linux-{arch}')):
+        if name.endswith(suffix):
+            return name[: -len(suffix)] + repl
+    return name
+
+learned = {_template_platform(n) for n in learned}
+
 if not learned:
     print("  ✓ 无新包需要并入（全部已在白名单或不属于裁剪候选）")
     sys.exit(0)

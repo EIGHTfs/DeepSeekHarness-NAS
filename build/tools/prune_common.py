@@ -19,6 +19,29 @@ import os
 import re
 
 
+def arch_label(default="x64"):
+    """当前目标平台在包名里的架构标记（x64 / arm64）。
+
+    为什么需要：白名单里的平台专属条目（node-addon-require-builtin-linux-{arch}-gnu、
+    @img/sharp-linux-{arch} 等）只写一份，由这里按目标架构展开 —— 否则同一份白名单
+    只能照顾一个架构，另一个架构的原生包会被纯白名单裁剪整批删掉（实测 arm64 起不来）。
+    """
+    import os
+
+    arch = (os.environ.get("PRUNE_ARCH") or "").strip().lower()
+    if arch in ("arm64", "aarch64"):
+        return "arm64"
+    if arch in ("x64", "x86_64", "amd64"):
+        return "x64"
+    return default
+
+
+def expand_arch(entries, default="x64"):
+    """把条目里的 {arch} 占位替换成当前目标架构标记。"""
+    label = arch_label(default)
+    return [str(entry).replace("{arch}", label) for entry in entries]
+
+
 def pkg_name(pnpm_dir):
     """.pnpm 目录名 → 包名
 

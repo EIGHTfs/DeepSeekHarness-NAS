@@ -44,6 +44,7 @@ EXEMPT = {
     'DSH_WORKSPACE_HOME',   # entrypoint 内部：覆盖 HOME（选择器起点），一般用默认 /workspace
     'DSH_WORKSPACE_ALIAS_ROOT',  # entrypoint 内部：/workspace 别名根，几乎不需要改
     'DSH_ROOT',                 # entrypoint 内部：载荷根（镜像里固定 /opt/dsh）
+    'PRUNE_ARCH',              # prune-target 内部：目标架构标记（默认由 uname -m 推导），供 {arch} 展开
     'DSH_TRANSPORT',            # 运行期全局名（前端），不是打包占位符
     'DSH_FILE_UPLOAD',          # 运行期全局名（前端上传钩子），不是打包占位符
     'DSH_PKG_JSON',         # fix-runtime-deps 内部：package.json 路径

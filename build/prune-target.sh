@@ -69,6 +69,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WHITELIST_FILE="${WHITELIST_FILE:-$SCRIPT_DIR/config/build-prune-whitelist.json}"
 
+# 白名单里的平台专属条目写成 {arch} 占位（如 node-addon-require-builtin-linux-{arch}-gnu），
+#   由这里按**本次目标架构**展开。原因：纯白名单模式下若只列 x64，arm64 构建会把
+#   自己需要的原生包整批裁掉（实测 arm64 容器起不来：Cannot find module ...linux-arm64-gnu）。
+PRUNE_ARCH="${PRUNE_ARCH:-$(uname -m)}"
+case "$PRUNE_ARCH" in
+  x86_64|amd64|x64) PRUNE_ARCH=x64 ;;
+  aarch64|arm64)    PRUNE_ARCH=arm64 ;;
+esac
+export PRUNE_ARCH
+
 MODE_BEFORE_INSTALL=0
 MODE_BEFORE_BUILD=0
 if [[ "${1:-}" == "--before-install" ]]; then
@@ -95,6 +105,18 @@ if [ "$MODE_BEFORE_INSTALL" = "1" ]; then
 import json, os, sys
 build_src, white_file = sys.argv[1], sys.argv[2]
 white = json.load(open(white_file, encoding='utf-8'))
+# {arch} 展开：优先用公共实现（build/tools/prune_common.py），拿不到就地兜底
+try:
+    from prune_common import expand_arch
+except Exception:
+    def expand_arch(items, default='x64'):
+        import os as _os
+        label = (_os.environ.get('PRUNE_ARCH') or default).strip().lower()
+        label = 'arm64' if label in ('arm64', 'aarch64') else 'x64'
+        return [str(x).replace('{arch}', label) for x in (items or [])]
+for _key in ('extra', 'lockfileDeps', '_autoLearned'):
+    if isinstance(white.get(_key), list):
+        white[_key] = expand_arch(white[_key])
 
 # 白名单集合：extra（类型检查包等） + lockfileDeps + workspaceRuntimeDeps
 whitelist = set(white.get('extra', []))
@@ -180,6 +202,18 @@ sys.path.insert(0, os.environ['PRUNE_COMMON_DIR'])
 from prune_common import pkg_name, pkg_deps, expand_closure   # 公共逻辑，勿再内联复制
 build_src, white_file = sys.argv[1], sys.argv[2]
 white = json.load(open(white_file, encoding='utf-8'))
+# {arch} 展开：优先用公共实现（build/tools/prune_common.py），拿不到就地兜底
+try:
+    from prune_common import expand_arch
+except Exception:
+    def expand_arch(items, default='x64'):
+        import os as _os
+        label = (_os.environ.get('PRUNE_ARCH') or default).strip().lower()
+        label = 'arm64' if label in ('arm64', 'aarch64') else 'x64'
+        return [str(x).replace('{arch}', label) for x in (items or [])]
+for _key in ('extra', 'lockfileDeps', '_autoLearned'):
+    if isinstance(white.get(_key), list):
+        white[_key] = expand_arch(white[_key])
 pnpm = os.path.join(build_src, 'node_modules', '.pnpm')
 
 # ── 白名单 = 运行时闭包 + 构建工具闭包 ────────────────────────────────────
@@ -304,6 +338,18 @@ sys.path.insert(0, os.environ['PRUNE_COMMON_DIR'])
 from prune_common import pkg_name, expand_closure   # 公共逻辑，勿再内联复制
 target, white_file = sys.argv[1], sys.argv[2]
 white = json.load(open(white_file, encoding='utf-8'))
+# {arch} 展开：优先用公共实现（build/tools/prune_common.py），拿不到就地兜底
+try:
+    from prune_common import expand_arch
+except Exception:
+    def expand_arch(items, default='x64'):
+        import os as _os
+        label = (_os.environ.get('PRUNE_ARCH') or default).strip().lower()
+        label = 'arm64' if label in ('arm64', 'aarch64') else 'x64'
+        return [str(x).replace('{arch}', label) for x in (items or [])]
+for _key in ('extra', 'lockfileDeps', '_autoLearned'):
+    if isinstance(white.get(_key), list):
+        white[_key] = expand_arch(white[_key])
 pnpm = os.path.join(target, 'node_modules', '.pnpm')
 
 # ── 白名单集合（纯白名单模式：只保留这些，其余全删） ──

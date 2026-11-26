@@ -24,6 +24,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS="$(cd "$SCRIPT_DIR/.." && pwd)"
 WHITELIST_FILE="$SCRIPT_DIR/config/build-prune-whitelist.json"
 
+# 平台专属包名模板化：锁文件（package-lock.json）通常只记录了**生成它的那个平台**的
+#   可选依赖（实测只有 linux-x64），直接写回白名单会让另一个架构在裁剪时被整批删掉。
+#   这里把同族名字归一成 {arch} 占位，由 prune-target.sh 在裁剪时按目标架构展开。
+template_platform_names() {
+  sed -e 's/-linuxmusl-x64}$/-linuxmusl-{arch}/' -e 's/-linux-x64}$/-linux-{arch}/'
+}
+
 # ── 锁文件定位（缺省：最新 npm-app 产物） ──
 LOCK_FILE="${1:-}"
 DRY_RUN=0
@@ -105,6 +112,15 @@ with open(white_file, encoding='utf-8') as f:
 import os
 with open(list_file, encoding='utf-8') as f:
     names = [l.strip() for l in f if l.strip()]
+# 平台专属名归一成 {arch}：锁文件通常只记录生成它的那个平台的可选依赖，
+#   直接写回会让另一个架构在纯白名单裁剪时被整批删掉（实测 arm64 起不来）
+def _template_platform(name):
+    for suffix, repl in (('-linuxmusl-x64', '-linuxmusl-{arch}'), ('-linux-x64', '-linux-{arch}')):
+        if name.endswith(suffix):
+            return name[: -len(suffix)] + repl
+    return name
+
+names = [_template_platform(n) for n in names]
 cfg['lockfileDeps'] = names
 cfg['_lockNote'] = (f"自动生成 {count} 个（{os.path.basename(list_file)} 来源的 npm 锁文件 packages 键），"
                     f"gen-prune-whitelist.sh 写入；与 extra/workspaceRuntimeDeps 取并集")
