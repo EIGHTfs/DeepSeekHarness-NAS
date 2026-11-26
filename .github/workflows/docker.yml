@@ -85,6 +85,7 @@ jobs:
           suffix: amd64
           image: ${{ env.IMAGE }}
           registry: ${{ env.REGISTRY }}
+          token: ${{ github.token }}
 
   build-arm64:
     name: image-arm64
@@ -110,6 +111,7 @@ jobs:
           suffix: arm64
           image: ${{ env.IMAGE }}
           registry: ${{ env.REGISTRY }}
+          token: ${{ github.token }}
 
   manifest:
     name: manifest
