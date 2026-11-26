@@ -39,6 +39,7 @@ EXEMPT = {
     # ↑ dsh-repair 内联脚本的一次性传参，由 start.sh 自己拼装
     'FORCE_EXCLUDE',        # 白名单数据结构内的字段名，非用户开关
     'DSH_PROBE_NAMES',      # fix-runtime-deps 内部：待探测包名列表
+    'DSH_PKG_VAR_ROOT',     # start.sh 内部：实例数据 var 的根（跨版本稳定 PID 用），非用户开关
     'DSH_PKG_JSON',         # fix-runtime-deps 内部：package.json 路径
     'PRUNE_SCRIPT',         # build-common 内部：prune-target.sh 路径
     'DSH_OWNER',            # build-fpk 内部：目标属主
