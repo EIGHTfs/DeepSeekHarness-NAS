@@ -136,19 +136,21 @@ jobs:
         run: |
           set -euo pipefail
           meta="build/master-build/build/build-meta.env"
-          pkg_ver="$(awk -F= '/^PKG_VER=/{gsub(/"/,"",$2); print $2}' "$meta" | tail -1)"
-          beta="$(awk -F= '/^SPK_BETA=/{gsub(/"/,"",$2); print $2}' "$meta" | tail -1)"
+          # 值是 shell 赋值写法且带引号（PKG_VER='0.2.3-alpha.2'），必须同时去掉单双引号
+          pkg_ver="$(grep -m1 '^PKG_VER=' "$meta" | cut -d= -f2- | tr -d "\"'")"
           test -n "$pkg_ver" || { echo "✗ 没读到 PKG_VER" >&2; exit 1; }
           base="${REGISTRY}/${IMAGE}"
+          # 通道按**版本后缀**判定（比依赖平台变量稳：docker 这条链路不一定产出 SPK_BETA）
+          case "$pkg_ver" in
+            *-alpha*)   channel=alpha ;;
+            *-beta*)    channel=beta ;;
+            *-rc*)      channel=rc ;;
+            *-preview*) channel=preview ;;
+            *)          channel="" ;;
+          esac
           tags="${base}:${pkg_ver}"
-          if [ "${beta:-no}" = "yes" ]; then
-            # 预发布：只打通道名，绝不覆盖 latest（阶段位 1xxx=alpha / 2xxx=beta / 4xxx=preview）
-            case "$pkg_ver" in
-              *1[0-9][0-9][0-9]) channel=alpha ;;
-              *2[0-9][0-9][0-9]) channel=beta ;;
-              *4[0-9][0-9][0-9]) channel=preview ;;
-              *) channel=pre-release ;;
-            esac
+          if [ -n "$channel" ]; then
+            # 预发布只打通道名，绝不覆盖 latest
             tags="$tags ${base}:${channel}"
           else
             tags="$tags ${base}:latest"

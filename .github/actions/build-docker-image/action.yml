@@ -53,7 +53,9 @@ runs:
         rm -rf build/master-build/docker/target
         cp -a "$src/target" build/master-build/docker/target
         test -x build/master-build/docker/target/bin/node || { echo "✗ 载荷里没有可执行的 bin/node" >&2; exit 1; }
-        pkg_ver="$(awk -F= '/^PKG_VER=/{gsub(/"/,"",$2); print $2}' "$src/build-meta.env" | tail -1)"
+        # build-meta.env 里是 shell 赋值写法且**带引号**（PKG_VER='0.2.3-alpha.2'），
+        #   只删双引号会留下单引号 → docker tag 变成 'x'-amd64 → invalid reference format（实测）
+        pkg_ver="$(grep -m1 '^PKG_VER=' "$src/build-meta.env" | cut -d= -f2- | tr -d "\"'")"
         test -n "$pkg_ver" || { echo "✗ build-meta.env 里没有 PKG_VER" >&2; exit 1; }
         echo "pkg_ver=$pkg_ver" >> "$GITHUB_OUTPUT"
         echo "版本=$pkg_ver 载荷=$(du -sh build/master-build/docker/target | cut -f1)"
