@@ -98,6 +98,21 @@ runs:
         rm -rf build/master-build/docker/target
         echo "已清理暂存载荷；工作区剩余 $(du -sh build/master-build 2>/dev/null | cut -f1)"
 
+    # 预检：先确认镜像里的运行时能在**本架构**跑（跨架构误装 node 时这里立刻暴露，
+    #   而不是等到冒烟超时后只知道「端口未就绪」）
+    - name: 预检（架构 / node / start.sh）
+      shell: bash
+      run: |
+        set -euo pipefail
+        image="${{ inputs.registry }}/${{ inputs.image }}:${{ steps.stage.outputs.pkg_ver }}-${{ inputs.suffix }}"
+        echo "宿主: $(uname -m)  镜像: $image"
+        docker run --rm --entrypoint sh "$image" -c '
+          echo "  容器内 uname: $(uname -m)"
+          echo "  node: $(/opt/dsh/bin/node -v 2>&1 | head -1)"
+          echo "  start.sh: $(wc -l < /opt/dsh/start.sh 2>/dev/null || echo 缺失) 行, 可执行=$([ -x /opt/dsh/start.sh ] && echo yes || echo no)"
+          echo "  bin/node 架构: $(/opt/dsh/bin/node -p "process.arch" 2>&1 | head -1)"
+        '
+
     # 冒烟：镜像坏了不能等用户发现；只验「起得来 + 门户 302 + 健康 + 不含宿主路径」
     - name: 冒烟（起容器 + 门户 302 + healthy）
       shell: bash
@@ -127,14 +142,17 @@ runs:
         fi
         if [ "$ok" != "1" ]; then
           echo "✗ 冒烟失败，容器日志：" >&2
-          docker logs smoke 2>&1 | tail -40 >&2
+          docker inspect smoke --format '  退出码={{.State.ExitCode}} 状态={{.State.Status}} OOM={{.State.OOMKilled}}' >&2 || true
+          docker logs smoke 2>&1 | tail -60 >&2
           # 容器已退出时 docker logs 只剩 stdout，真正的失败原因在服务日志文件里 → 抓出来
           rm -rf smoke-cp >/dev/null 2>&1 || true
           if docker cp smoke:/data smoke-cp >/dev/null 2>&1; then
             echo "── 容器内服务日志：" >&2
             tail -60 smoke-cp/*.log 2>/dev/null >&2 || true
-            echo "── 日志文件清单：" >&2
-            ls -l smoke-cp 2>/dev/null >&2 || true
+            echo "── 容器内 /data 内容：" >&2
+            find smoke-cp -maxdepth 2 2>/dev/null | head -20 >&2 || true
+            echo "── 宿主侧 smoke-data：" >&2
+            find smoke-data -maxdepth 2 2>/dev/null | head -20 >&2 || true
           fi
           docker rm -f smoke >/dev/null 2>&1 || true
           exit 1
