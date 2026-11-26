@@ -116,7 +116,10 @@ def build_plan(arch, targets, force_all, base, head):
         else:
             hit = [f for f in files if matches(f, entry.get("watch") or [])]
             if hit:
-                changed, reason = True, hit[0]
+                # 列全命中文件：只显示第一个会误导（例：docker 同时受 build/docker/** 与
+                #   build/pkgsrc/** 影响，只报第一个会让人以为另一处没算进来）
+                changed = True
+                reason = ", ".join(hit) if len(hit) <= 3 else "%s 等 %d 个" % (", ".join(hit[:3]), len(hit))
             elif needs_target and target_changed:
                 # 自己没变，但公共 target 变了 —— 产物必然跟着变，必须重打
                 changed, reason = True, "公共 target 变更（%s）" % target_hit[0]
@@ -133,6 +136,7 @@ def build_plan(arch, targets, force_all, base, head):
             "artifacts": entry.get("artifacts") or [],
             "publish": entry.get("publish") or "release",
             "needs_target": bool(entry.get("needs_target", True)),
+            "hits": hit if files is not None else [],
         })
 
     need_target = any(item["changed"] and item["needs_target"] for item in plan)
@@ -141,7 +145,7 @@ def build_plan(arch, targets, force_all, base, head):
         "platforms": plan,
         "need_target": need_target,
         "target_changed": target_changed,
-        "target_hit": (target_hit[:3] or (["（无基准，按需要重建处理）"] if files is None else [])),
+        "target_hit": (target_hit if len(target_hit) <= 3 else target_hit[:3] + ["等 %d 个" % len(target_hit)]) if target_hit else (["（无基准，按需要重建处理）"] if files is None else []),
         "target_reason": ("需要：" + ",".join(changed_names)) if need_target else "本次无需 target",
         "changed_files": len(files) if files is not None else -1,
         "base": base or "",
