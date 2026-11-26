@@ -39,6 +39,19 @@ scripts/connect-local.bat                # Windows：双击后按提示输入 NA
 - 安装向导可留空端口（用打包默认）；卸载向导默认**保留数据**，选「彻底删除」才清数据；卸载走 Web UI（命令行会被平台拒绝）。
 - 回退旧版：Web UI 卸载（保持默认「保留数据」）→ 装旧版包 → 直接启动。数据按版本目录隔离，各版本用各自的配置与会话。
 
+### 从套件源安装（可自动更新）
+
+套件中心里显示已安装版本、最新在线版本与更新日志，可直接点「更新」；把包作为「套件来源」加进去后，套件中心会按版本比较提示更新。
+
+```bash
+# 起一个本地套件源（任意能访问 GitHub 的机器），再把地址加进 套件中心 → 设置 → 套件来源
+python3 scripts/pkg-source.py --repo EIGHTfs/DeepSeekHarness-NAS --port 8899
+# x86_64：http://<该机器IP>:8899/index-x86_64.json
+# armv8 ：http://<该机器IP>:8899/index-armv8.json
+```
+
+![套件中心里从本地套件源安装后的效果](https://raw.githubusercontent.com/EIGHTfs/DeepSeekHarness-NAS/main/docs/images/package-source-in-center.jpg)
+
 ## 常用操作（start.sh）
 
 ```bash
