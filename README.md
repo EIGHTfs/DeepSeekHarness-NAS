@@ -46,11 +46,30 @@ scripts/connect-local.bat                # Windows：双击后按提示输入 NA
 ```bash
 # 起一个本地套件源（任意能访问 GitHub 的机器），再把地址加进 套件中心 → 设置 → 套件来源
 python3 scripts/pkg-source.py --repo EIGHTfs/DeepSeekHarness-NAS --port 8899
-# x86_64：http://<该机器IP>:8899/index-x86_64.json
-# armv8 ：http://<该机器IP>:8899/index-armv8.json
+# 填这个地址（单文件目录，所有架构混在一起、每条自带 arch 数组）：
+#   http://<该机器IP>:8899/api/package
+```
+
+离线也可用本地目录当源（自己托管 spk 下载，并现算真实 md5）：
+
+```bash
+python3 scripts/pkg-source.py --from-spk-dir /volume1/release --base-url http://<该机器IP>:8899 --port 8899
+# 目录里的包由本服务直接提供：/spk/<文件名>；图标由 /icon/<包名>-72.png 提供
 ```
 
 ![套件中心里从本地套件源安装后的效果](https://raw.githubusercontent.com/EIGHTfs/DeepSeekHarness-NAS/main/docs/images/package-source-in-center.jpg)
+
+### 自动更新后旧数据不会自动搬过来
+
+数据按版本目录隔离是设计：升级（套件中心更新或自动更新）后新版本用新的 `var/<版本>/.dsh`，旧版本的数据仍在原目录，**不会自动迁移**。要把设置、凭据、插件配置带过来，用仓库里的迁移脚本（先看候选、再演练、最后才写盘）：
+
+```bash
+./scripts/migrate-dsh-home.sh list                                   # 列出可迁的旧版本目录（只读）
+./scripts/migrate-dsh-home.sh migrate --from <旧版本> --dry-run       # 演练，不写盘
+./scripts/migrate-dsh-home.sh migrate --from <旧版本> --confirm       # 真执行（配置 + 会话）
+./scripts/migrate-dsh-home.sh migrate --from <旧版本> --config-only --confirm   # 只迁配置，不带会话
+./scripts/migrate-dsh-home.sh prune --version <旧版本> --confirm      # 旧数据改名归档（可恢复）
+```
 
 ## 常用操作（start.sh）
 
@@ -107,7 +126,7 @@ SKIP_BUILD=1 ./build/build-common.sh   # 复用已有 target（秒级）
 | `scripts/prune-release-assets.py` | 清理 Release 改名残留资产；`--tag <tag> --keep-from <dir> [--dry-run]` |
 | `scripts/guards/check-release-assets.py` | 核对某 tag 的四资产是否齐套（缺件告警）；`--repo <owner/name> --tag <tag> [--token] [--strict] [--json]` |
 | `scripts/guards/check-node-engines.py` | 校验随包 node 是否满足官方 engines.node；`--engines "<范围>" --node <路径>` 或 `--node-version <版本>` |
-| `scripts/pkg-source.py` | 通用套件源：任意 GitHub 仓库的 Release → DSM 套件源（单文件、零耦合、默认不下载）；`--repo <owner/repo> [--asset-regex] [--arches] [--check] [--from-spk-dir]`
+| `scripts/pkg-source.py` | 通用套件源：任意 GitHub 仓库的 Release → DSM 套件源（单文件、零耦合）。用 HTTP Range 只读包头解析 `INFO` 取元数据（不整包下载），产出单文件目录 `catalog.json`，对外路由 `/api/package`；`--from-spk-dir` 可离线自托管并现算 md5；`--repo <owner/repo> [--releases N] [--arches] [--arch-expand] [--check]` |
 | `scripts/update-release-note.sh` | 单独刷新某个 Release 正文（不重新构建）；`--tag <tag> [--trigger <名>] [--dry-run]`，`--tag` 可空=最新 |
 | `scripts/collect-failure-fixtures.py` | 采集历史 CI 失败日志做回归夹具；`[--limit N] [--out <dir>] [--dry-run]` |
 
