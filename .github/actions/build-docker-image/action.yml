@@ -107,7 +107,9 @@ runs:
         echo "镜像: $image"
         mkdir -p smoke-data
         docker rm -f smoke >/dev/null 2>&1 || true
-        docker run -d --name smoke -p 38080:30800 -v "$PWD/smoke-data:/data" "$image"
+        # 以 runner 身份运行：容器写的文件属主与 runner 一致，冒烟后能正常清理
+        #   （否则 root 写的 smoke-data 用 runner 身份删不掉，GitHub 的 -e 会让整步失败）
+        docker run -d --name smoke --user "$(id -u):$(id -g)" -p 38080:30800 -v "$PWD/smoke-data:/data" "$image"
         ok=0
         for i in $(seq 1 24); do
           code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'Sec-Fetch-Dest: document' http://127.0.0.1:38080/ || true)"
@@ -130,5 +132,5 @@ runs:
           exit 1
         fi
         docker rm -f smoke >/dev/null 2>&1 || true
-        rm -rf smoke-data
+        rm -rf smoke-data 2>/dev/null || sudo rm -rf smoke-data 2>/dev/null || true
         echo "✓ 冒烟通过"
