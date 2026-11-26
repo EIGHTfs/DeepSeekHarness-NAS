@@ -302,7 +302,8 @@ def expand_arch_codes(arch, args):
     return codes or ([arch] if arch else [])
 
 
-def build_entry(package, arch, version, link, size, meta, args):
+def build_entry(package, arch, version, link, size, meta, args,
+                release_body="", asset_download_count=0):
     """按 DSM 套件源目录的真实条目格式构造记录。
 
     字段与类型对齐现役实现（sspks-imnks 的 JsonOutput）实测输出：
@@ -326,7 +327,8 @@ def build_entry(package, arch, version, link, size, meta, args):
         "arch": expand_arch_codes(arch, args),
         "price": 0,
         # 原生实现给固定展示值，DSM 只展示不校验
-        "download_count": 0,
+        # 下载次数取 Release 资产的真实计数（本地模式无此信息，按 0）
+        "download_count": asset_download_count,
         "recent_download_count": 0,
         "link": link,
         "size": size,
@@ -346,7 +348,8 @@ def build_entry(package, arch, version, link, size, meta, args):
         "distributor": meta.get("distributor") or "",
         "distributor_url": meta.get("distributor_url") or "",
         "support_url": meta.get("support_url") or "",
-        "changelog": meta.get("changelog") or "",
+        # 更新日志优先用 Release 说明（发版时写的对外说明）；拿不到才回落到 INFO 的 changelog
+        "changelog": release_body or meta.get("changelog") or "",
         "thirdparty": True,
         "category": args.category_code,
         "subcategory": 0,
@@ -396,7 +399,7 @@ def build_entry(package, arch, version, link, size, meta, args):
     return entry
 
 
-def resolve_meta(args, name, location, link, size, guess):
+def resolve_meta(args, name, location, link, size, guess, release_body="", asset_download_count=0):
     """按「读包头 → 解析 INFO」取元数据，返回 (entry, arch, reason) 三元组。
 
     location 是读取包头用的地址（本地路径或远程直链），link 是最终写进索引、
@@ -451,7 +454,8 @@ def resolve_meta(args, name, location, link, size, guess):
         WARNINGS.append("架构未知，按 noarch 归档（%s）" % name)
     if args.arches and arch not in args.arches:
         return None, None, None  # 被 --arches 明确过滤，不算异常
-    entry = build_entry(package, arch, version, link, size, meta, args)
+    entry = build_entry(package, arch, version, link, size, meta, args,
+                        release_body, asset_download_count)
     # 本地包现算真实 md5：空 md5 会让部分 DSM 版本直接跳过该条记录
     if args.from_spk_dir and not entry.get("md5"):
         entry["md5"] = compute_md5(location)
@@ -516,13 +520,15 @@ def collect(args, pattern, token):
                 WARNINGS.append("命名不符 --asset-regex，改用 INFO 兜底（%s）" % name)
             # 本地模式的下载地址走本服务的 /spk/ 路由，DSM 侧不依赖任何外网资产
             link = ("%s/spk/%s" % (args.base_url.rstrip("/"), name)) if args.base_url else name
-            sources.append((name, path, os.path.getsize(path), matched.groupdict(), link))
+            sources.append((name, path, os.path.getsize(path), matched.groupdict(), link, "", 0))
         if not sources:
             skipped.append("目录 %s 下没有匹配的 spk" % args.from_spk_dir)
     else:
         sources = []
         for release in list_releases(args.repo, args.tag, args.releases, token):
             tag_name = release.get("tag_name") or ""
+            # Release 说明即对外更新日志；统一换行符，避免详情页显示异常
+            release_body = (release.get("body") or "").replace("\r\n", "\n").strip()
             for asset in release.get("assets") or []:
                 name = asset.get("name") or ""
                 matched, used_fallback = match_asset(name, pattern, not args.no_info)
@@ -536,10 +542,12 @@ def collect(args, pattern, token):
                 # 镜像前缀，这里若存已套好的 link 就会变成 ghfast.top/ghfast.top/...（实测 403）。
                 raw_link = asset["browser_download_url"]
                 link = (args.link_mirror.rstrip("/") + "/" + raw_link) if args.link_mirror else raw_link
-                sources.append((name, raw_link, asset.get("size") or 0, matched.groupdict(), link))
+                sources.append((name, raw_link, asset.get("size") or 0, matched.groupdict(), link,
+                                release_body, asset.get("download_count") or 0))
 
-    for name, location, size, guess, link in sources:
-        entry, arch, reason = resolve_meta(args, name, location, link, size, guess)
+    for name, location, size, guess, link, release_body, asset_download_count in sources:
+        entry, arch, reason = resolve_meta(args, name, location, link, size, guess,
+                                           release_body, asset_download_count)
         if reason:
             skipped.append(reason)
             continue
