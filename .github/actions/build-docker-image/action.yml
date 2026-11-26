@@ -111,7 +111,7 @@ runs:
         #   （否则 root 写的 smoke-data 用 runner 身份删不掉，GitHub 的 -e 会让整步失败）
         docker run -d --name smoke --user "$(id -u):$(id -g)" -p 38080:30800 -v "$PWD/smoke-data:/data" "$image"
         ok=0
-        for i in $(seq 1 24); do
+        for i in $(seq 1 36); do
           code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'Sec-Fetch-Dest: document' http://127.0.0.1:38080/ || true)"
           health="$(docker inspect --format '{{.State.Health.Status}}' smoke 2>/dev/null || echo unknown)"
           echo "  第 ${i} 次：HTTP=$code health=$health"
@@ -128,6 +128,14 @@ runs:
         if [ "$ok" != "1" ]; then
           echo "✗ 冒烟失败，容器日志：" >&2
           docker logs smoke 2>&1 | tail -40 >&2
+          # 容器已退出时 docker logs 只剩 stdout，真正的失败原因在服务日志文件里 → 抓出来
+          rm -rf smoke-cp >/dev/null 2>&1 || true
+          if docker cp smoke:/data smoke-cp >/dev/null 2>&1; then
+            echo "── 容器内服务日志：" >&2
+            tail -60 smoke-cp/*.log 2>/dev/null >&2 || true
+            echo "── 日志文件清单：" >&2
+            ls -l smoke-cp 2>/dev/null >&2 || true
+          fi
           docker rm -f smoke >/dev/null 2>&1 || true
           exit 1
         fi
