@@ -60,6 +60,11 @@ runs:
         echo "pkg_ver=$pkg_ver" >> "$GITHUB_OUTPUT"
         echo "版本=$pkg_ver 载荷=$(du -sh build/master-build/docker/target | cut -f1)"
 
+        # start.sh 不在 target 产物里（由打包器出包时生成）——必须在这里补，
+        #   否则容器启动直接 `./start.sh: No such file or directory`（CI run #4 实测）
+        bash build/docker/stage-payload.sh build/master-build/docker/target
+        test -x build/master-build/docker/target/start.sh || { echo "✗ 载荷里没有可执行的 start.sh" >&2; exit 1; }
+
     - name: 准备 buildx
       uses: docker/setup-buildx-action@v3
 

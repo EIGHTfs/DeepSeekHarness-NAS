@@ -133,6 +133,12 @@ def _build_chain_scripts():
                 candidate = match.group(1)
                 if candidate.startswith("./"):
                     candidate = candidate[2:]
+                # 构建产物不是「仓库里的源脚本」：build/master-build/** 是出包/镜像阶段在
+                #   runner 上生成的（本地不存在），纳入语法检查必然误报 No such file。
+                if candidate.startswith(("build/master-build/", "build/staging/")):
+                    continue
+                if "$" in candidate or "{" in candidate:
+                    continue
                 chain.add(candidate)
     return chain
 
