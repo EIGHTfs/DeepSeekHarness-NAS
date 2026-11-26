@@ -40,6 +40,10 @@ on:
         required: false
         type: boolean
         default: false
+      base_sha:
+        description: '变化检测基准 sha（留空=自动取上次成功构建的 sha）'
+        required: false
+        default: '' 
       dry_run:
         description: '只输出构建计划，不执行任何构建'
         required: false
@@ -69,6 +73,11 @@ on:
         required: false
         type: boolean
         default: false
+      base_sha:
+        description: '变化检测基准 sha（留空=自动）'
+        required: false
+        type: string
+        default: '' 
       dry_run:
         description: '只输出计划'
         required: false
@@ -134,12 +143,17 @@ jobs:
               *) base="$before" ;;
             esac
           else
-            # 手动/被调用：与「上一次成功的本 workflow」对比，找不到就空（脚本会保守全量）
-            base="$(gh run list --workflow="${{ github.workflow }}" --status=success \
-                      --limit=1 --json headSha --jq '.[0].headSha' 2>/dev/null || true)"
-            # 上一次成功的可能就是当前 sha（重跑场景）→ 用它的前一个提交，避免「与自己比 = 无变化」
-            if [ "$base" = "$head" ]; then
-              base="$(git rev-parse "${head}~1" 2>/dev/null || true)"
+            # 手动/被调用：与「上一次成功且 sha 不同的本 workflow」对比
+            #   为什么要「sha 不同」：dry_run 的 run 也是 success，它的 headSha 就等于当前
+            #   head；若直接取最近一次成功，就会退化成「与自己比 = 无变化」（实测踩到：
+            #   dry_run 之后实跑判定全跳过）。这里往前找第一个不同 sha 的成功 run，
+            #   它才代表「真正构建过的代码」。
+            if [ -n "${{ inputs.base_sha || '' }}" ]; then
+              base="${{ inputs.base_sha }}"
+            else
+              base="$(gh run list --workflow="${{ github.workflow }}" --status=success --limit=10 \
+                        --json headSha --jq "[.[].headSha] | map(select(. != \"$head\")) | .[0] // empty" \
+                        2>/dev/null || true)"
             fi
           fi
           echo "base=$base" >> "$GITHUB_OUTPUT"
