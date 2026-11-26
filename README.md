@@ -123,6 +123,7 @@ SKIP_BUILD=1 ./build/build-common.sh   # 复用已有 target（秒级）
 | `scripts/guards/check-packaging-invariants.py` | 打包不变量（含生成函数自包含、按声明范围选版本、出货裁剪并入 `_autoLearned`）；`--verbose` 列出每条检查 |
 | `scripts/guards/check-platform-boundary.py` | 平台边界守卫：公共构建内核不得出现平台专有词，适配器三钩子齐备；`--verbose` 逐项列出 |
 | `scripts/guards/check-path-references.py` | 物料路径守卫：脚本引用的 `config/` `pkgsrc/` `tools/` 等必须真实存在（目录搬家后最容易漏的一类） |
+| `scripts/guards/check-start-placeholders.py` | 占位符守卫：`start.sh.example` 里的每个 `__X__` 必须能在 `gen_start_sh()` 找到注入点（漏加替换会把字面占位符漏进产物） |
 | `scripts/guards/check-package-parity.py` | 两包结构比对（软链/悬空/manifest）；`<基准包> <候选包> [--verbose] [--baseline-self]` |
 | `scripts/verify-pkg-arch.py` | 验包架构（spk/fpk 通用）：读 `bin/node` 的 ELF `e_machine` 并核 native 平台目录；`<包路径> [--arch x86_64\|arm64] [--keep]` |
 | `scripts/migrate-dsh-home.sh` | 跨版本迁移实例数据（默认含会话）：`list` / `migrate --from <旧版本> --dry-run` / `--confirm` / `prune --version <旧版本> --confirm`；`--config-only` 只迁配置，`--target` 指定目标版本，`--package`/`--group` 指向其它套件；环境变量 `DSH_PACKAGE_NAME` / `DSH_PACKAGE_GROUP` 同义 |

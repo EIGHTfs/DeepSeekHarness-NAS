@@ -5,10 +5,15 @@
 #  用法:   ./start.sh [--proxy-port N] [--dsh-port N] [--container-port N] [start|stop|restart|status|check|fix-owner|fix-deps|fix-store|self-check]
 #
 #  ⚠ 本文件是【逻辑母版】，不是最终运行脚本：
-#     最终 start.sh 由 pack-spk.sh / pack-fpk.sh 依 build-config.yaml 生成，
-#     端口/应用名/品牌/名牌版本链以 __PROXY_PORT__ / __DSH_PORT__ / __CONTAINER_PORT__ / __APP_NAME__ /
-#     __BRAND_NAME__ / __BRAND_VERSION_ORDER__ / __FPK_VERSION__ / __PORTAL_TITLE__ / __PORTAL_DESC__
-#     占位符形式存在，生成时按 build-config.yaml 注入（禁止在此写死端口、包名与品牌字面）。
+#     最终 start.sh 由 pack-spk.sh / pack-fpk.sh 生成，注入动作统一在 gen_start_sh()（scripts/lib/common.sh），
+#     取值来自 build-config.yaml。模板里只允许以占位符出现，当前共 10 个（守卫 check-start-placeholders.py 会核对）：
+#       __PROXY_PORT__ __DSH_PORT__ __CONTAINER_PORT__   反代/DSH/容器端口
+#       __APP_NAME__ __APP_ID__                          包名；APP_ID 为去连字符的 UI 键名主体
+#       __BRAND_NAME__ __BRAND_VERSION_ORDER__           品牌短名与名牌版本链顺序
+#       __PORTAL_TITLE__ __PORTAL_DESC__                 门户页标题与副标题
+#       __FPK_VERSION__                                  FPK 版本号兜底（SPK 用 INFO 版本）
+#     注意两点：① 新增占位符必须同时在 gen_start_sh() 里加替换，否则产物里会漏出字面占位符；
+#               ② 代理代码里的 window.__DSH_TRANSPORT__ / __DSH_FILE_UPLOAD__ 是运行期全局名，不是占位符。
 #  说明:   全部逻辑内嵌于本文件，无需外部 dsh-repair：
 #          自动定位 DSH 目录 / node / 启动入口
 #          → 清理旧实例 → 权限与目录修复 → 启动 DSH

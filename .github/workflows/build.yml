@@ -92,6 +92,8 @@ jobs:
           python3 scripts/guards/check-platform-boundary.py
           # 物料路径：脚本里引用的 config/ pkgsrc/ tools/ 等必须真实存在（搬家后最易漏）
           python3 scripts/guards/check-path-references.py
+          # 占位符：模板里的 __X__ 必须有注入点（漏加替换会把字面量漏进最终产物）
+          python3 scripts/guards/check-start-placeholders.py
           # 学习器回归（dry-run，夹具见 test/fixtures/learner/）
           bash test/learner-dryrun.test.sh
           # Release 资产清理回归（架构维度，见 test/prune-release-assets.test.sh）
