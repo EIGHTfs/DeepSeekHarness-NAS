@@ -23,12 +23,17 @@
 用法：python3 scripts/guards/check-workflow-yaml.py [--list]
 退出码：0 通过 / 1 违规
 """
+import glob
 import os
 import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-TARGETS = [".github/workflows/build.yml"] + [
+# 覆盖全部 workflow（不再只盯 build.yml）：新增流水线自动纳入检查，避免「新加的没人校验」。
+TARGETS = sorted(
+    os.path.relpath(path, ROOT)
+    for path in glob.glob(os.path.join(ROOT, ".github", "workflows", "*.yml"))
+) + [
     os.path.join(".github/actions", d, "action.yml")
     for d in sorted(os.listdir(os.path.join(ROOT, ".github", "actions")))
     if os.path.isdir(os.path.join(ROOT, ".github", "actions", d))
@@ -100,7 +105,8 @@ def check(path):
         return []
     text = open(full, encoding="utf-8", errors="replace").read()
     out = _check_scalars(path, text)
-    if path.endswith("workflows/build.yml") or path.endswith("build.yml"):
+    # needs 校验对所有 workflow 生效（不只 build.yml）
+    if "workflows/" in path.replace(os.sep, "/"):
         out += _check_needs(path, text)
     if path.endswith("action.yml"):
         out += check_step_indent(path, text.splitlines())

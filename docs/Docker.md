@@ -12,7 +12,20 @@
 | 工作区 | 直接选宿主目录 | 宿主目录**同路径挂载** + `/workspace/<名>` 别名 |
 | 基础镜像 | — | `debian:12-slim`（随包 node 需要 glibc ≥ 2.28；alpine 不行） |
 
-## 2. 构建
+## 1.1 用官方构建的镜像（推荐）
+
+CI 会按 tag 出多架构镜像（amd64 / arm64 合并为同一 tag），不必自己构建：
+
+```bash
+docker pull ghcr.io/eightfs/deepseekharness-nas:0.2.3-1002    # 指定版本
+docker pull ghcr.io/eightfs/deepseekharness-nas:latest        # 仅正式版会更新 latest
+```
+
+预发布版本只打 `0.2.3-1002` 与 `alpha` / `beta` 通道，**不会**覆盖 `latest`。
+
+首次推送后，GHCR 的包默认是私有的，需要在仓库的 Packages 设置里改为 public，别人才能匿名 `pull`（这一步只能手工点，脚本做不了）。
+
+## 2. 自己构建
 
 ```bash
 ./build/build-common.sh                                     # 产出 build/master-build/<work>/target
