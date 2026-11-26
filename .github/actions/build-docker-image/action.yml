@@ -88,6 +88,16 @@ runs:
         cache-from: type=gha,scope=${{ inputs.arch }}
         cache-to: type=gha,mode=max,scope=${{ inputs.arch }}
 
+    # 及时清掉暂存载荷：docker build 已把它打进镜像层，留着会让 workflow 后置的
+    #   actions/cache（hashFiles('**/pnpm-lock.yaml')）去遍历 ~800MB 目录并报
+    #   "Fail to hash files under directory"（实测 run #5 就挂在这一步，冒烟其实已通过）
+    - name: 清理暂存载荷
+      shell: bash
+      run: |
+        set -uo pipefail
+        rm -rf build/master-build/docker/target
+        echo "已清理暂存载荷；工作区剩余 $(du -sh build/master-build 2>/dev/null | cut -f1)"
+
     # 冒烟：镜像坏了不能等用户发现；只验「起得来 + 门户 302 + 健康 + 不含宿主路径」
     - name: 冒烟（起容器 + 门户 302 + healthy）
       shell: bash
@@ -120,4 +130,5 @@ runs:
           exit 1
         fi
         docker rm -f smoke >/dev/null 2>&1 || true
+        rm -rf smoke-data
         echo "✓ 冒烟通过"
