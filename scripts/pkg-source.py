@@ -338,6 +338,8 @@ def build_entry(package, arch, version, link, size, meta, args):
         "depsers": meta.get("install_dep_services") or "",
         "deppkgs": meta.get("install_dep_packages") or "",
         "conflictpkgs": meta.get("install_conflict_packages") or "",
+        # 官方源用字符串 "yes"/"no" 表达「可启动」，同时给布尔 start 兼容旧版本读取
+        "startable": "yes",
         "start": True,
         "maintainer": meta.get("maintainer") or "",
         "maintainer_url": meta.get("maintainer_url") or "",
@@ -371,17 +373,22 @@ def build_entry(package, arch, version, link, size, meta, args):
     if localized:
         entry["_localized"] = localized
 
-    # 图标：优先用 --icon-url 指定的外部静态图（公网 https 最稳，服务重启也不掉），
-    # 否则由本服务托管从包内提取的图标。
+    # 图标：DSM 读的是**字符串数组**。实测 SynoCommunity 官方源 165 个包全部形如
+    # ["…/icon_72.png", "…/icon_256.png"]，写成 [{"url": …}] 对象数组前端取不到图
+    # （已装包有图标是因为它读本地 INFO，与目录无关）。
     if args.icon_url:
         base = args.icon_url.rstrip("/")
-        entry["thumbnail"] = [{"url": "%s/icon_72.png" % base}]
-        entry["snapshot"] = [{"url": "%s/icon_256.png" % base}]
+        thumb_url = "%s/icon_72.png" % base
+        retina_url = "%s/icon_256.png" % base
     else:
         icon_base = (args.icon_base or "").rstrip("/")
-        if icon_base:
-            entry["thumbnail"] = [{"url": "%s/icon/%s-72.png" % (icon_base, package)}]
-            entry["snapshot"] = [{"url": "%s/icon/%s-256.png" % (icon_base, package)}]
+        thumb_url = ("%s/icon/%s-72.png" % (icon_base, package)) if icon_base else ""
+        retina_url = ("%s/icon/%s-256.png" % (icon_base, package)) if icon_base else ""
+    if thumb_url:
+        entry["thumbnail"] = [thumb_url, retina_url]
+        entry["thumbnail_retina"] = [retina_url]
+    # 官方源的 snapshot 多为空数组；截图要从包内 screenshots/ 提取，暂不提供
+    entry["snapshot"] = []
 
     # 群晖原生目录没有这个键，但它是「从哪个版本起允许自动升级」的唯一开关，保留
     if args.auto_upgrade_from:
