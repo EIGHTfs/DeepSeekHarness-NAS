@@ -1,0 +1,50 @@
+{
+  "_note": [
+    "占位符注入路由表：把「哪些模板会出现 __X__」与「谁负责替换它」按平台/环节分组登记。",
+    "守卫 scripts/guards/check-start-placeholders.py 读本文件动态发现，不在代码里写死文件清单。",
+    "新增平台（如 docker）只需加一组：name + templates（会带占位符的模板，glob）+ injectors（提供 sed 替换的文件，glob）。",
+    "templates 与 injectors 都支持 glob，相对仓库根；同一文件可同时出现在两处（自注入，如 FPK 的 cmd 内联脚本）。"
+  ],
+  "runtimeGlobals": [
+    "__DSH_TRANSPORT__",
+    "__DSH_FILE_UPLOAD__"
+  ],
+  "groups": [
+    {
+      "name": "common",
+      "desc": "公共模板（SPK/FPK 共用的 start.sh 母版），由 gen_start_sh() 统一注入",
+      "templates": [
+        "build/pkgsrc/*.example"
+      ],
+      "injectors": [
+        "scripts/lib/common.sh"
+      ]
+    },
+    {
+      "name": "synology",
+      "desc": "群晖打包环节：端口/版本链等 SPK 专属键由 pack-spk.sh 注入",
+      "templates": [
+        "build/pkgsrc/*.example"
+      ],
+      "injectors": [
+        "build/spk/*.sh"
+      ]
+    },
+    {
+      "name": "fnos",
+      "desc": "飞牛打包环节：cmd/ 内联服务脚本里的品牌/版本/共享区键由 pack-fpk.sh 自注入",
+      "templates": [
+        "build/fpk/*.sh"
+      ],
+      "injectors": [
+        "build/fpk/*.sh"
+      ]
+    },
+    {
+      "name": "docker",
+      "desc": "容器环节（预留）：Dockerfile 与 entrypoint 的占位符注入；未启用时 templates 为空即自动跳过",
+      "templates": [],
+      "injectors": []
+    }
+  ]
+}
