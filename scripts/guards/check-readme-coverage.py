@@ -40,6 +40,10 @@ EXEMPT = {
     'FORCE_EXCLUDE',        # 白名单数据结构内的字段名，非用户开关
     'DSH_PROBE_NAMES',      # fix-runtime-deps 内部：待探测包名列表
     'DSH_PKG_VAR_ROOT',     # start.sh 内部：实例数据 var 的根（跨版本稳定 PID 用），非用户开关
+    'DSH_APP_NAME',         # entrypoint 内部：容器内日志文件名用的包名（默认即包名）
+    'DSH_WORKSPACE_HOME',   # entrypoint 内部：覆盖 HOME（选择器起点），一般用默认 /workspace
+    'DSH_WORKSPACE_ALIAS_ROOT',  # entrypoint 内部：/workspace 别名根，几乎不需要改
+    'DSH_ROOT',                 # entrypoint 内部：载荷根（镜像里固定 /opt/dsh）
     'DSH_PKG_JSON',         # fix-runtime-deps 内部：package.json 路径
     'PRUNE_SCRIPT',         # build-common 内部：prune-target.sh 路径
     'DSH_OWNER',            # build-fpk 内部：目标属主

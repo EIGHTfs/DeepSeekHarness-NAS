@@ -1,0 +1,113 @@
+# build-docker-image —— 单架构镜像的构建 + 推送 + 冒烟（被 docker.yml 的两个 job 复用）
+#
+# 为什么抽成 composite action：
+#   GitHub 的 **job 级 if 不能引用 matrix**（实测直接 422：Unrecognized named-value: 'matrix'），
+#   所以「按架构跳过」只能靠两个显式 job；把重复步骤抽到这里，加架构时只需多写一个 job。
+#
+# 调用方约定：
+#   · 已 checkout；
+#   · 已跑 .github/actions/build-target（产物在 build/master-build/build/{target,build-meta.env}）；
+#   · 已具备 packages: write 权限（推 GHCR）。
+name: build-docker-image
+description: 构建单架构镜像、推 GHCR 并冒烟（起容器验 302 + healthy + 无宿主路径）
+
+inputs:
+  arch:
+    description: 架构（x86_64 | arm64），与 build-target 的取值一致
+    required: true
+  platform:
+    description: docker 平台（linux/amd64 | linux/arm64）
+    required: true
+  suffix:
+    description: 镜像 tag 后缀（amd64 | arm64）
+    required: true
+  image:
+    description: 镜像名（不含 registry 与 tag），例如 eightfs/deepseekharness-nas
+    required: true
+  registry:
+    description: 镜像仓库
+    required: false
+    default: ghcr.io
+
+outputs:
+  pkg_version:
+    description: 与套件同源的版本号（build-meta.env 的 PKG_VER）
+    value: ${{ steps.stage.outputs.pkg_ver }}
+
+runs:
+  using: composite
+  steps:
+    # Dockerfile 契约：仓库根为上下文 + --build-arg TARGET_DIR，故先挪到固定暂存位
+    - name: 暂存载荷并取版本
+      id: stage
+      shell: bash
+      run: |
+        set -euo pipefail
+        src="build/master-build/build"
+        test -d "$src/target" || { echo "✗ 缺少 $src/target（build-target 是否成功？）" >&2; exit 1; }
+        test -f "$src/build-meta.env" || { echo "✗ 缺少 $src/build-meta.env" >&2; exit 1; }
+        mkdir -p build/master-build/docker
+        rm -rf build/master-build/docker/target
+        cp -a "$src/target" build/master-build/docker/target
+        test -x build/master-build/docker/target/bin/node || { echo "✗ 载荷里没有可执行的 bin/node" >&2; exit 1; }
+        pkg_ver="$(awk -F= '/^PKG_VER=/{gsub(/"/,"",$2); print $2}' "$src/build-meta.env" | tail -1)"
+        test -n "$pkg_ver" || { echo "✗ build-meta.env 里没有 PKG_VER" >&2; exit 1; }
+        echo "pkg_ver=$pkg_ver" >> "$GITHUB_OUTPUT"
+        echo "版本=$pkg_ver 载荷=$(du -sh build/master-build/docker/target | cut -f1)"
+
+    - name: 准备 buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: 登录镜像仓库
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 构建并推送（架构专属 tag）
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: build/docker/Dockerfile
+        platforms: ${{ inputs.platform }}
+        push: true
+        build-args: |
+          TARGET_DIR=build/master-build/docker/target
+        tags: ${{ inputs.registry }}/${{ inputs.image }}:${{ steps.stage.outputs.pkg_ver }}-${{ inputs.suffix }}
+        cache-from: type=gha,scope=${{ inputs.arch }}
+        cache-to: type=gha,mode=max,scope=${{ inputs.arch }}
+
+    # 冒烟：镜像坏了不能等用户发现；只验「起得来 + 门户 302 + 健康 + 不含宿主路径」
+    - name: 冒烟（起容器 + 门户 302 + healthy）
+      shell: bash
+      run: |
+        set -uo pipefail
+        image="${{ inputs.registry }}/${{ inputs.image }}:${{ steps.stage.outputs.pkg_ver }}-${{ inputs.suffix }}"
+        echo "镜像: $image"
+        mkdir -p smoke-data
+        docker rm -f smoke >/dev/null 2>&1 || true
+        docker run -d --name smoke -p 38080:30800 -v "$PWD/smoke-data:/data" "$image"
+        ok=0
+        for i in $(seq 1 24); do
+          code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'Sec-Fetch-Dest: document' http://127.0.0.1:38080/ || true)"
+          health="$(docker inspect --format '{{.State.Health.Status}}' smoke 2>/dev/null || echo unknown)"
+          echo "  第 ${i} 次：HTTP=$code health=$health"
+          [ "$code" = "302" ] && [ "$health" = "healthy" ] && { ok=1; break; }
+          [ "$health" = "unhealthy" ] && break
+          sleep 5
+        done
+        echo "── start.sh status"
+        docker exec smoke /opt/dsh/start.sh status || true
+        echo "── 镜像内不得出现宿主专属路径（/volumeN/）"
+        if docker exec smoke sh -c 'grep -rlE "/volume[0-9]+/" /opt/dsh /entrypoint.sh 2>/dev/null | head -5' | grep -q .; then
+          echo "✗ 镜像里出现群晖专属路径" >&2; ok=0
+        fi
+        if [ "$ok" != "1" ]; then
+          echo "✗ 冒烟失败，容器日志：" >&2
+          docker logs smoke 2>&1 | tail -40 >&2
+          docker rm -f smoke >/dev/null 2>&1 || true
+          exit 1
+        fi
+        docker rm -f smoke >/dev/null 2>&1 || true
+        echo "✓ 冒烟通过"

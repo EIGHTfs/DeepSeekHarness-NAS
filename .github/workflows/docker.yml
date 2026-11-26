@@ -5,10 +5,10 @@
 #   且镜像与套件是两条独立交付物，失败不该互相阻塞。
 #
 # 架构策略：**每个架构用原生 runner 各自构建**，再合并 manifest。
-#   不用 buildx 一次出多平台：我们的构建是 pnpm 装原生模块（17 个 .node），QEMU 模拟下必失败或极慢。
-#
-# 复用：.github/actions/build-target 是唯一构建入口；manifest job 用
-#   .github/actions/pack-with-target 下载并解包 target 与 build-meta.env（与 SPK/FPK 打包同一套契约）。
+#   ① 不用 buildx 一次出多平台：我们的构建是 pnpm 装原生模块（17 个 .node），QEMU 模拟下必失败或极慢；
+#   ② 两个架构写成两个显式 job 而不是 matrix：GitHub 的 **job 级 if 不支持 matrix 上下文**
+#     （实测直接 422 Unrecognized named-value: 'matrix'），而「手动只构一个架构」必须能在 job 级跳过。
+#     重复步骤已抽进 .github/actions/build-docker-image，加架构只需再加一个 job。
 #
 # 版本与 tag：从 build-meta.env 的 PKG_VER（与套件 INFO 同一来源）派生，例如 0.2.3-1002。
 #   预发布（SPK_BETA=yes）只打 PKG_VER 与 alpha/beta 通道，绝不覆盖 latest。
@@ -41,153 +41,89 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
+  IMAGE: eightfs/deepseekharness-nas
 
 jobs:
   prepare:
-    name: 解析目标 tag 与镜像名
+    name: 解析目标 tag
     runs-on: ubuntu-24.04
     outputs:
       dsh_tag: ${{ steps.tag.outputs.value }}
-      image: ${{ steps.name.outputs.value }}
     steps:
       - id: tag
         shell: bash
         run: |
           set -euo pipefail
-          # tag 触发用 ref 名（dsh-v*），手动触发用输入，都没有则留空（交给 fetch 脚本取最新）
+          # tag 触发用 ref 名（dsh-v*）；手动触发用输入；都空则交给 fetch 脚本取官方最新
           if [ "${{ github.event_name }}" = "push" ]; then
             echo "value=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
           else
             echo "value=${{ inputs.dsh_tag }}" >> "$GITHUB_OUTPUT"
           fi
-      - id: name
-        shell: bash
-        run: |
-          set -euo pipefail
-          # GHCR 要求镜像名全小写，而仓库名是 DeepSeekHarness-NAS，故这里显式转小写
-          owner="$(printf '%s' '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
-          echo "value=${owner}/deepseekharness-nas" >> "$GITHUB_OUTPUT"
 
-  build-image:
-    name: image-${{ matrix.arch }}
+  build-x86_64:
+    name: image-x86_64
     needs: prepare
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x86_64
-            runner: ubuntu-24.04
-            platform: linux/amd64
-            suffix: amd64
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            platform: linux/arm64
-            suffix: arm64
-    # 手动触发可只构一个架构；tag 触发（inputs 为空）等同 both
-    if: ${{ github.event_name == 'push' || inputs.arch == 'both' || inputs.arch == matrix.arch }}
+    if: ${{ github.event_name == 'push' || inputs.arch == 'both' || inputs.arch == 'x86_64' }}
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-
       - name: 唯一构建（预编译 + 裁剪）
         uses: ./.github/actions/build-target
         with:
           token: ${{ github.token }}
           dsh_tag: ${{ needs.prepare.outputs.dsh_tag }}
-          arch: ${{ matrix.arch }}
-          artifact-name: build-target-${{ matrix.arch }}
-
-      # Dockerfile 契约是「仓库根为上下文 + --build-arg TARGET_DIR」，故把产物挪到固定暂存位。
-      #   产物位置由 build-target action 决定：build/master-build/build/{target,build-meta.env}
-      - name: 暂存载荷并取版本
-        id: stage
-        shell: bash
-        run: |
-          set -euo pipefail
-          src="build/master-build/build"
-          test -d "$src/target" || { echo "✗ 缺少 $src/target" >&2; exit 1; }
-          test -f "$src/build-meta.env" || { echo "✗ 缺少 $src/build-meta.env" >&2; exit 1; }
-          mkdir -p build/master-build/docker
-          rm -rf build/master-build/docker/target
-          cp -a "$src/target" build/master-build/docker/target
-          test -x build/master-build/docker/target/bin/node || { echo "✗ 载荷里没有可执行的 bin/node" >&2; exit 1; }
-          pkg_ver="$(awk -F= '/^PKG_VER=/{gsub(/"/,"",$2); print $2}' "$src/build-meta.env" | tail -1)"
-          beta="$(awk -F= '/^SPK_BETA=/{gsub(/"/,"",$2); print $2}' "$src/build-meta.env" | tail -1)"
-          test -n "$pkg_ver" || { echo "✗ build-meta.env 里没有 PKG_VER" >&2; exit 1; }
-          echo "PKG_VER=$pkg_ver" >> "$GITHUB_OUTPUT"
-          echo "BETA=${beta:-no}" >> "$GITHUB_OUTPUT"
-          echo "版本=$pkg_ver 预发布=${beta:-no} 载荷=$(du -sh build/master-build/docker/target | cut -f1)"
-
-      - name: 准备 buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: 登录 GHCR
-        uses: docker/login-action@v3
+          arch: x86_64
+          artifact-name: build-target-x86_64
+      - name: 构建镜像
+        uses: ./.github/actions/build-docker-image
         with:
+          arch: x86_64
+          platform: linux/amd64
+          suffix: amd64
+          image: ${{ env.IMAGE }}
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 构建并推送（架构专属 tag）
-        uses: docker/build-push-action@v6
+  build-arm64:
+    name: image-arm64
+    needs: prepare
+    if: ${{ github.event_name == 'push' || inputs.arch == 'both' || inputs.arch == 'arm64' }}
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
         with:
-          context: .
-          file: build/docker/Dockerfile
-          platforms: ${{ matrix.platform }}
-          push: true
-          build-args: |
-            TARGET_DIR=build/master-build/docker/target
-          tags: ${{ env.REGISTRY }}/${{ needs.prepare.outputs.image }}:${{ steps.stage.outputs.PKG_VER }}-${{ matrix.suffix }}
-          cache-from: type=gha,scope=${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
-
-      # 冒烟：镜像坏了不能等用户发现。只验「起得来 + 门户 302 + 健康」，不依赖 runner 上其它状态。
-      - name: 冒烟（起容器 + 门户 302 + healthy）
-        shell: bash
-        run: |
-          set -uo pipefail
-          image="${REGISTRY}/${{ needs.prepare.outputs.image }}:${{ steps.stage.outputs.PKG_VER }}-${{ matrix.suffix }}"
-          echo "镜像: $image"
-          mkdir -p smoke-data
-          docker run -d --name smoke -p 38080:30800 -v "$PWD/smoke-data:/data" "$image"
-          ok=0
-          for i in $(seq 1 24); do
-            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H 'Sec-Fetch-Dest: document' http://127.0.0.1:38080/ || true)"
-            health="$(docker inspect --format '{{.State.Health.Status}}' smoke 2>/dev/null || echo unknown)"
-            echo "  第 ${i} 次：HTTP=$code health=$health"
-            [ "$code" = "302" ] && [ "$health" = "healthy" ] && { ok=1; break; }
-            [ "$health" = "unhealthy" ] && break
-            sleep 5
-          done
-          echo "── start.sh status"
-          docker exec smoke /opt/dsh/start.sh status || true
-          echo "── 镜像内不得出现宿主专属路径（/volumeN/）"
-          if docker exec smoke sh -c 'grep -rlE "/volume[0-9]+/" /opt/dsh /entrypoint.sh 2>/dev/null | head -5' | grep -q .; then
-            echo "✗ 镜像里出现群晖专属路径" >&2; ok=0
-          fi
-          if [ "$ok" != "1" ]; then
-            echo "✗ 冒烟失败，容器日志：" >&2
-            docker logs smoke 2>&1 | tail -40 >&2
-            docker rm -f smoke >/dev/null 2>&1 || true
-            exit 1
-          fi
-          docker rm -f smoke >/dev/null 2>&1 || true
-          echo "✓ 冒烟通过"
+          fetch-depth: 0
+      - name: 唯一构建（预编译 + 裁剪）
+        uses: ./.github/actions/build-target
+        with:
+          token: ${{ github.token }}
+          dsh_tag: ${{ needs.prepare.outputs.dsh_tag }}
+          arch: arm64
+          artifact-name: build-target-arm64
+      - name: 构建镜像
+        uses: ./.github/actions/build-docker-image
+        with:
+          arch: arm64
+          platform: linux/arm64
+          suffix: arm64
+          image: ${{ env.IMAGE }}
+          registry: ${{ env.REGISTRY }}
 
   manifest:
     name: manifest
-    needs: [prepare, build-image]
+    needs: [build-x86_64, build-arm64]
+    # 只有两个架构都成功才有可合并的东西；单架构手动构建时天然跳过（架构 tag 已可直接用）
+    if: ${{ needs.build-x86_64.result == 'success' && needs.build-arm64.result == 'success' }}
     runs-on: ubuntu-24.04
-    # 只构一个架构时没有可合并的东西（那时架构专属 tag 已可直接用）
-    if: ${{ github.event_name == 'push' || inputs.arch == 'both' }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
-      - name: 下载并解包 target/meta（与打包 job 同一套契约）
+      # 与 SPK/FPK 打包 job 同一套契约：下载 artifact 并解包回 build/master-build/build/
+      - name: 下载并解包 target/meta
         uses: ./.github/actions/pack-with-target
         with:
           artifact-name: build-target-x86_64
@@ -201,14 +137,15 @@ jobs:
           pkg_ver="$(awk -F= '/^PKG_VER=/{gsub(/"/,"",$2); print $2}' "$meta" | tail -1)"
           beta="$(awk -F= '/^SPK_BETA=/{gsub(/"/,"",$2); print $2}' "$meta" | tail -1)"
           test -n "$pkg_ver" || { echo "✗ 没读到 PKG_VER" >&2; exit 1; }
-          base="${REGISTRY}/${{ needs.prepare.outputs.image }}"
+          base="${REGISTRY}/${IMAGE}"
           tags="${base}:${pkg_ver}"
           if [ "${beta:-no}" = "yes" ]; then
-            # 预发布：只打通道名，绝不覆盖 latest；阶段位 1xxx=alpha、2xxx=beta 由版本号后缀体现
+            # 预发布：只打通道名，绝不覆盖 latest（阶段位 1xxx=alpha / 2xxx=beta / 4xxx=preview）
             case "$pkg_ver" in
               *1[0-9][0-9][0-9]) channel=alpha ;;
               *2[0-9][0-9][0-9]) channel=beta ;;
-              *) channel=preview ;;
+              *4[0-9][0-9][0-9]) channel=preview ;;
+              *) channel=pre-release ;;
             esac
             tags="$tags ${base}:${channel}"
           else
@@ -218,7 +155,7 @@ jobs:
           echo "LIST=$tags" >> "$GITHUB_OUTPUT"
           echo "待打 tag：$tags"
 
-      - name: 登录 GHCR
+      - name: 登录镜像仓库
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -229,7 +166,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base="${REGISTRY}/${{ needs.prepare.outputs.image }}:${{ steps.tags.outputs.PKG_VER }}"
+          base="${REGISTRY}/${IMAGE}:${{ steps.tags.outputs.PKG_VER }}"
           args=""
           for tag in ${{ steps.tags.outputs.LIST }}; do args="$args -t $tag"; done
           docker buildx imagetools create $args "${base}-amd64" "${base}-arm64"

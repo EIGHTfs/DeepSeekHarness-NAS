@@ -76,8 +76,10 @@ def _check_needs(path, text):
     Release 正文被写成「❌ 缺失」。这类"重构后引用悬空"必须在 CI 前拦下。
     """
     out = []
-    jobs = set(re.findall(r"^  ([a-z0-9-]+):\s*$", text, re.M)) - {
-        "on", "jobs", "env", "permissions", "concurrency"}
+    # job id 允许下划线（GitHub 支持，如 build-x86_64）—— 漏了它会把合法 job 判成"不存在"
+    jobs = set(re.findall(r"^  ([A-Za-z0-9_-]+):\s*$", text, re.M)) - {
+        "on", "jobs", "env", "permissions", "concurrency", "push", "pull_request",
+        "workflow_dispatch", "schedule", "workflow_call", "workflow_run", "release"}
     for m in re.finditer(r"needs:\s*\[([^\]]+)\]", text):
         for j in m.group(1).split(","):
             j = j.strip()

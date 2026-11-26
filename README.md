@@ -59,6 +59,16 @@ python3 scripts/pkg-source.py --from-spk-dir /volume1/release --base-url http://
 
 ![套件中心里从本地套件源安装后的效果](https://raw.githubusercontent.com/EIGHTfs/DeepSeekHarness-NAS/main/docs/images/package-source-in-center.jpg)
 
+### Docker 版的环境变量
+
+| 变量 | 作用 |
+|---|---|
+| `PUID` / `PGID` | 容器内运行用户，与宿主目录属主对齐（否则产出 root 文件） |
+| `UMASK` | 新建文件权限掩码，组共享常用 `0002` |
+| `PKG_VAR` | 数据根（容器里默认 `/data`）；`PKG_VERSION=current` 让数据目录不随镜像版本漂移 |
+| `DSH_ADVERTISE_URL` | 你实际访问的外部地址（如 `http://10.10.31.93:3090`），容器启动时用它打印认证链接 |
+| `DSH_WORKSPACES_MANIFEST` | 挂载清单路径（默认 `/etc/dsh/workspaces.json`），把宿主目录接成 `/workspace/<名>` |
+
 ### 自动更新后旧数据不会自动搬过来
 
 数据按版本目录隔离是设计：升级（套件中心更新或自动更新）后新版本用新的 `var/<版本>/.dsh`，旧版本的数据仍在原目录，**不会自动迁移**。要把设置、凭据、插件配置带过来，用仓库里的迁移脚本（先看候选、再演练、最后才写盘）：
