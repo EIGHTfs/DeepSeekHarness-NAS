@@ -173,6 +173,14 @@ jobs:
           if [ "${{ github.event_name }}" = "push" ] || [ "${{ inputs.force_all || 'false' }}" = "true" ]; then
             force_flag="--force-all"
           fi
+          # 手动指定了 dsh_tag → 视为「要为这个官方版本出包」，强制全量：
+          #   变化检测只看代码 diff，看不出「官方 tag 从 alpha.2 换到 alpha.3」这件事，
+          #   而 tag 变意味着 target 与所有产物都要重做（缓存 key 也含 tag）。
+          #   实测踩过：指定新 tag 触发后判定「代码无变化」→ 全部跳过 → 静默不出包。
+          if [ -n "${{ inputs.dsh_tag }}" ]; then
+            force_flag="--force-all"
+            echo "手动指定 dsh_tag=${{ inputs.dsh_tag }} → 强制全量构建"
+          fi
           python3 scripts/ci-plan.py \
             --arch "${{ steps.meta.outputs.arch }}" \
             --targets "${{ inputs.targets }}" \
