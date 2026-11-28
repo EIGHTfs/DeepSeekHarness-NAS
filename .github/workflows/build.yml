@@ -290,6 +290,22 @@ jobs:
           done
           ls -lh dist || true
 
+      - name: 构建镜像（${{ matrix.name }}）
+        if: matrix.changed && matrix.publish == 'registry'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          out="$(${{ matrix.build }} build/master-build/build/target \
+            --arch "$ARCH" --push --registry "$REGISTRY" --image "$IMAGE")"
+          printf '%s\n' "$out"
+          ref="$(printf '%s\n' "$out" | grep -m1 '^IMAGE_REF=' | cut -d= -f2-)"
+          [ -n "$ref" ] || { echo "✗ 没拿到镜像引用"; exit 1; }
+          mkdir -p dist
+          printf '%s\n' "$ref" > "dist/image-ref-${ARCH}.txt"
+
       - uses: actions/upload-artifact@v7
         if: matrix.changed && matrix.publish == 'release'
         with:
@@ -307,22 +323,6 @@ jobs:
           if-no-files-found: error
 
       # ── 镜像型平台（docker 等）：调注册表里声明的构建命令，脚本内部负责推+冒烟 ──
-      - name: 构建镜像（${{ matrix.name }}）
-        if: matrix.changed && matrix.publish == 'registry'
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_ACTOR: ${{ github.actor }}
-        run: |
-          set -euo pipefail
-          out="$(${{ matrix.build }} build/master-build/build/target \
-            --arch "$ARCH" --push --registry "$REGISTRY" --image "$IMAGE")"
-          printf '%s\n' "$out"
-          ref="$(printf '%s\n' "$out" | grep -m1 '^IMAGE_REF=' | cut -d= -f2-)"
-          [ -n "$ref" ] || { echo "✗ 没拿到镜像引用"; exit 1; }
-          mkdir -p dist
-          printf '%s\n' "$ref" > "dist/image-ref-${ARCH}.txt"
-
   # ── 多架构 manifest（仅当有 registry 型平台且两个架构都产出时）──────────────
   manifest:
     name: 合并 manifest
