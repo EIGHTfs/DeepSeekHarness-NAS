@@ -56,7 +56,13 @@ python3 - "$LOCK_FILE" <<'PYEOF' > "$TMP_LIST"
 import json, sys
 lock_path = sys.argv[1]
 # 排除关键词（原黑名单 pnpmPlatform + pnpmMusl + pnpmApps，已内联）：
-# 平台变体 —— 只保留 linux-x64；musl 变体（sharp 等）不要；claude/codex 禁用不保护
+# 【设计】lockfile 学习只负责「跨平台的纯 JS 包」；**平台原生包不在学习范围**——
+#   它们体积大（claude-agent-sdk 384 MB、libreoffice-kit 242 MB）、且只在特定功能运行时
+#   才动态加载，学了会把包撑爆。必需的平台原生包（sharp/koffi/ripgrep/node-addon-*）
+#   由 build-prune-whitelist.json 里形如 `xxx-linux-{arch}` 的条目**显式声明**，
+#   裁剪时按目标架构展开（见 prune-target.sh 的 PRUNE_ARCH）。
+#   因此这里跳过所有平台变体（含 linux-x64 与 linux-arm64）是**有意为之**，
+#   两个架构的差异由 {arch} 占位统一表达，不再靠「只保留 x64」这种单架构假设。
 skip_keys = {
     # pnpmPlatform: 非目标平台（只在锁文件出现，装了也用不上）
     'darwin', 'win32', 'win32-x64', 'linux-arm', 'linux-arm64', 'linux-ppc',
@@ -121,9 +127,18 @@ def _template_platform(name):
     return name
 
 names = [_template_platform(n) for n in names]
-cfg['lockfileDeps'] = names
+# 保留已声明的 {arch} 平台条目：这些是「必需的原生包」，由人工/历史显式写进
+#   lockfileDeps（如 node-addon-require-builtin-linux-{arch}-gnu）。本学习器的 skip_keys
+#   会跳过所有平台变体（体积保护），所以重新生成时它们不会出现在 names 里 ——
+#   若直接覆盖，arm64 包会立刻退回「缺原生二进制、启动即 Cannot find module」的坏状态
+#   （这是真实的回归路径，必须在这里挡住）。
+_previous = cfg.get('lockfileDeps') or []
+_arch_declared = [x for x in _previous if isinstance(x, str) and '{arch}' in x]
+cfg['lockfileDeps'] = sorted(set(names) | set(_arch_declared))
+if _arch_declared:
+    print('  保留已声明的 {arch} 平台条目 %d 条' % len(_arch_declared))
 cfg['_lockNote'] = (f"自动生成 {count} 个（{os.path.basename(list_file)} 来源的 npm 锁文件 packages 键），"
-                    f"gen-prune-whitelist.sh 写入；与 extra/workspaceRuntimeDeps 取并集")
+                    f"gen-prune-whitelist.sh 写入；与 extra/workspaceRuntimeDeps 取并集；已声明的 {{arch}} 条目会被保留")
 with open(white_file, 'w', encoding='utf-8') as f:
     json.dump(cfg, f, ensure_ascii=False, indent=2)
     f.write('\n')

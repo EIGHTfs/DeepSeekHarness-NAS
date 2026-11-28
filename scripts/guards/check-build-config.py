@@ -145,6 +145,37 @@ def check_whitelist_arch_neutral():
     return problems
 
 
+def check_required_arch_entries():
+    """裁剪白名单必须显式声明「必需的原生包」的 {arch} 条目。
+
+    为什么需要：平台原生包不靠 lockfile 学习（体积原因，见 gen-prune-whitelist.sh 的
+    skip_keys 设计说明），而是由白名单里的 `xxx-linux-{arch}` 条目显式声明。一旦有人
+    重新跑学习器把它们覆盖掉，arm64 包会退回「缺原生二进制、启动即 Cannot find module」
+    的坏状态（实测发生过）。这道断言就是防这条路。
+    """
+    path = os.path.join(ROOT, "build", "config", "build-prune-whitelist.json")
+    if not os.path.isfile(path):
+        return []
+    import json
+    required = (
+        "node-addon-require-builtin-linux-{arch}-gnu",
+        "@deepseek-ai/node-addon-system-linux-{arch}",
+    )
+    with open(path, encoding="utf-8") as handle:
+        data = json.load(handle)
+    declared = set()
+    for key in ("lockfileDeps", "extra", "_autoLearned"):
+        for entry in data.get(key) or []:
+            if isinstance(entry, str) and "{arch}" in entry:
+                declared.add(entry)
+    problems = []
+    for item in required:
+        if item not in declared:
+            problems.append("build/config/build-prune-whitelist.json 缺少必需的平台条目 %r"
+                            "（缺了会让对应架构的包缺原生二进制、启动即失败）" % item)
+    return problems
+
+
 def check_platform_registry():
     """CI 平台注册表必须自洽：每条有 build 命令、runner、产物声明；name 唯一。
 
@@ -222,6 +253,7 @@ def main(argv=None):
     bad, used_yaml = _check(args.file)
     bad = bad + check_excludes_arch_neutral()
     bad = bad + check_platform_registry()
+    bad = bad + check_required_arch_entries()
     bad = bad + check_whitelist_arch_neutral()
     if bad:
         sys.stderr.write("✗ build-config 守卫失败（%d 项）：\n" % len(bad))
