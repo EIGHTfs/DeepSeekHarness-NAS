@@ -386,10 +386,13 @@ jobs:
   release:
     name: 发布 Release
     needs: [plan-platforms, pack]
+    # 部分成功也发布：本项目支持「先发一个架构、另一个架构后补」，Release 是累积的。
+    #   所以这里**不要求** needs.pack.result == 'success' —— 只要有平台打出了产物就发，
+    #   没成功的平台下一轮补上即可（prune 步骤只清理「本次产出过的类别」，不会误删另一架构）。
+    #   全平台都失败时 download-artifact 拿不到东西 → HAS_FILES=no → 自动跳过发布。
     if: >-
       always() && needs.plan-platforms.result == 'success'
       && needs.plan-platforms.outputs.dry_run != 'true'
-      && needs.pack.result == 'success'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -408,9 +411,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo "── 各平台结果"
+          echo "  pack 整体: ${{ needs.pack.result }}"
           if ls dist-main/* >/dev/null 2>&1; then
             echo "HAS_FILES=yes" >> "$GITHUB_OUTPUT"
             ls -lh dist-main
+            # 有产物但 pack 不是全绿 → 明确标注「部分发布」，便于之后补另一架构
+            if [ "${{ needs.pack.result }}" != "success" ]; then
+              echo "⚠ 部分成功发布：只有部分平台产出了产物，其余平台的包稍后补发即可（Release 是累积的）"
+            fi
           else
             echo "HAS_FILES=no" >> "$GITHUB_OUTPUT"
             echo "（无产物，跳过发布）"
