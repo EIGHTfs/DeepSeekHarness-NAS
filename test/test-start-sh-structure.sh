@@ -59,5 +59,21 @@ grep -q 'DEP_RESCUE_REGISTRY' "$SRC" && chk_ok "补包 registry 可配" || chk_b
 # 过滤路径型缺失（只保留裸包名，避免把 /abs/path 或 ./rel 当包名去装）
 grep -qF "grep -vE '^(\\.|/|[A-Za-z]:)'" "$SRC" && chk_ok "过滤路径型缺失" || chk_bad "未过滤路径型缺失"
 
+# ⑪ 可选功能包补齐：必须后台静默（不阻塞启动、不催用户重启），且不重复补
+#    数据源是 .deps-pending（启动清空日志前摘出来的包名）——日志会被 ensure_tmpfile_writable 清空，
+#    所以不能直接从日志读。
+grep -q 'rescue_deps $_pending' "$SRC" && chk_ok "存在后台补包" || chk_bad "缺后台补包"
+grep -q 'deps-pending' "$SRC" && chk_ok "补包数据源是 .deps-pending" || chk_bad "缺 .deps-pending"
+grep -q 'ensure_tmpfile_writable "\$LOG_FILE"' "$SRC" && chk_ok "日志清空点仍在（摘记录须在其之前）" || chk_bad "日志清空点异常"
+python3 - "$SRC" <<'PYEOF'
+import sys
+src = open(sys.argv[1], encoding='utf-8').read()
+harvest = src.find('.deps-pending')
+clear = src.find('ensure_tmpfile_writable "$LOG_FILE"')
+print('  ✓ 摘记录在清空日志之前' if 0 < harvest < clear else '  ✗ 摘记录不在清空之前（记录会丢）')
+PYEOF
+grep -q 'deps-need-restart' "$SRC" && chk_bad "仍有「催重启」标记（应静默）" || chk_ok "补包对用户无感（无催重启提示）"
+grep -q '启动前预检' "$SRC" && chk_bad "仍有阻塞式启动前预检" || chk_ok "启动不等待补包"
+
 echo "═══ 结果: $PASS 通过 / $FAIL 失败 ═══"
 [ "$FAIL" -eq 0 ]

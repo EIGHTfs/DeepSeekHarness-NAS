@@ -1642,8 +1642,8 @@ cmd_check() {
       [ -f "$entry" ] || continue
       out=$(DSH_PROBE_ENTRY="$entry" timeout 30 "$NODE_BIN" --input-type=module \
             -e 'import(process.env.DSH_PROBE_ENTRY).catch(e=>{console.log(e.message);process.exit(1)})' 2>&1 || true)
-      if printf '%s' "$out" | grep -q "Cannot find package"; then
-        echo "       ✗ ${entry#"$DSH_DIR"/}: $(printf '%s' "$out" | grep -m1 'Cannot find package')"
+      if printf '%s' "$out" | grep -qE "Cannot find (package|module)"; then
+        echo "       ✗ ${entry#"$DSH_DIR"/}: $(printf '%s' "$out" | grep -m1E 'Cannot find (package|module)')"
         probe_bad=1
       fi
     done
@@ -1852,6 +1852,19 @@ DSH_WRAPPER_EOF
   # PATH 前置用户级 pnpm wrapper（如需 pnpm 插件安装）
   export PATH="$HOME/.local/bin:$PATH"
   ensure_pid_dirs
+  # ── 清空日志前，先把上次运行期的缺包记录摘出来 ────────────────────────
+  #   为什么必须在这里做：ensure_tmpfile_writable 会用 `: > "$LOG_FILE"` **清空**日志，
+  #   上次运行期「用户点功能报 Cannot find module」的记录会随之丢失 —— 那样后台补包
+  #   永远读不到线索（实测踩过：日志里明明写过记录，启动后 grep 不到）。
+  #   摘出来的包名累积到 .deps-pending，由启动成功后的后台任务消费。
+  if [ -f "$LOG_FILE" ] && [ -s "$LOG_FILE" ]; then
+    local _harvest
+    _harvest="$(missing_from_log all)"
+    if [ -n "$_harvest" ]; then
+      printf '%s\n' "$_harvest" >> "$PID_DIR/.deps-pending" 2>/dev/null || true
+      sort -u "$PID_DIR/.deps-pending" -o "$PID_DIR/.deps-pending" 2>/dev/null || true
+    fi
+  fi
   ensure_tmpfile_writable "$LOG_FILE" || return 1
   # 日志：超过上限先轮转一次（只留 .1），然后【追加】写 —— 保留上一次运行现场，崩溃排查用
   #   ⚠ 这段必须放在下面那段 env 续行块**之前**：续行块中间不能插注释或其它语句，
@@ -1888,6 +1901,26 @@ DSH_WRAPPER_EOF
       sleep 3
       echo "DSH 启动完成"
       echo ""
+      # ── 启动成功后：**后台**补齐上次暴露的可选功能包（不阻塞启动）──────────
+      #   数据源是 .deps-pending（启动前从日志摘出来的缺包名），不是日志本身 ——
+      #   因为日志在启动时会被清空，运行期的错误记录不跨启动保留。
+      #   补完对用户**无感**：不提示、不催重启；Node 缓存导致新包要等用户自然的下一次
+      #   重启才生效，这属于预期，不需要专门打扰。
+      if [ -z "${DSH_DEPS_BG:-}" ] && [ -s "$PID_DIR/.deps-pending" ]; then
+        export DSH_DEPS_BG=1
+        local _pending
+        _pending="$(sort -u "$PID_DIR/.deps-pending" 2>/dev/null || true)"
+        rm -f "$PID_DIR/.deps-pending" 2>/dev/null || true
+        if [ -n "$_pending" ]; then
+          # 延迟 30 秒再补：pnpm add 会抢磁盘与 CPU，与 DSH 启动争 IO 时实测把启动
+          #   拖慢 15 秒（基线 13.8 s → 29 s）。等 DSH 起完再补，启动侧完全无感。
+          #   注意不能用 `nice rescue_deps` —— nice 只认外部命令，不认 shell 函数
+          #   （实测报 nice: 'rescue_deps': No such file or directory）。
+          # shellcheck disable=SC2086
+          ( sleep 30; rescue_deps $_pending >>"$PID_DIR/.deps-bg.log" 2>&1 ) </dev/null >/dev/null 2>&1 &
+          disown 2>/dev/null || true
+        fi
+      fi
       local TOKEN
       TOKEN=$(get_token)
       if [ -n "$TOKEN" ]; then
@@ -2066,14 +2099,27 @@ resolve_missing_spec() {
   return 0
 }
 
-# 从最近启动日志提取 "Cannot find package 'X'" 的包名（去重）
+# 从启动日志提取 "Cannot find package/module 'X'" 的包名（去重）
+#   $1=tail（默认）只扫最近 2000 行；$1=all 扫全文件。
+#   为什么需要两种范围：
+#     · 启动失败救援用 tail —— 只看最近，避免把早已修好的旧记录反复补；
+#     · 启动前摘记录用 all —— 上次运行期的记录可能落在日志任何位置，
+#       而日志随后会被 ensure_tmpfile_writable 清空，漏掉就再也拿不到线索。
+#   「日志里什么算缺包」只在这里定义一次：调用方一律走本函数，不另写 grep 管道
+#   （两份规则会漂移，实测出现过只认 package、漏掉整类 module 缺失）。
 missing_from_log() {
+  local scope="${1:-tail}"
   [ -f "$LOG_FILE" ] || return 0
   # 同时认 "Cannot find package" 与 "Cannot find module"：
   #   原生二进制缺失报的是 MODULE（实测 node-addon-require-builtin-linux-arm64-gnu 缺失
   #   时日志为 Cannot find module '...'），只认 package 会漏掉整类原生包缺失、导致
   #   「依赖兜底」永不触发（armv8 坏包装上去就只能启动失败，无法自愈）。
-  grep -oE "Cannot find (package|module) '[^']+'" "$LOG_FILE" 2>/dev/null \
+  if [ "$scope" = "all" ]; then
+    cat "$LOG_FILE" 2>/dev/null
+  else
+    tail -n 2000 "$LOG_FILE" 2>/dev/null
+  fi \
+    | grep -oE "Cannot find (package|module) '[^']+'" 2>/dev/null \
     | sed -E "s/Cannot find (package|module) '//; s/'\$//" \
     | grep -vE '^(\.|/|[A-Za-z]:)' \
     | grep -vE '\.\.' \
