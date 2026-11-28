@@ -11,7 +11,9 @@ name: Watch official DSH releases
 
 on:
   schedule:
-    - cron: '*/30 * * * *'      # 每 30 分钟
+      # GitHub 的 schedule 是「尽力而为」：高频 cron 会被大量丢弃（实测每 30 分钟
+      #   实际只跑成每 6–10 小时一次）。降到每 2 小时更贴近真实节奏，少制造假象。
+      - cron: '0 */2 * * *'
   workflow_dispatch:            # 手动触发（便于随时验证判定逻辑）
 
 permissions:
@@ -91,6 +93,10 @@ jobs:
 
           echo "… 判定：需要构建（官方 $OFFICIAL ≠ 本仓 $MINE，且已过 6 小时窗口）…"
           echo "need=yes" >> "$GITHUB_OUTPUT"
+          # 把官方 tag 一起带出去：build.yml 的变化检测只看代码 diff，
+          #   看不出「官方发了新版本」这件事；显式传 dsh_tag 才会触发全量构建
+          #   （否则派发过去会被判定「代码无变化」→ 静默不出包，实测踩过）。
+          echo "tag=$OFFICIAL" >> "$GITHUB_OUTPUT"
 
       - name: 触发构建（对齐官方 tag）
         if: steps.decide.outputs.need == 'yes'
@@ -107,5 +113,5 @@ jobs:
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/dispatches" \
-            -d "{\"ref\":\"main\",\"inputs\":{\"arch\":\"$ARCH\"}}"
+            -d "{\"ref\":\"main\",\"inputs\":{\"arch\":\"$ARCH\",\"dsh_tag\":\"${{ steps.decide.outputs.tag }}\"}}"
           done
